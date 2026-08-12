@@ -2,6 +2,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
+use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
 use ltp_engine::link::commands::{
@@ -775,6 +776,11 @@ fn render_human<T: Serialize>(output: &CommandOutput<T>) {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_env("LTP_LOG"))
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
 
     let cwd = match std::env::current_dir() {

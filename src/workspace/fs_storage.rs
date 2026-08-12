@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tracing::{debug, warn};
+
 use crate::errors::{LtpError, Result};
 use crate::node::Node;
 use crate::output::OutputWarning;
@@ -61,6 +63,7 @@ impl FsStorage {
         let file_name = target.file_name().unwrap_or_default().to_string_lossy();
         let tmp_path = tmp_dir.join(format!("{}.tmp", file_name));
 
+        debug!(target = %target.display(), "atomic write");
         fs::write(&tmp_path, content)?;
         fs::rename(&tmp_path, target)?;
         Ok(())
@@ -175,6 +178,8 @@ impl Storage for FsStorage {
         let lock_path = self.lock_path();
         let mut stale_pid = None;
 
+        debug!(command, "acquiring lock");
+
         if lock_path.exists() {
             let content = fs::read_to_string(&lock_path)?;
             let existing: LockFile = serde_json::from_str(&content)?;
@@ -185,6 +190,7 @@ impl Storage for FsStorage {
                     timestamp: existing.timestamp,
                 });
             }
+            warn!(pid = existing.pid, "removing stale lock");
             stale_pid = Some(existing.pid);
             fs::remove_file(&lock_path)?;
         }
