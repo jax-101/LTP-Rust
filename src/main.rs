@@ -8,7 +8,8 @@ use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
 };
 use ltp_engine::node::commands::{
-    execute_node_add, execute_node_edit, execute_node_list, execute_node_search,
+    execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
+    execute_node_search, execute_node_split,
 };
 use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
 use ltp_engine::storage::Storage;
@@ -840,11 +841,16 @@ fn main() {
                 }
             }
             NodeAction::List {
-                tree: _tree,
+                tree,
                 r#type,
                 status,
             } => {
-                let output = execute_node_list(&storage, r#type.as_deref(), status.as_deref());
+                let output = execute_node_list(
+                    &storage,
+                    tree.as_deref(),
+                    r#type.as_deref(),
+                    status.as_deref(),
+                );
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -857,17 +863,26 @@ fn main() {
                     process::exit(1);
                 }
             }
-            _ => {
-                let output = error_output(
-                    "node",
-                    "",
-                    vec![OutputError::new(
-                        "NOT_IMPLEMENTED",
-                        "Node subcommand not yet implemented",
-                    )],
-                );
+            NodeAction::Rm { ids, force } => {
+                let output = execute_node_rm(&storage, &ids, force);
                 render_output(&output, cli.human);
-                process::exit(1);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NodeAction::Inspect { id } => {
+                let output = execute_node_inspect(&storage, &id);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NodeAction::Split { id, into, tree } => {
+                let output = execute_node_split(&storage, &id, &into, &tree);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
             }
         },
         Commands::Tree { action } => match action {

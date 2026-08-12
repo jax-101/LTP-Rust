@@ -1,6 +1,9 @@
 use serde::Serialize;
 
+use std::collections::HashSet;
+
 use crate::errors::{LtpError, Result};
+use crate::link::Operator;
 use crate::node::clr_lint::lint_clr2;
 use crate::node::types::{Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
@@ -398,31 +401,58 @@ pub fn execute_node_edit(
 }
 
 /// Execute `node list` command.
+///
+/// Lists nodes from the pool, optionally filtered by tree membership,
+/// node type, and/or status.
 pub fn execute_node_list(
     storage: &dyn Storage,
+    tree_filter: Option<&str>,
     type_filter: Option<&[String]>,
     status_filter: Option<&[String]>,
 ) -> CommandOutput<NodeListData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
-    let node_ids = match storage.list_node_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            return CommandOutput {
-                success: false,
-                action: "node_list".to_string(),
-                workspace: ws_name,
-                data: NodeListData {
-                    nodes: vec![],
-                    count: 0,
-                },
-                graph_health: GraphHealth {
-                    valid_dag: true,
-                    orphan_nodes_count: 0,
-                },
-                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
-                warnings: vec![],
-            };
+    let node_ids: Vec<String> = if let Some(tid) = tree_filter {
+        match storage.load_tree(tid) {
+            Ok(tree) => tree.nodes.iter().map(|nr| nr.node_ref.clone()).collect(),
+            Err(e) => {
+                return CommandOutput {
+                    success: false,
+                    action: "node_list".to_string(),
+                    workspace: ws_name,
+                    data: NodeListData {
+                        nodes: vec![],
+                        count: 0,
+                    },
+                    graph_health: GraphHealth {
+                        valid_dag: true,
+                        orphan_nodes_count: 0,
+                    },
+                    errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                    warnings: vec![],
+                };
+            }
+        }
+    } else {
+        match storage.list_node_ids() {
+            Ok(ids) => ids,
+            Err(e) => {
+                return CommandOutput {
+                    success: false,
+                    action: "node_list".to_string(),
+                    workspace: ws_name,
+                    data: NodeListData {
+                        nodes: vec![],
+                        count: 0,
+                    },
+                    graph_health: GraphHealth {
+                        valid_dag: true,
+                        orphan_nodes_count: 0,
+                    },
+                    errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                    warnings: vec![],
+                };
+            }
         }
     };
 
@@ -516,4 +546,668 @@ pub fn execute_node_search(storage: &dyn Storage, query: &str) -> CommandOutput<
             count,
         },
     )
+}
+
+/// Data returned by `node rm`.
+#[derive(Debug, Serialize)]
+pub struct NodeRmData {
+    pub removed_nodes: Vec<String>,
+    pub removed_edges_count: usize,
+    pub affected_trees: Vec<String>,
+}
+
+/// Execute `node rm` command.
+///
+/// Removes nodes from the global pool and cleans up all references
+/// in every tree: removes from `nodes[]`, removes edges where the node
+/// appears in `from[]` or `to`, and removes feedback edges referencing it.
+pub fn execute_node_rm(
+    storage: &dyn Storage,
+    ids: &[String],
+    _force: bool,
+) -> CommandOutput<NodeRmData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    if ids.is_empty() {
+        return CommandOutput {
+            success: false,
+            action: "node_rm".to_string(),
+            workspace: ws_name,
+            data: NodeRmData {
+                removed_nodes: vec![],
+                removed_edges_count: 0,
+                affected_trees: vec![],
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("INVALID_ARGS", "No node IDs provided")],
+            warnings: vec![],
+        };
+    }
+
+    for id in ids {
+        if storage.load_node(id).is_err() {
+            return CommandOutput {
+                success: false,
+                action: "node_rm".to_string(),
+                workspace: ws_name,
+                data: NodeRmData {
+                    removed_nodes: vec![],
+                    removed_edges_count: 0,
+                    affected_trees: vec![],
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "NODE_NOT_FOUND",
+                    format!("Node '{}' not found in pool", id),
+                )],
+                warnings: vec![],
+            };
+        }
+    }
+
+    let lock_outcome = match storage.acquire_lock("node rm") {
+        Ok(o) => o,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "node_rm".to_string(),
+                workspace: ws_name,
+                data: NodeRmData {
+                    removed_nodes: vec![],
+                    removed_edges_count: 0,
+                    affected_trees: vec![],
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let id_set: HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+
+    let tree_ids = match storage.list_tree_ids() {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_rm".to_string(),
+                workspace: ws_name,
+                data: NodeRmData {
+                    removed_nodes: vec![],
+                    removed_edges_count: 0,
+                    affected_trees: vec![],
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut total_removed_edges = 0usize;
+    let mut affected_trees = Vec::new();
+
+    for tree_id in &tree_ids {
+        let mut tree = match storage.load_tree(tree_id) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        let before_nodes = tree.nodes.len();
+        let before_edges = tree.edges.len();
+        let before_fb = tree.feedback_edges.len();
+
+        tree.nodes
+            .retain(|nr| !id_set.contains(nr.node_ref.as_str()));
+
+        tree.edges.retain(|edge| {
+            let to_removed = id_set.contains(edge.to.as_str());
+            let from_has_removed = edge.from.iter().any(|f| id_set.contains(f.as_str()));
+            !to_removed && !from_has_removed
+        });
+
+        tree.feedback_edges
+            .retain(|fb| !id_set.contains(fb.from.as_str()) && !id_set.contains(fb.to.as_str()));
+
+        let edges_removed =
+            (before_edges - tree.edges.len()) + (before_fb - tree.feedback_edges.len());
+        let tree_changed = tree.nodes.len() != before_nodes
+            || tree.edges.len() != before_edges
+            || tree.feedback_edges.len() != before_fb;
+
+        if tree_changed {
+            if let Err(e) = storage.save_tree(&tree) {
+                let _ = storage.release_lock();
+                return CommandOutput {
+                    success: false,
+                    action: "node_rm".to_string(),
+                    workspace: ws_name,
+                    data: NodeRmData {
+                        removed_nodes: vec![],
+                        removed_edges_count: 0,
+                        affected_trees: vec![],
+                    },
+                    graph_health: GraphHealth {
+                        valid_dag: true,
+                        orphan_nodes_count: 0,
+                    },
+                    errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                    warnings: vec![],
+                };
+            }
+            total_removed_edges += edges_removed;
+            affected_trees.push(tree_id.clone());
+        }
+    }
+
+    let mut removed_nodes = Vec::new();
+    for id in ids {
+        if let Err(e) = storage.delete_node(id) {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_rm".to_string(),
+                workspace: ws_name,
+                data: NodeRmData {
+                    removed_nodes,
+                    removed_edges_count: total_removed_edges,
+                    affected_trees,
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+        removed_nodes.push(id.clone());
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "node_rm".to_string(),
+        workspace: ws_name,
+        data: NodeRmData {
+            removed_nodes,
+            removed_edges_count: total_removed_edges,
+            affected_trees,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Summary of a node's participation in one tree.
+#[derive(Debug, Serialize)]
+pub struct NodeTreeParticipation {
+    pub tree_id: String,
+    pub tree_name: String,
+    pub role: Option<String>,
+    pub connections: NodeConnections,
+}
+
+/// Inbound and outbound connections of a node within a tree.
+#[derive(Debug, Serialize)]
+pub struct NodeConnections {
+    pub inbound: Vec<EdgeSummary>,
+    pub outbound: Vec<EdgeSummary>,
+}
+
+/// Compact representation of an edge for inspect output.
+#[derive(Debug, Serialize)]
+pub struct EdgeSummary {
+    pub id: String,
+    pub from: Vec<String>,
+    pub to: String,
+    pub operator: Operator,
+}
+
+/// Data returned by `node inspect`.
+#[derive(Debug, Serialize)]
+pub struct NodeInspectData {
+    pub id: String,
+    pub node_type: NodeType,
+    pub label: String,
+    pub tags: Vec<String>,
+    pub observable: bool,
+    pub status: NodeStatus,
+    pub trees: Vec<NodeTreeParticipation>,
+}
+
+/// Execute `node inspect` command.
+///
+/// Shows which trees a node participates in, its role in each,
+/// and all inbound/outbound edges per tree.
+pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<NodeInspectData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let node = match storage.load_node(id) {
+        Ok(n) => n,
+        Err(_) => {
+            return CommandOutput {
+                success: false,
+                action: "node_inspect".to_string(),
+                workspace: ws_name,
+                data: NodeInspectData {
+                    id: id.to_string(),
+                    node_type: NodeType::Ude,
+                    label: String::new(),
+                    tags: vec![],
+                    observable: true,
+                    status: NodeStatus::Active,
+                    trees: vec![],
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "NODE_NOT_FOUND",
+                    format!("Node '{}' not found", id),
+                )],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let tree_ids = storage.list_tree_ids().unwrap_or_default();
+    let mut participations = Vec::new();
+
+    for tree_id in &tree_ids {
+        let tree = match storage.load_tree(tree_id) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        let node_ref = tree.nodes.iter().find(|nr| nr.node_ref == id);
+        if let Some(nr) = node_ref {
+            let inbound: Vec<EdgeSummary> = tree
+                .edges
+                .iter()
+                .filter(|e| e.to == id)
+                .map(|e| EdgeSummary {
+                    id: e.id.clone(),
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                    operator: e.operator,
+                })
+                .collect();
+
+            let outbound: Vec<EdgeSummary> = tree
+                .edges
+                .iter()
+                .filter(|e| e.from.contains(&id.to_string()))
+                .map(|e| EdgeSummary {
+                    id: e.id.clone(),
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                    operator: e.operator,
+                })
+                .collect();
+
+            participations.push(NodeTreeParticipation {
+                tree_id: tree.id.clone(),
+                tree_name: tree.name.clone(),
+                role: nr.role.clone(),
+                connections: NodeConnections { inbound, outbound },
+            });
+        }
+    }
+
+    CommandOutput::ok(
+        "node_inspect",
+        &ws_name,
+        NodeInspectData {
+            id: node.id,
+            node_type: node.node_type,
+            label: node.label,
+            tags: node.tags,
+            observable: node.observable,
+            status: node.metadata.status,
+            trees: participations,
+        },
+    )
+}
+
+/// Summary of a newly created node after split.
+#[derive(Debug, Serialize)]
+pub struct NewNodeSummary {
+    pub id: String,
+    pub label: String,
+    pub node_type: NodeType,
+}
+
+/// Data returned by `node split`.
+#[derive(Debug, Serialize)]
+pub struct NodeSplitData {
+    pub original_id: String,
+    pub new_nodes: Vec<NewNodeSummary>,
+    pub tree_id: String,
+}
+
+/// Execute `node split` command.
+///
+/// Splits a node into two new nodes within a specific tree.
+/// Incoming edges of the original are redirected to the first new node.
+/// Outgoing edges of the original are redirected from the second new node.
+/// The original node is removed from pool and tree.
+pub fn execute_node_split(
+    storage: &dyn Storage,
+    id: &str,
+    labels: &[String],
+    tree_id: &str,
+) -> CommandOutput<NodeSplitData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let empty_data = || NodeSplitData {
+        original_id: id.to_string(),
+        new_nodes: vec![],
+        tree_id: tree_id.to_string(),
+    };
+
+    if labels.len() != 2 {
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "INVALID_ARGS",
+                "Split requires exactly 2 labels",
+            )],
+            warnings: vec![],
+        };
+    }
+
+    let original = match storage.load_node(id) {
+        Ok(n) => n,
+        Err(_) => {
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "NODE_NOT_FOUND",
+                    format!("Node '{}' not found", id),
+                )],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let lock_outcome = match storage.acquire_lock("node split") {
+        Ok(o) => o,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    if !tree.nodes.iter().any(|nr| nr.node_ref == id) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "NODE_NOT_IN_TREE",
+                format!("Node '{}' is not attached to tree '{}'", id, tree_id),
+            )],
+            warnings: vec![],
+        };
+    }
+
+    let type_prefix = original.node_type.prefix();
+    let id_first = match storage.next_id(type_prefix) {
+        Ok(new_id) => new_id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+    let id_second = match storage.next_id(type_prefix) {
+        Ok(new_id) => new_id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let node_first = Node {
+        id: id_first.clone(),
+        node_type: original.node_type,
+        label: labels[0].clone(),
+        tags: original.tags.clone(),
+        observable: original.observable,
+        metadata: NodeMetadata {
+            status: NodeStatus::Active,
+            extra: Default::default(),
+        },
+    };
+    let node_second = Node {
+        id: id_second.clone(),
+        node_type: original.node_type,
+        label: labels[1].clone(),
+        tags: original.tags.clone(),
+        observable: original.observable,
+        metadata: NodeMetadata {
+            status: NodeStatus::Active,
+            extra: Default::default(),
+        },
+    };
+
+    if let Err(e) = storage.save_node(&node_first) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+    if let Err(e) = storage.save_node(&node_second) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    // Update tree: replace original node ref with two new refs
+    tree.nodes.retain(|nr| nr.node_ref != id);
+    tree.nodes.push(crate::tree::NodeRef {
+        node_ref: id_first.clone(),
+        role: None,
+    });
+    tree.nodes.push(crate::tree::NodeRef {
+        node_ref: id_second.clone(),
+        role: None,
+    });
+
+    // Redirect inbound edges (to == original) -> to = first
+    for edge in &mut tree.edges {
+        if edge.to == id {
+            edge.to = id_first.clone();
+        }
+    }
+    // Redirect outbound edges (from contains original) -> replace with second
+    for edge in &mut tree.edges {
+        for from_ref in &mut edge.from {
+            if *from_ref == id {
+                *from_ref = id_second.clone();
+            }
+        }
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    if let Err(e) = storage.delete_node(id) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_split".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "node_split".to_string(),
+        workspace: ws_name,
+        data: NodeSplitData {
+            original_id: id.to_string(),
+            new_nodes: vec![
+                NewNodeSummary {
+                    id: id_first,
+                    label: labels[0].clone(),
+                    node_type: original.node_type,
+                },
+                NewNodeSummary {
+                    id: id_second,
+                    label: labels[1].clone(),
+                    node_type: original.node_type,
+                },
+            ],
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
 }

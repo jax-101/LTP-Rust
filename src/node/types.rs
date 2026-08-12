@@ -19,6 +19,27 @@ pub enum NodeType {
     Pre,
 }
 
+impl NodeType {
+    /// Returns the ID prefix string used for sequential ID generation.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            Self::Ude => "UDE",
+            Self::Rc => "RC",
+            Self::Inj => "INJ",
+            Self::Nc => "NC",
+            Self::Goal => "GOAL",
+            Self::Obj => "OBJ",
+            Self::Want => "WANT",
+            Self::Obs => "OBS",
+            Self::Io => "IO",
+            Self::Int => "INT",
+            Self::De => "DE",
+            Self::Req => "REQ",
+            Self::Pre => "PRE",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
