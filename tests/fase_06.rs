@@ -886,3 +886,142 @@ fn uat_6_14_reoperator_mag_to_and() {
     assert_eq!(json["data"]["new_operator"], "AND");
     assert_eq!(json["data"]["old_operator"], "MAG");
 }
+
+/// UAT 6.15: add-cause to AND edge expands from[].
+#[test]
+fn uat_6_15_add_cause_and() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "A", "rc");
+    let b = add_node(dir, "B", "rc");
+    let c = add_node(dir, "C", "ude");
+    let x = add_node(dir, "X", "rc");
+    let tree = create_tree(dir, "crt", "AddCauseTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &x);
+
+    let (json, _) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "add-cause",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["added_node"], x);
+}
+
+/// UAT 6.16: add-cause on SINGLE without --promote-to → error.
+#[test]
+fn uat_6_16_add_cause_single_no_promote() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "A", "rc");
+    let b = add_node(dir, "B", "ude");
+    let x = add_node(dir, "X", "rc");
+    let tree = create_tree(dir, "crt", "AddCauseFail");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &x);
+    let link = connect(dir, &tree, &a, &b);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "add-cause",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+        ],
+    );
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "PROMOTE_TO_REQUIRED");
+}
+
+/// UAT 6.17: rm-cause reduces from[]; if 1 left → SINGLE.
+#[test]
+fn uat_6_17_rm_cause_reduces_to_single() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "A", "rc");
+    let b = add_node(dir, "B", "rc");
+    let c = add_node(dir, "C", "ude");
+    let tree = create_tree(dir, "crt", "RmCauseTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+
+    let (json, _) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link", "rm-cause", "--tree", &tree, "--link", &link, "--node", &a,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["removed_node"], a);
+    assert_eq!(json["data"]["new_operator"], "SINGLE");
+}

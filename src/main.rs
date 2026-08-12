@@ -6,8 +6,9 @@ use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
 use ltp_engine::link::advanced::{
-    execute_link_dissolve, execute_link_group, execute_link_insert_between, execute_link_move,
-    execute_link_reoperator, execute_link_reverse, execute_link_split,
+    execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
+    execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
+    execute_link_split,
 };
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
@@ -1076,6 +1077,33 @@ fn main() {
                 operator,
             } => {
                 let output = execute_link_reoperator(&storage, &tree, &link, &operator);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::AddCause {
+                tree,
+                link,
+                node,
+                weight,
+                promote_to,
+            } => {
+                let output = execute_link_add_cause(
+                    &storage,
+                    &tree,
+                    &link,
+                    &node,
+                    weight,
+                    promote_to.as_deref(),
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::RmCause { tree, link, node } => {
+                let output = execute_link_rm_cause(&storage, &tree, &link, &node);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

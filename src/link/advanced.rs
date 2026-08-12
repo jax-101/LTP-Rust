@@ -1675,3 +1675,406 @@ pub fn execute_link_reoperator(
         warnings,
     }
 }
+
+/// Builds a failed `link add-cause` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn add_cause_error(
+    ws_name: &str,
+    tree_id: &str,
+    link_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkAddCauseData> {
+    CommandOutput {
+        success: false,
+        action: "link_add_cause".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkAddCauseData {
+            link_id: link_id.to_string(),
+            added_node: String::new(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link add-cause`.
+///
+/// Adds a node to an existing edge's `from[]`, per ENGINE_SPEC.md §2.7.
+///
+/// - **Grouped edge** (`operator` is AND/OR/MAG/XOR): the node is simply
+///   appended to `from[]`; `--promote-to` is ignored since the edge is
+///   already a group.
+/// - **SINGLE edge**: a lone cause cannot silently become a group, so the
+///   caller must pass `--promote-to <AND|OR|MAG|XOR>` naming the operator
+///   the edge should adopt (`PROMOTE_TO_REQUIRED` if omitted;
+///   `INVALID_OPERATOR` if unparseable or itself SINGLE).
+///
+/// When the resulting operator is MAG, `weight` (if provided) becomes the
+/// edge's `weight`; if MAG and no weight is available either way, a
+/// `MAG_WEIGHT_MISSING` warning is emitted, mirroring `link group` and
+/// `link reoperator`.
+///
+/// Fails with `CAUSE_ALREADY_IN_GROUP` if `node_id` is already present in
+/// `from[]`. The node must exist in the pool and be attached to the target
+/// tree, mirroring `link connect`'s own referential-integrity checks.
+/// Followed by a DAG check; if adding the cause would introduce a cycle,
+/// the tree is not persisted and the original edge is left untouched on
+/// disk.
+pub fn execute_link_add_cause(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    node_id: &str,
+    weight: Option<f64>,
+    promote_to: Option<&str>,
+) -> CommandOutput<LinkAddCauseData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_add_cause";
+
+    let lock_outcome = match storage.acquire_lock("link add-cause") {
+        Ok(o) => o,
+        Err(e) => return add_cause_error(&ws_name, tree_id, link_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return add_cause_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return add_cause_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    if storage.load_node(node_id).is_err() {
+        let _ = storage.release_lock();
+        return add_cause_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "REFERENTIAL_INTEGRITY_VIOLATION",
+            format!("Node '{}' not found in pool", node_id),
+        );
+    }
+    if !tree.nodes.iter().any(|n| n.node_ref == node_id) {
+        let _ = storage.release_lock();
+        return add_cause_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "NODE_NOT_IN_TREE",
+            format!("Node '{}' is not attached to tree '{}'", node_id, tree_id),
+        );
+    }
+
+    if tree.edges[edge_idx].from.iter().any(|f| f == node_id) {
+        let _ = storage.release_lock();
+        return add_cause_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CAUSE_ALREADY_IN_GROUP",
+            format!(
+                "Node '{}' is already a cause of edge '{}'",
+                node_id, link_id
+            ),
+        );
+    }
+
+    let old_operator = tree.edges[edge_idx].operator;
+    let old_from = tree.edges[edge_idx].from.clone();
+    let old_weight = tree.edges[edge_idx].weight;
+
+    let new_operator = if old_operator == Operator::Single {
+        let promote = match promote_to {
+            Some(p) => p,
+            None => {
+                let _ = storage.release_lock();
+                return add_cause_error(
+                    &ws_name,
+                    tree_id,
+                    link_id,
+                    "PROMOTE_TO_REQUIRED",
+                    "Edge is SINGLE; pass --promote-to <AND|OR|MAG|XOR> to add a second cause",
+                );
+            }
+        };
+        match parse_operator(promote) {
+            Some(Operator::Single) => {
+                let _ = storage.release_lock();
+                return add_cause_error(
+                    &ws_name,
+                    tree_id,
+                    link_id,
+                    "INVALID_OPERATOR",
+                    "--promote-to cannot be SINGLE; a SINGLE edge already has exactly one cause",
+                );
+            }
+            Some(o) => o,
+            None => {
+                let _ = storage.release_lock();
+                return add_cause_error(
+                    &ws_name,
+                    tree_id,
+                    link_id,
+                    "INVALID_OPERATOR",
+                    format!("Unknown operator: {}", promote),
+                );
+            }
+        }
+    } else {
+        old_operator
+    };
+
+    let mut warnings: Vec<OutputWarning> = vec![];
+    let new_weight = if new_operator == Operator::Mag {
+        let w = weight.or(old_weight);
+        if w.is_none() {
+            warnings.push(OutputWarning::new(
+                "MAG_WEIGHT_MISSING",
+                "Operator MAG without --weight; magnitude estimation pending",
+            ));
+        }
+        w
+    } else {
+        old_weight
+    };
+
+    tree.edges[edge_idx].operator = new_operator;
+    tree.edges[edge_idx].weight = new_weight;
+    tree.edges[edge_idx].from.push(node_id.to_string());
+
+    if let Err(e) = check_dag(&tree.edges, tree_id) {
+        // Roll back the mutation; nothing is persisted on failure.
+        tree.edges[edge_idx].operator = old_operator;
+        tree.edges[edge_idx].weight = old_weight;
+        tree.edges[edge_idx].from = old_from;
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = add_cause_error(&ws_name, tree_id, link_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return add_cause_error(&ws_name, tree_id, link_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.insert(0, w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkAddCauseData {
+            link_id: link_id.to_string(),
+            added_node: node_id.to_string(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link rm-cause` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn rm_cause_error(
+    ws_name: &str,
+    tree_id: &str,
+    link_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkRmCauseData> {
+    CommandOutput {
+        success: false,
+        action: "link_rm_cause".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkRmCauseData {
+            link_id: link_id.to_string(),
+            removed_node: String::new(),
+            new_operator: Operator::Single,
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link rm-cause`.
+///
+/// Removes a node from an existing edge's `from[]`, per ENGINE_SPEC.md
+/// §2.7 — the inverse of `link add-cause`. Fails with
+/// `CANNOT_REMOVE_SINGLE_CAUSE` if the edge is SINGLE: its lone cause is
+/// the edge's only source, so removing it would leave `from[]` empty;
+/// `link disconnect` is the command for removing the edge entirely.
+///
+/// Fails with `CAUSE_NOT_IN_GROUP` if `node_id` is not present in
+/// `from[]`. If removing the node leaves exactly one cause behind, the
+/// edge is automatically downgraded to SINGLE and any MAG `weight` is
+/// discarded, mirroring the same auto-downgrade `link split` performs on
+/// its own original edge.
+///
+/// Followed by a DAG check for consistency with every other
+/// topology-mutating command, though removing a cause from an edge whose
+/// direction is unchanged can never introduce a cycle that didn't already
+/// exist.
+pub fn execute_link_rm_cause(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    node_id: &str,
+) -> CommandOutput<LinkRmCauseData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_rm_cause";
+
+    let lock_outcome = match storage.acquire_lock("link rm-cause") {
+        Ok(o) => o,
+        Err(e) => return rm_cause_error(&ws_name, tree_id, link_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return rm_cause_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return rm_cause_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    if tree.edges[edge_idx].operator == Operator::Single {
+        let _ = storage.release_lock();
+        return rm_cause_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CANNOT_REMOVE_SINGLE_CAUSE",
+            format!(
+                "Edge '{}' is SINGLE; use `link disconnect` to remove its only cause",
+                link_id
+            ),
+        );
+    }
+
+    let pos = match tree.edges[edge_idx].from.iter().position(|f| f == node_id) {
+        Some(p) => p,
+        None => {
+            let _ = storage.release_lock();
+            return rm_cause_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "CAUSE_NOT_IN_GROUP",
+                format!(
+                    "Cause '{}' is not in the from[] of edge '{}'",
+                    node_id, link_id
+                ),
+            );
+        }
+    };
+
+    let old_operator = tree.edges[edge_idx].operator;
+    let old_from = tree.edges[edge_idx].from.clone();
+    let old_weight = tree.edges[edge_idx].weight;
+
+    tree.edges[edge_idx].from.remove(pos);
+
+    let new_operator = if tree.edges[edge_idx].from.len() == 1 {
+        tree.edges[edge_idx].operator = Operator::Single;
+        tree.edges[edge_idx].weight = None;
+        Operator::Single
+    } else {
+        old_operator
+    };
+
+    if let Err(e) = check_dag(&tree.edges, tree_id) {
+        // Roll back the mutation; nothing is persisted on failure.
+        tree.edges[edge_idx].operator = old_operator;
+        tree.edges[edge_idx].weight = old_weight;
+        tree.edges[edge_idx].from = old_from;
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = rm_cause_error(&ws_name, tree_id, link_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return rm_cause_error(&ws_name, tree_id, link_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkRmCauseData {
+            link_id: link_id.to_string(),
+            removed_node: node_id.to_string(),
+            new_operator,
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
