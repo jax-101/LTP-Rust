@@ -1,3 +1,4 @@
+pub mod advanced;
 pub mod commands;
 pub mod types;
 

@@ -371,6 +371,8 @@ enum LinkAction {
         node: String,
         #[arg(long)]
         weight: Option<f64>,
+        #[arg(long)]
+        promote_to: Option<String>,
     },
     RmCause {
         #[arg(long)]
