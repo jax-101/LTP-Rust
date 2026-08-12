@@ -71,6 +71,18 @@ src/validate/
 
 ## Pasos de Implementación
 
+### Paso 0: Infraestructura de logging (`tracing`)
+
+**Archivos**: `Cargo.toml`, `src/main.rs`
+
+- Añadir dependencias: `tracing` + `tracing-subscriber` (con feature `env-filter`)
+- En `main()`: inicializar subscriber con `EnvFilter` desde variable `LTP_LOG` (default: off)
+- Niveles: `error` / `warn` / `info` / `debug` / `trace`
+- Output a **stderr** (para no contaminar stdout JSON)
+- Instrumentar puntos clave: lectura/escritura de ficheros en Storage, adquisición/liberación de lock, inicio de cada validación
+
+**Uso**: `LTP_LOG=debug ltp validate` produce logs de diagnóstico en stderr sin afectar el contrato JSON de stdout.
+
 ### Paso 1: Tipos y estructura del módulo validate
 
 **Archivos**: `src/validate/mod.rs`
@@ -201,13 +213,14 @@ Crear 14 tests de integración que invoquen el binario `ltp` como proceso hijo e
 ## Orden de Ejecución
 
 ```
-Paso 1 (tipos)
-  → Paso 2 (integridad) + Paso 3 (EC) + Paso 4-5 (CLR) + Paso 6 (orphans)  [parallelizables]
-    → Paso 7 (orquestación + NBR DAG)
-      → Paso 8 (integración main.rs)
-        → Paso 9 (tests CLI)
-          → cargo check + clippy + test + fmt
-            → Actualizar PROGRESS.md
+Paso 0 (tracing infra)
+  → Paso 1 (tipos)
+    → Paso 2 (integridad) + Paso 3 (EC) + Paso 4-5 (CLR) + Paso 6 (orphans)  [parallelizables]
+      → Paso 7 (orquestación + NBR DAG)
+        → Paso 8 (integración main.rs)
+          → Paso 9 (tests CLI)
+            → cargo check + clippy + test + fmt
+              → Actualizar PROGRESS.md
 ```
 
 ---
