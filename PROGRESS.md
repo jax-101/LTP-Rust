@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 14% |
-| **Fase actual** | F3 |
-| **Última fase completada** | F2a — Nodos standalone |
+| **Avance global** | 22% |
+| **Fase actual** | F4 |
+| **Última fase completada** | F3 — Vistas (trees) |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -20,7 +20,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 |------|---------|-----------|-------------|--------|------|-------|
 | F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | 10% | ✅ Completado | 6/6 | |
 | F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ✅ Completado | 9/9 | |
-| F3 | Vistas (trees) | 8% | 8% | ⬜ Pendiente | 0/11 | |
+| F3 | Vistas (trees) | 8% | 8% | ✅ Completado | 11/11 | |
 | F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ⬜ Pendiente | 0/11 | |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ⬜ Pendiente | 0/7 | |
 | F5 | Validación completa | 8% | 8% | ⬜ Pendiente | 0/14 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **15/128** | |
+| | **TOTAL** | **100%** | **100%** | | **26/128** | |
 
 ---
 
@@ -76,6 +76,26 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F3: Vistas (trees)
+
+---
+
+### [F3] — Vistas (trees)
+**Fecha**: 2026-08-12
+**Avance fase**: 11/11 UATs ✅
+**Avance global**: 14% → 22%
+**Esfuerzo estimado**: 8% | **Esfuerzo real (percibido)**: 8%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp tree new` con ID slug-based y lógica por tipo (sufficiency/necessity)
+- `ltp tree list/rm/attach/detach`
+- `ltp tree clone` con edges independientes y nodos compartidos
+- `ltp tree diff` entre dos trees (nodes/edges added/removed)
+- `ltp tree walk` con Kahn's algorithm (topological/reverse)
+- 11 tests de integración CLI (UATs 3.1–3.11)
+
+#### Siguiente
+- F4: Enlaces básicos (connect/disconnect/feedback)
 
 ---
 

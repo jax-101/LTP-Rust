@@ -9,6 +9,10 @@ use ltp_engine::node::commands::{
 };
 use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
 use ltp_engine::storage::Storage;
+use ltp_engine::tree::commands::{
+    execute_tree_attach, execute_tree_clone, execute_tree_detach, execute_tree_diff,
+    execute_tree_list, execute_tree_new, execute_tree_rm, execute_tree_walk,
+};
 use ltp_engine::tree::Tree;
 use ltp_engine::validate::check_dag;
 use ltp_engine::workspace::FsStorage;
@@ -861,6 +865,69 @@ fn main() {
                 );
                 render_output(&output, cli.human);
                 process::exit(1);
+            }
+        },
+        Commands::Tree { action } => match action {
+            TreeAction::New { r#type, name } => {
+                let output = execute_tree_new(&storage, &r#type, &name);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::List => {
+                let output = execute_tree_list(&storage);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Rm { tree_id } => {
+                let output = execute_tree_rm(&storage, &tree_id);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Attach { tree, node, role } => {
+                let output = execute_tree_attach(&storage, &tree, &node, role.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Detach { tree, node } => {
+                let output = execute_tree_detach(&storage, &tree, &node);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Clone { tree_id, name } => {
+                let output = execute_tree_clone(&storage, &tree_id, &name);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Diff { tree_a, tree_b } => {
+                let output = execute_tree_diff(&storage, &tree_a, &tree_b);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Walk {
+                tree_id,
+                order,
+                show_origin: _,
+                expand_nbr: _,
+            } => {
+                let output = execute_tree_walk(&storage, &tree_id, &order);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
             }
         },
         _ => {
