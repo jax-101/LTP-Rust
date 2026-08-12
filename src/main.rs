@@ -4,6 +4,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 use ltp_engine::errors::LtpError;
+use ltp_engine::node::commands::{
+    execute_node_add, execute_node_edit, execute_node_list, execute_node_search,
+};
 use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
 use ltp_engine::storage::Storage;
 use ltp_engine::tree::Tree;
@@ -180,7 +183,7 @@ enum NodeAction {
     },
     List {
         #[arg(long)]
-        tree: String,
+        tree: Option<String>,
         #[arg(long, value_delimiter = ',')]
         r#type: Option<Vec<String>>,
         #[arg(long, value_delimiter = ',')]
@@ -188,7 +191,7 @@ enum NodeAction {
     },
     Search {
         #[arg(long)]
-        tree: String,
+        tree: Option<String>,
         #[arg(long)]
         query: String,
     },
@@ -796,6 +799,70 @@ fn main() {
                 process::exit(1);
             }
         }
+        Commands::Node { action } => match action {
+            NodeAction::Add {
+                label,
+                r#type,
+                tags,
+                observable,
+            } => {
+                let output = execute_node_add(&storage, &label, &r#type, tags, observable);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NodeAction::Edit {
+                id,
+                label,
+                add_tag,
+                rm_tag,
+                observable,
+            } => {
+                let output = execute_node_edit(
+                    &storage,
+                    &id,
+                    label.as_deref(),
+                    add_tag.as_deref(),
+                    rm_tag.as_deref(),
+                    observable,
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NodeAction::List {
+                tree: _tree,
+                r#type,
+                status,
+            } => {
+                let output = execute_node_list(&storage, r#type.as_deref(), status.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NodeAction::Search { tree: _tree, query } => {
+                let output = execute_node_search(&storage, &query);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            _ => {
+                let output = error_output(
+                    "node",
+                    "",
+                    vec![OutputError::new(
+                        "NOT_IMPLEMENTED",
+                        "Node subcommand not yet implemented",
+                    )],
+                );
+                render_output(&output, cli.human);
+                process::exit(1);
+            }
+        },
         _ => {
             let output = error_output(
                 "unknown",

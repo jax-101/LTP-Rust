@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 10% |
-| **Fase actual** | F2a |
-| **Última fase completada** | F1 — Fundación |
+| **Avance global** | 14% |
+| **Fase actual** | F3 |
+| **Última fase completada** | F2a — Nodos standalone |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -19,7 +19,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | Fase | Paquete | Peso Est. | Peso Ajust. | Estado | UATs | Notas |
 |------|---------|-----------|-------------|--------|------|-------|
 | F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | 10% | ✅ Completado | 6/6 | |
-| F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ⬜ Pendiente | 0/9 | |
+| F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ✅ Completado | 9/9 | |
 | F3 | Vistas (trees) | 8% | 8% | ⬜ Pendiente | 0/11 | |
 | F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ⬜ Pendiente | 0/11 | |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ⬜ Pendiente | 0/7 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **6/128** | |
+| | **TOTAL** | **100%** | **100%** | | **15/128** | |
 
 ---
 
@@ -56,6 +56,26 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F2a: Nodos standalone (add/edit/list/search)
+
+---
+
+### [F2a] — Nodos standalone (add/edit/list/search)
+**Fecha**: 2026-08-12
+**Avance fase**: 9/9 UATs ✅
+**Avance global**: 10% → 14%
+**Esfuerzo estimado**: 4% | **Esfuerzo real (percibido)**: 4%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp node add` con generación de ID secuencial y linter CLR#2
+- `ltp node edit` (label, add-tag, rm-tag, observable)
+- `ltp node list` sobre pool global con filtros --type/--status
+- `ltp node search` por substring case-insensitive
+- Linter CLR#2: detección de conjunciones causales (warning no-bloqueante)
+- 9 tests de integración CLI (UATs 2a.1–2a.9)
+
+#### Siguiente
+- F3: Vistas (trees)
 
 ---
 
