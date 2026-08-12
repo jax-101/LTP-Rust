@@ -5,6 +5,11 @@ use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
+use ltp_engine::link::advanced::{
+    execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
+    execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
+    execute_link_split,
+};
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
 };
@@ -371,6 +376,8 @@ enum LinkAction {
         node: String,
         #[arg(long)]
         weight: Option<f64>,
+        #[arg(long)]
+        promote_to: Option<String>,
     },
     RmCause {
         #[arg(long)]
@@ -985,6 +992,118 @@ fn main() {
             } => {
                 let output =
                     execute_link_feedback(&storage, &tree, &from, &to, &r#type, label.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Reverse { tree, link, force } => {
+                let output = execute_link_reverse(&storage, &tree, &link, force);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Move {
+                tree,
+                link,
+                new_from,
+                new_to,
+            } => {
+                let output = execute_link_move(
+                    &storage,
+                    &tree,
+                    &link,
+                    new_from.as_deref(),
+                    new_to.as_deref(),
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::InsertBetween {
+                tree,
+                link,
+                node,
+                insert_after_cause,
+                insert_before_effect,
+            } => {
+                let output = execute_link_insert_between(
+                    &storage,
+                    &tree,
+                    &link,
+                    &node,
+                    insert_after_cause.as_deref(),
+                    insert_before_effect,
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Group {
+                tree,
+                links,
+                operator,
+            } => {
+                let output = execute_link_group(&storage, &tree, &links, &operator);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Dissolve { tree, link } => {
+                let output = execute_link_dissolve(&storage, &tree, &link);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Split {
+                tree,
+                link,
+                extract,
+            } => {
+                let output = execute_link_split(&storage, &tree, &link, &extract);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Reoperator {
+                tree,
+                link,
+                operator,
+            } => {
+                let output = execute_link_reoperator(&storage, &tree, &link, &operator);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::AddCause {
+                tree,
+                link,
+                node,
+                weight,
+                promote_to,
+            } => {
+                let output = execute_link_add_cause(
+                    &storage,
+                    &tree,
+                    &link,
+                    &node,
+                    weight,
+                    promote_to.as_deref(),
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::RmCause { tree, link, node } => {
+                let output = execute_link_rm_cause(&storage, &tree, &link, &node);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

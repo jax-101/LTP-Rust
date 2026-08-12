@@ -87,6 +87,21 @@ mi-proyecto-ltp/
 - Prohibido `.unwrap()`/`.expect()` en codigo de produccion.
 - Documentacion `///` en todos los items publicos.
 
+## Six Thinking Hats — Revision Interna para Rust
+
+Aplicar esta revision mentalmente en refactorizaciones o tareas de arquitectura complejas antes de generar el codigo final.
+
+| Sombrero | Enfoque en Rust |
+|----------|----------------|
+| **Blanco (Datos)** | Revision estricta de errores de `rustc`, warnings de `cargo clippy` y coherencia de firmas de tipos. Solo hechos: que dice el compilador, que dice el linter. |
+| **Rojo (Intuicion)** | Ergonomia de la API y legibilidad del codigo. Si una firma se siente incomoda de usar o un bloque cuesta leer en 5 segundos, es senal de rediseno. |
+| **Negro (Critico — Obligatorio)** | Deteccion de `.clone()` injustificados, `Arc<Mutex<T>>` como parche al borrow checker, asignaciones innecesarias en el heap (`Box` donde basta un stack value), y cualquier workaround que esquive ownership en vez de resolverlo. |
+| **Amarillo (Beneficios)** | Rendimiento, mantenibilidad a largo plazo y abstracciones de coste cero (`impl Trait`, generics, newtypes). Evaluar que se gana con la solucion propuesta. |
+| **Verde (Alternativas)** | Buscar soluciones idiomaticas basadas en lifetimes, referencias y sistema de tipos antes de duplicar memoria. Preferir `&str` sobre `String`, iteradores sobre colecciones intermedias, enums sobre flags booleanos. |
+| **Azul (Proceso)** | Coherencia con la arquitectura de `ltp-engine`: enfoque Type-First (definir structs/enums/traits antes de logica), determinismo (BTreeMap, IDs secuenciales), y alineacion con ADRs vigentes. |
+
+El Sombrero Negro es obligatorio en toda revision. Los demas se activan segun la complejidad de la tarea.
+
 ## Git Workflow
 
 - **Commit tras cada hito**: al completar un paso significativo (plan creado, sub-modulo funcional, UATs pasando, fase completa), hacer commit inmediatamente. No acumular trabajo sin commitear.
