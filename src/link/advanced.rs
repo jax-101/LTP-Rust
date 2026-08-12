@@ -316,3 +316,218 @@ pub fn execute_link_reverse(
         warnings,
     }
 }
+
+/// Execute `link move`.
+///
+/// Redirects an existing edge to a new origin (`new_from`) and/or a new
+/// destination (`new_to`). At least one of the two must be provided by the
+/// caller (enforced by the CLI dispatch layer). A redirected origin always
+/// replaces the entire `from` vector with a single node, since `link move`
+/// targets a single-node redirect rather than a grouped-cause edge.
+///
+/// New endpoints must exist in the node pool and be attached to the target
+/// tree, mirroring the checks performed by `link connect`. The mutation is
+/// followed by a DAG check; if the move would introduce a cycle, the tree is
+/// not persisted and the original edge is left untouched on disk.
+pub fn execute_link_move(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    new_from: Option<&str>,
+    new_to: Option<&str>,
+) -> CommandOutput<LinkMoveData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_move";
+
+    let empty_data = || LinkMoveData {
+        link_id: link_id.to_string(),
+        tree_id: tree_id.to_string(),
+    };
+
+    if new_from.is_none() && new_to.is_none() {
+        return CommandOutput {
+            success: false,
+            action: action.to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "INVALID_ARGS",
+                "At least one of --new-from or --new-to must be provided",
+            )],
+            warnings: vec![],
+        };
+    }
+
+    let lock_outcome = match storage.acquire_lock("link move") {
+        Ok(o) => o,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: action.to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: action.to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: action.to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "LINK_NOT_FOUND",
+                    format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+                )],
+                warnings: vec![],
+            };
+        }
+    };
+
+    // Validate new endpoints exist in the node pool and are attached to the
+    // tree, mirroring `link connect`'s referential-integrity checks.
+    for node_id in new_from.into_iter().chain(new_to) {
+        if storage.load_node(node_id).is_err() {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: action.to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "REFERENTIAL_INTEGRITY_VIOLATION",
+                    format!("Node '{}' not found in pool", node_id),
+                )],
+                warnings: vec![],
+            };
+        }
+
+        if !tree.nodes.iter().any(|n| n.node_ref == node_id) {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: action.to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "NODE_NOT_IN_TREE",
+                    format!("Node '{}' is not attached to tree '{}'", node_id, tree_id),
+                )],
+                warnings: vec![],
+            };
+        }
+    }
+
+    let old_from = tree.edges[edge_idx].from.clone();
+    let old_to = tree.edges[edge_idx].to.clone();
+
+    if let Some(nf) = new_from {
+        tree.edges[edge_idx].from = vec![nf.to_string()];
+    }
+    if let Some(nt) = new_to {
+        tree.edges[edge_idx].to = nt.to_string();
+    }
+
+    if let Err(e) = check_dag(&tree.edges, tree_id) {
+        // Roll back the mutation; nothing is persisted on failure.
+        tree.edges[edge_idx].from = old_from;
+        tree.edges[edge_idx].to = old_to;
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: action.to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: false,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "CIRCULAR_DEPENDENCY_DETECTED",
+                e.to_string(),
+            )],
+            warnings: vec![],
+        };
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: action.to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: empty_data(),
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}

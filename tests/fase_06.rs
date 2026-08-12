@@ -196,3 +196,40 @@ fn uat_6_3_link_reverse_with_force() {
     let edge = &tree_content["edges"][0];
     assert_eq!(edge["assumptions"][0]["status"], "needs_review");
 }
+
+/// UAT 6.4: link move redirige destino.
+#[test]
+fn uat_6_4_link_move_new_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause", "rc");
+    let b = add_node(dir, "Old Effect", "ude");
+    let d = add_node(dir, "New Effect", "ude");
+    let tree = create_tree(dir, "crt", "MoveTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &d);
+    let link = connect(dir, &tree, &a, &b);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link", "move", "--tree", &tree, "--link", &link, "--new-to", &d,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["action"], "link_move");
+    assert_eq!(json["data"]["link_id"], link);
+
+    // Verify persisted on disk.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edge = &tree_content["edges"][0];
+    assert_eq!(edge["from"][0].as_str().unwrap(), a);
+    assert_eq!(edge["to"].as_str().unwrap(), d);
+}
