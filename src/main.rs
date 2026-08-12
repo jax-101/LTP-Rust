@@ -5,6 +5,7 @@ use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
+use ltp_engine::link::advanced::execute_link_reverse;
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
 };
@@ -987,6 +988,13 @@ fn main() {
             } => {
                 let output =
                     execute_link_feedback(&storage, &tree, &from, &to, &r#type, label.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Reverse { tree, link, force } => {
+                let output = execute_link_reverse(&storage, &tree, &link, force);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
