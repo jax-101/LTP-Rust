@@ -4,6 +4,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 use ltp_engine::errors::LtpError;
+use ltp_engine::link::commands::{
+    execute_link_connect, execute_link_disconnect, execute_link_feedback,
+};
 use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_list, execute_node_search,
 };
@@ -928,6 +931,55 @@ fn main() {
                 if !output.success {
                     process::exit(1);
                 }
+            }
+        },
+        Commands::Link { action } => match action {
+            LinkAction::Connect {
+                tree,
+                from,
+                to,
+                operator,
+                weight,
+            } => {
+                let output =
+                    execute_link_connect(&storage, &tree, &from, &to, operator.as_deref(), weight);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Disconnect { tree, links } => {
+                let output = execute_link_disconnect(&storage, &tree, &links);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Feedback {
+                tree,
+                from,
+                to,
+                r#type,
+                label,
+            } => {
+                let output =
+                    execute_link_feedback(&storage, &tree, &from, &to, &r#type, label.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            _ => {
+                let output = error_output(
+                    "link.not_implemented",
+                    "",
+                    vec![OutputError::new(
+                        "NOT_IMPLEMENTED",
+                        "Link subcommand not yet implemented",
+                    )],
+                );
+                render_output(&output, cli.human);
+                process::exit(1);
             }
         },
         _ => {

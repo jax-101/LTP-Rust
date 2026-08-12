@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 22% |
-| **Fase actual** | F4 |
-| **Última fase completada** | F3 — Vistas (trees) |
+| **Avance global** | 31% |
+| **Fase actual** | F2b |
+| **Última fase completada** | F4 — Enlaces básicos |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -21,7 +21,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | 10% | ✅ Completado | 6/6 | |
 | F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ✅ Completado | 9/9 | |
 | F3 | Vistas (trees) | 8% | 8% | ✅ Completado | 11/11 | |
-| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ⬜ Pendiente | 0/11 | |
+| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ✅ Completado | 11/11 | |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ⬜ Pendiente | 0/7 | |
 | F5 | Validación completa | 8% | 8% | ⬜ Pendiente | 0/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ⬜ Pendiente | 0/17 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **26/128** | |
+| | **TOTAL** | **100%** | **100%** | | **37/128** | |
 
 ---
 
@@ -96,6 +96,31 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F4: Enlaces básicos (connect/disconnect/feedback)
+
+---
+
+### [F4] — Enlaces básicos (connect/disconnect/feedback)
+**Fecha**: 2026-08-12
+**Avance fase**: 11/11 UATs ✅
+**Avance global**: 22% → 31%
+**Esfuerzo estimado**: 9% | **Esfuerzo real (percibido)**: 9%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp link connect` con operadores SINGLE/AND/OR/MAG/XOR y weight opcional
+- Multi-destination: `--to A,B` genera un edge SINGLE por destino
+- Multi-source: `--from A,B` con operador inferido (AND) o explícito
+- Validación de integridad referencial (nodo existe en pool + attached al tree)
+- Validación DAG (ciclo detectado = error bloqueante, no se persiste)
+- Warning `MAG_WEIGHT_MISSING` cuando operador MAG sin weight
+- `ltp link disconnect` elimina edges por ID
+- `ltp link feedback` crea feedback loops (positive/negative) en `feedback_edges[]`
+- Feedback edges excluidos de validación DAG
+- `ltp status` reporta `feedback_edge_count` por tree
+- 11 tests de integración CLI (UATs 4.1–4.11)
+
+#### Siguiente
+- F2b: Nodos cross-tree (rm/split/inspect)
 
 ---
 
