@@ -5,7 +5,9 @@ use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
-use ltp_engine::link::advanced::{execute_link_move, execute_link_reverse};
+use ltp_engine::link::advanced::{
+    execute_link_insert_between, execute_link_move, execute_link_reverse,
+};
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
 };
@@ -1012,6 +1014,26 @@ fn main() {
                     &link,
                     new_from.as_deref(),
                     new_to.as_deref(),
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::InsertBetween {
+                tree,
+                link,
+                node,
+                insert_after_cause,
+                insert_before_effect,
+            } => {
+                let output = execute_link_insert_between(
+                    &storage,
+                    &tree,
+                    &link,
+                    &node,
+                    insert_after_cause.as_deref(),
+                    insert_before_effect,
                 );
                 render_output(&output, cli.human);
                 if !output.success {

@@ -233,3 +233,235 @@ fn uat_6_4_link_move_new_to() {
     assert_eq!(edge["from"][0].as_str().unwrap(), a);
     assert_eq!(edge["to"].as_str().unwrap(), d);
 }
+
+/// UAT 6.5: insert-between SINGLE — A→B becomes A→X→B.
+#[test]
+fn uat_6_5_insert_between_single() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Effect B", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "InsertTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &x);
+    let link = connect(dir, &tree, &a, &b);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["removed_link"], link);
+    assert_eq!(json["data"]["created_links"].as_array().unwrap().len(), 2);
+
+    // Verify persisted on disk: original edge gone, two new edges A->X, X->B.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    assert!(!edges.iter().any(|e| e["id"] == link));
+    let a_to_x = edges
+        .iter()
+        .find(|e| e["from"][0] == a)
+        .expect("edge A->X missing");
+    assert_eq!(a_to_x["to"], x);
+    let x_to_b = edges
+        .iter()
+        .find(|e| e["from"][0] == x)
+        .expect("edge X->B missing");
+    assert_eq!(x_to_b["to"], b);
+}
+
+/// UAT 6.6: insert-between AND + --insert-after-cause A.
+#[test]
+fn uat_6_6_insert_between_and_after_cause() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "InsertAND");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &x);
+
+    // Create AND edge [A,B] → C
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_eq!(code, 0);
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+            "--insert-after-cause",
+            &a,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    // A extracted from group, A→X created; X replaces A in the group.
+    // The original grouped edge survives (modified), so nothing is removed
+    // and only the one new A->X edge is created.
+    assert_eq!(json["data"]["removed_link"], "");
+    assert_eq!(json["data"]["created_links"].as_array().unwrap().len(), 1);
+
+    // Verify persisted on disk: original edge still present with X in from[]
+    // instead of A, plus a new SINGLE edge A->X.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    let original = edges
+        .iter()
+        .find(|e| e["id"] == link)
+        .expect("original grouped edge missing");
+    let from: Vec<&str> = original["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(from.contains(&x.as_str()));
+    assert!(!from.contains(&a.as_str()));
+    assert_eq!(original["to"], c);
+    let a_to_x = edges
+        .iter()
+        .find(|e| e["id"] != link)
+        .expect("new A->X edge missing");
+    assert_eq!(a_to_x["from"][0], a);
+    assert_eq!(a_to_x["to"], x);
+}
+
+/// UAT 6.7: insert-between AND + --insert-before-effect.
+#[test]
+fn uat_6_7_insert_between_before_effect() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "InsertBeforeEffect");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &x);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_eq!(code, 0);
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+            "--insert-before-effect",
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    // [A,B]→C becomes [A,B]→X + X→C: original removed, two new edges.
+    assert_eq!(json["data"]["created_links"].as_array().unwrap().len(), 2);
+    assert_eq!(json["data"]["removed_link"], link);
+
+    // Verify persisted on disk.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    assert!(!edges.iter().any(|e| e["id"] == link));
+    let ab_to_x = edges
+        .iter()
+        .find(|e| e["to"] == x)
+        .expect("edge [A,B]->X missing");
+    assert_eq!(ab_to_x["operator"], "AND");
+    let from: Vec<&str> = ab_to_x["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(from.contains(&a.as_str()));
+    assert!(from.contains(&b.as_str()));
+    let x_to_c = edges
+        .iter()
+        .find(|e| e["to"] == c)
+        .expect("edge X->C missing");
+    assert_eq!(x_to_c["from"][0], x);
+    assert_eq!(x_to_c["operator"], "SINGLE");
+}

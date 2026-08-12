@@ -1,6 +1,7 @@
 use serde::Serialize;
 
-use crate::link::types::{AssumptionStatus, Operator};
+use crate::errors::LtpError;
+use crate::link::types::{AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 use crate::validate::check_dag;
@@ -523,6 +524,353 @@ pub fn execute_link_move(
         action: action.to_string(),
         workspace: ws_name,
         data: empty_data(),
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link insert-between` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn insert_between_error(
+    ws_name: &str,
+    tree_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkInsertBetweenData> {
+    CommandOutput {
+        success: false,
+        action: "link_insert_between".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkInsertBetweenData {
+            removed_link: String::new(),
+            created_links: vec![],
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// A freshly minted SINGLE edge with no operator-specific metadata.
+fn single_edge(id: String, from: String, to: String) -> Edge {
+    Edge {
+        id,
+        from: vec![from],
+        to,
+        operator: Operator::Single,
+        weight: None,
+        status: EdgeStatus::Active,
+        logic: Logic::Sufficiency,
+        assumptions: vec![],
+    }
+}
+
+/// Execute `link insert-between`.
+///
+/// Inserts an intermediate node into an existing edge. Behavior depends on
+/// the edge being split:
+///
+/// - **SINGLE edge** (`operator == Single`, i.e. a single cause): `A -> B`
+///   is replaced by two brand-new SINGLE edges, `A -> X` and `X -> B`; the
+///   original edge is removed. This is the only path available to a
+///   single-cause edge, so `--insert-after-cause` and
+///   `--insert-before-effect` are both ignored in this case — extracting
+///   the sole cause from a "group" of one and replacing it is equivalent to
+///   the plain split.
+/// - **Grouped edge (AND/OR/MAG/XOR) with `--insert-after-cause <CAUSE_ID>`**:
+///   `CAUSE_ID` is extracted from the edge's `from[]` and replaced in place
+///   by the intermediate node; a new SINGLE edge `CAUSE_ID -> X` is created.
+///   The original edge survives (only its `from[]` changes), so
+///   `removed_link` is empty and `created_links` holds just the one new
+///   edge.
+/// - **Grouped edge with `--insert-before-effect`**: `[A, B] -> C` becomes
+///   `[A, B] -> X` (a new edge that keeps the original operator/weight/
+///   logic) plus a new SINGLE edge `X -> C`. The original edge is removed;
+///   both new edges are reported in `created_links`.
+///
+/// A grouped edge must pick exactly one of the two flags — passing both, or
+/// neither, fails with `INVALID_ARGS` before any state is touched.
+///
+/// The intermediate node must already exist in the node pool and be
+/// attached to the target tree. Every branch is followed by a DAG check
+/// against the *resulting* edge set; if it would introduce a cycle, nothing
+/// is persisted and the tree on disk is left untouched.
+pub fn execute_link_insert_between(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    node_id: &str,
+    insert_after_cause: Option<&str>,
+    insert_before_effect: bool,
+) -> CommandOutput<LinkInsertBetweenData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_insert_between";
+
+    if insert_after_cause.is_some() && insert_before_effect {
+        return insert_between_error(
+            &ws_name,
+            tree_id,
+            "INVALID_ARGS",
+            "Cannot combine --insert-after-cause and --insert-before-effect",
+        );
+    }
+
+    let lock_outcome = match storage.acquire_lock("link insert-between") {
+        Ok(o) => o,
+        Err(e) => return insert_between_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return insert_between_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return insert_between_error(
+                &ws_name,
+                tree_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    if storage.load_node(node_id).is_err() {
+        let _ = storage.release_lock();
+        return insert_between_error(
+            &ws_name,
+            tree_id,
+            "REFERENTIAL_INTEGRITY_VIOLATION",
+            format!("Node '{}' not found in pool", node_id),
+        );
+    }
+    if !tree.nodes.iter().any(|n| n.node_ref == node_id) {
+        let _ = storage.release_lock();
+        return insert_between_error(
+            &ws_name,
+            tree_id,
+            "NODE_NOT_IN_TREE",
+            format!("Node '{}' is not attached to tree '{}'", node_id, tree_id),
+        );
+    }
+
+    let edge = tree.edges[edge_idx].clone();
+
+    // Compute the edge list the tree would have *after* the mutation, plus
+    // the created/removed link IDs to report. Nothing touches `tree.edges`
+    // until the DAG check below passes.
+    let (new_edges, removed_link, created_links): (Vec<Edge>, String, Vec<String>) =
+        if edge.operator == Operator::Single {
+            let a = match edge.from.first() {
+                Some(a) => a.clone(),
+                None => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "INVALID_EDGE_STATE",
+                        format!("Edge '{}' has no source node", link_id),
+                    );
+                }
+            };
+            let b = edge.to;
+
+            let new1_id = match storage.next_id("LINK") {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "ID_GENERATION_ERROR",
+                        e.to_string(),
+                    );
+                }
+            };
+            let new2_id = match storage.next_id("LINK") {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "ID_GENERATION_ERROR",
+                        e.to_string(),
+                    );
+                }
+            };
+
+            let edge1 = single_edge(new1_id.clone(), a, node_id.to_string());
+            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), b);
+
+            let mut edges: Vec<Edge> = tree
+                .edges
+                .iter()
+                .filter(|e| e.id != link_id)
+                .cloned()
+                .collect();
+            edges.push(edge1);
+            edges.push(edge2);
+
+            (edges, link_id.to_string(), vec![new1_id, new2_id])
+        } else if let Some(cause_id) = insert_after_cause {
+            let pos = match edge.from.iter().position(|f| f == cause_id) {
+                Some(p) => p,
+                None => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "CAUSE_NOT_IN_GROUP",
+                        format!(
+                            "Cause '{}' is not in the from[] of edge '{}'",
+                            cause_id, link_id
+                        ),
+                    );
+                }
+            };
+
+            let new_id = match storage.next_id("LINK") {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "ID_GENERATION_ERROR",
+                        e.to_string(),
+                    );
+                }
+            };
+
+            let new_edge = single_edge(new_id.clone(), cause_id.to_string(), node_id.to_string());
+
+            let mut edges = tree.edges.clone();
+            edges[edge_idx].from[pos] = node_id.to_string();
+            edges.push(new_edge);
+
+            (edges, String::new(), vec![new_id])
+        } else if insert_before_effect {
+            let new1_id = match storage.next_id("LINK") {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "ID_GENERATION_ERROR",
+                        e.to_string(),
+                    );
+                }
+            };
+            let new2_id = match storage.next_id("LINK") {
+                Ok(id) => id,
+                Err(e) => {
+                    let _ = storage.release_lock();
+                    return insert_between_error(
+                        &ws_name,
+                        tree_id,
+                        "ID_GENERATION_ERROR",
+                        e.to_string(),
+                    );
+                }
+            };
+
+            let edge1 = Edge {
+                id: new1_id.clone(),
+                from: edge.from.clone(),
+                to: node_id.to_string(),
+                operator: edge.operator,
+                weight: edge.weight,
+                status: EdgeStatus::Active,
+                logic: edge.logic,
+                assumptions: vec![],
+            };
+            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), edge.to);
+
+            let mut edges: Vec<Edge> = tree
+                .edges
+                .iter()
+                .filter(|e| e.id != link_id)
+                .cloned()
+                .collect();
+            edges.push(edge1);
+            edges.push(edge2);
+
+            (edges, link_id.to_string(), vec![new1_id, new2_id])
+        } else {
+            let _ = storage.release_lock();
+            return insert_between_error(
+                &ws_name,
+                tree_id,
+                "INVALID_ARGS",
+                "Grouped edge requires --insert-after-cause or --insert-before-effect",
+            );
+        };
+
+    if let Err(e) = check_dag(&new_edges, tree_id) {
+        let _ = storage.release_lock();
+        let err = match &e {
+            LtpError::CircularDependencyDetected { .. } => {
+                OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
+            }
+            _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
+        };
+        return CommandOutput {
+            success: false,
+            action: action.to_string(),
+            workspace: ws_name,
+            data: LinkInsertBetweenData {
+                removed_link: String::new(),
+                created_links: vec![],
+                tree_id: tree_id.to_string(),
+            },
+            graph_health: GraphHealth {
+                valid_dag: false,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![err],
+            warnings: vec![],
+        };
+    }
+
+    tree.edges = new_edges;
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return insert_between_error(&ws_name, tree_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkInsertBetweenData {
+            removed_link,
+            created_links,
+            tree_id: tree_id.to_string(),
+        },
         graph_health: GraphHealth {
             valid_dag: true,
             orphan_nodes_count: 0,
