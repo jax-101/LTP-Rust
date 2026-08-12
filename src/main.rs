@@ -19,7 +19,7 @@ use ltp_engine::tree::commands::{
     execute_tree_list, execute_tree_new, execute_tree_rm, execute_tree_walk,
 };
 use ltp_engine::tree::Tree;
-use ltp_engine::validate::check_dag;
+use ltp_engine::validate::{check_dag, execute_validate};
 use ltp_engine::workspace::FsStorage;
 
 #[derive(Parser)]
@@ -1003,6 +1003,13 @@ fn main() {
                 process::exit(1);
             }
         },
+        Commands::Validate { tree } => {
+            let output = execute_validate(&storage, tree.as_deref());
+            render_output(&output, cli.human);
+            if !output.success {
+                process::exit(1);
+            }
+        }
         _ => {
             let output = error_output(
                 "unknown",
