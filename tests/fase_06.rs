@@ -465,3 +465,185 @@ fn uat_6_7_insert_between_before_effect() {
     assert_eq!(x_to_c["from"][0], x);
     assert_eq!(x_to_c["operator"], "SINGLE");
 }
+
+/// UAT 6.8: group two SINGLE edges -> one AND edge.
+#[test]
+fn uat_6_8_link_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let tree = create_tree(dir, "crt", "GroupTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    let l1 = connect(dir, &tree, &a, &c);
+    let l2 = connect(dir, &tree, &b, &c);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "group",
+            "--tree",
+            &tree,
+            "--links",
+            &format!("{},{}", l1, l2),
+            "--operator",
+            "AND",
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["action"], "link_group");
+    assert!(json["data"]["created_link"]
+        .as_str()
+        .unwrap()
+        .starts_with("LINK-"));
+    assert_eq!(json["data"]["removed_links"].as_array().unwrap().len(), 2);
+
+    // Verify persisted on disk: originals gone, one AND edge with both causes.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 1);
+    assert!(!edges.iter().any(|e| e["id"] == l1 || e["id"] == l2));
+    let grouped = &edges[0];
+    assert_eq!(grouped["operator"], "AND");
+    assert_eq!(grouped["to"], c);
+    let from: Vec<&str> = grouped["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(from.contains(&a.as_str()));
+    assert!(from.contains(&b.as_str()));
+}
+
+/// UAT 6.9: group edges that don't share same `to` -> error.
+#[test]
+fn uat_6_9_link_group_different_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let d = add_node(dir, "Effect D", "ude");
+    let tree = create_tree(dir, "crt", "GroupFail");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &d);
+    let l1 = connect(dir, &tree, &a, &c);
+    let l2 = connect(dir, &tree, &b, &d);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "group",
+            "--tree",
+            &tree,
+            "--links",
+            &format!("{},{}", l1, l2),
+            "--operator",
+            "AND",
+        ],
+    );
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "GROUP_DESTINATION_MISMATCH");
+
+    // Nothing should have been mutated on disk.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+}
+
+/// UAT 6.10: dissolve a grouped edge -> each cause becomes SINGLE.
+///
+/// `assume add` is not implemented yet, so the assumption used to verify
+/// inheritance is injected directly into the tree JSON (see
+/// `inject_assumption` above), mirroring how UATs 6.2/6.3 exercise
+/// assumption-bearing edges.
+#[test]
+fn uat_6_10_link_dissolve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let tree = create_tree(dir, "crt", "DissolveTest");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+
+    // Create AND edge [A,B]→C
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_eq!(code, 0);
+    let group_link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Add assumption to test inheritance (assume add not implemented yet).
+    inject_assumption(dir, &tree, &group_link, "ASM-001", "Some assumption");
+
+    let (json, code) = run_ltp(
+        dir,
+        &["link", "dissolve", "--tree", &tree, "--link", &group_link],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["removed_link"], group_link);
+    assert_eq!(json["data"]["created_links"].as_array().unwrap().len(), 2);
+
+    // Verify persisted on disk: original gone, two SINGLE edges to C, each
+    // inheriting the assumption marked needs_review.
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    assert!(!edges.iter().any(|e| e["id"] == group_link));
+    for edge in edges {
+        assert_eq!(edge["operator"], "SINGLE");
+        assert_eq!(edge["to"], c);
+        assert_eq!(edge["from"].as_array().unwrap().len(), 1);
+        assert_eq!(edge["assumptions"][0]["status"], "needs_review");
+    }
+    let causes: Vec<&str> = edges
+        .iter()
+        .map(|e| e["from"][0].as_str().unwrap())
+        .collect();
+    assert!(causes.contains(&a.as_str()));
+    assert!(causes.contains(&b.as_str()));
+}

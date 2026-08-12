@@ -6,7 +6,8 @@ use tracing_subscriber::EnvFilter;
 
 use ltp_engine::errors::LtpError;
 use ltp_engine::link::advanced::{
-    execute_link_insert_between, execute_link_move, execute_link_reverse,
+    execute_link_dissolve, execute_link_group, execute_link_insert_between, execute_link_move,
+    execute_link_reverse,
 };
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
@@ -1035,6 +1036,24 @@ fn main() {
                     insert_after_cause.as_deref(),
                     insert_before_effect,
                 );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Group {
+                tree,
+                links,
+                operator,
+            } => {
+                let output = execute_link_group(&storage, &tree, &links, &operator);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Dissolve { tree, link } => {
+                let output = execute_link_dissolve(&storage, &tree, &link);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

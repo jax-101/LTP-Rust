@@ -1,15 +1,13 @@
 use serde::Serialize;
 
 use crate::errors::LtpError;
-use crate::link::types::{AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
+use crate::link::types::{Assumption, AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 use crate::validate::check_dag;
 
-// NOTE: reserved for `link group` (Task 5) and `link reoperator` (Task 6),
-// which parse an `--operator` string argument. Not yet called from this
-// module until those subcommands land.
-#[allow(dead_code)]
+// NOTE: also reserved for `link reoperator` (Task 6), which parses an
+// `--operator` string argument the same way `link group` does below.
 fn parse_operator(s: &str) -> Option<Operator> {
     match s.to_uppercase().as_str() {
         "SINGLE" => Some(Operator::Single),
@@ -869,6 +867,392 @@ pub fn execute_link_insert_between(
         data: LinkInsertBetweenData {
             removed_link,
             created_links,
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link group` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn group_error(
+    ws_name: &str,
+    tree_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkGroupData> {
+    CommandOutput {
+        success: false,
+        action: "link_group".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkGroupData {
+            created_link: String::new(),
+            removed_links: vec![],
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link group`.
+///
+/// Merges two or more independent SINGLE edges that share the same
+/// destination into a single edge with a combined `from[]` under the given
+/// operator (AND/OR/MAG/XOR). Each input edge must itself be SINGLE (a
+/// single cause); an edge that is already a group must be dissolved or
+/// split first. This mirrors `link connect`'s own restriction that grouped
+/// causes only ever combine at edge-creation time — `link group` is the
+/// retroactive equivalent for edges that were connected independently.
+///
+/// Fails with `GROUP_DESTINATION_MISMATCH` if the input edges do not all
+/// point to the same `to` node — grouping only makes sense when the causes
+/// converge on one effect.
+///
+/// The new edge gets a fresh ID via `storage.next_id("LINK")`; the original
+/// edges are removed. Followed by a DAG check on the resulting edge set,
+/// though changing `from[]` cardinality on an edge whose direction is
+/// unchanged cannot introduce a cycle that didn't already exist.
+pub fn execute_link_group(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_ids: &[String],
+    operator: &str,
+) -> CommandOutput<LinkGroupData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_group";
+
+    if link_ids.len() < 2 {
+        return group_error(
+            &ws_name,
+            tree_id,
+            "INVALID_ARGS",
+            "At least two links are required for `link group`",
+        );
+    }
+
+    let op = match parse_operator(operator) {
+        Some(Operator::Single) => {
+            return group_error(
+                &ws_name,
+                tree_id,
+                "INVALID_OPERATOR",
+                "`link group` requires AND, OR, MAG or XOR; SINGLE cannot combine multiple causes",
+            );
+        }
+        Some(o) => o,
+        None => {
+            return group_error(
+                &ws_name,
+                tree_id,
+                "INVALID_OPERATOR",
+                format!("Unknown operator: {}", operator),
+            );
+        }
+    };
+
+    let lock_outcome = match storage.acquire_lock("link group") {
+        Ok(o) => o,
+        Err(e) => return group_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return group_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    // Resolve each link_id to its edge, preserving caller order so the
+    // resulting from[] lines up with the order links were listed in.
+    let mut source_edges: Vec<Edge> = Vec::with_capacity(link_ids.len());
+    for link_id in link_ids {
+        match tree.edges.iter().find(|e| &e.id == link_id) {
+            Some(e) => source_edges.push(e.clone()),
+            None => {
+                let _ = storage.release_lock();
+                return group_error(
+                    &ws_name,
+                    tree_id,
+                    "LINK_NOT_FOUND",
+                    format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+                );
+            }
+        }
+    }
+
+    if let Some(bad) = source_edges.iter().find(|e| e.operator != Operator::Single) {
+        let _ = storage.release_lock();
+        return group_error(
+            &ws_name,
+            tree_id,
+            "EDGE_NOT_SINGLE",
+            format!(
+                "Edge '{}' is not a SINGLE edge; dissolve or split it before grouping",
+                bad.id
+            ),
+        );
+    }
+
+    let to = source_edges[0].to.clone();
+    if source_edges.iter().any(|e| e.to != to) {
+        let _ = storage.release_lock();
+        return group_error(
+            &ws_name,
+            tree_id,
+            "GROUP_DESTINATION_MISMATCH",
+            "All links passed to `link group` must share the same destination node",
+        );
+    }
+
+    let new_id = match storage.next_id("LINK") {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return group_error(&ws_name, tree_id, "ID_GENERATION_ERROR", e.to_string());
+        }
+    };
+
+    let mut warnings: Vec<OutputWarning> = vec![];
+    if op == Operator::Mag {
+        warnings.push(OutputWarning::new(
+            "MAG_WEIGHT_MISSING",
+            "Operator MAG without --weight; magnitude estimation pending",
+        ));
+    }
+
+    // `from[0]` is safe: every source edge was confirmed SINGLE above, so
+    // each has exactly one cause.
+    let combined_from: Vec<String> = source_edges.iter().map(|e| e.from[0].clone()).collect();
+    let new_edge = Edge {
+        id: new_id.clone(),
+        from: combined_from,
+        to,
+        operator: op,
+        weight: None,
+        status: EdgeStatus::Active,
+        logic: Logic::Sufficiency,
+        assumptions: vec![],
+    };
+
+    let mut new_edges: Vec<Edge> = tree
+        .edges
+        .iter()
+        .filter(|e| !link_ids.contains(&e.id))
+        .cloned()
+        .collect();
+    new_edges.push(new_edge);
+
+    if let Err(e) = check_dag(&new_edges, tree_id) {
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = group_error(&ws_name, tree_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    tree.edges = new_edges;
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return group_error(&ws_name, tree_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.insert(0, w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkGroupData {
+            created_link: new_id,
+            removed_links: link_ids.to_vec(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link dissolve` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn dissolve_error(
+    ws_name: &str,
+    tree_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkDissolveData> {
+    CommandOutput {
+        success: false,
+        action: "link_dissolve".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkDissolveData {
+            created_links: vec![],
+            removed_link: String::new(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link dissolve`.
+///
+/// The inverse of `link group`: takes a grouped edge (`from.len() > 1`) and
+/// splits it back into one independent SINGLE edge per cause, each pointing
+/// to the same `to` node. Fails with `EDGE_ALREADY_SINGLE` if the edge has
+/// only one cause — there is nothing to dissolve.
+///
+/// Any assumptions attached to the original edge are copied onto *every*
+/// new SINGLE edge (per ENGINE_SPEC.md §2.7), each forced to
+/// `AssumptionStatus::NeedsReview` since dissolving changes the causal
+/// framing the assumption was written against — the same rationale
+/// `link reverse --force` uses for its own assumptions.
+///
+/// Each new edge gets a fresh ID via `storage.next_id("LINK")`; the
+/// original grouped edge is removed. Followed by a DAG check on the
+/// resulting edge set.
+pub fn execute_link_dissolve(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+) -> CommandOutput<LinkDissolveData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_dissolve";
+
+    let lock_outcome = match storage.acquire_lock("link dissolve") {
+        Ok(o) => o,
+        Err(e) => return dissolve_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return dissolve_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge = match tree.edges.iter().find(|e| e.id == link_id) {
+        Some(e) => e.clone(),
+        None => {
+            let _ = storage.release_lock();
+            return dissolve_error(
+                &ws_name,
+                tree_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    if edge.from.len() <= 1 {
+        let _ = storage.release_lock();
+        return dissolve_error(
+            &ws_name,
+            tree_id,
+            "EDGE_ALREADY_SINGLE",
+            format!("Edge '{}' has a single cause; nothing to dissolve", link_id),
+        );
+    }
+
+    let inherited_assumptions: Vec<Assumption> = edge
+        .assumptions
+        .iter()
+        .cloned()
+        .map(|mut a| {
+            a.status = AssumptionStatus::NeedsReview;
+            a
+        })
+        .collect();
+
+    let mut created_edges: Vec<Edge> = Vec::with_capacity(edge.from.len());
+    for cause in &edge.from {
+        let new_id = match storage.next_id("LINK") {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = storage.release_lock();
+                return dissolve_error(&ws_name, tree_id, "ID_GENERATION_ERROR", e.to_string());
+            }
+        };
+        created_edges.push(Edge {
+            id: new_id,
+            from: vec![cause.clone()],
+            to: edge.to.clone(),
+            operator: Operator::Single,
+            weight: None,
+            status: EdgeStatus::Active,
+            logic: edge.logic,
+            assumptions: inherited_assumptions.clone(),
+        });
+    }
+
+    let mut new_edges: Vec<Edge> = tree
+        .edges
+        .iter()
+        .filter(|e| e.id != link_id)
+        .cloned()
+        .collect();
+    new_edges.extend(created_edges.iter().cloned());
+
+    if let Err(e) = check_dag(&new_edges, tree_id) {
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = dissolve_error(&ws_name, tree_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    let created_ids: Vec<String> = created_edges.iter().map(|e| e.id.clone()).collect();
+    tree.edges = new_edges;
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return dissolve_error(&ws_name, tree_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkDissolveData {
+            created_links: created_ids,
+            removed_link: link_id.to_string(),
             tree_id: tree_id.to_string(),
         },
         graph_health: GraphHealth {
