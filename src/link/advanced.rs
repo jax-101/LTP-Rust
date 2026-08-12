@@ -6,8 +6,8 @@ use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 use crate::validate::check_dag;
 
-// NOTE: also reserved for `link reoperator` (Task 6), which parses an
-// `--operator` string argument the same way `link group` does below.
+/// Parses a CLI `--operator` string into an [`Operator`], case-insensitively.
+/// Shared by `link group` and `link reoperator`.
 fn parse_operator(s: &str) -> Option<Operator> {
     match s.to_uppercase().as_str() {
         "SINGLE" => Some(Operator::Single),
@@ -1253,6 +1253,418 @@ pub fn execute_link_dissolve(
         data: LinkDissolveData {
             created_links: created_ids,
             removed_link: link_id.to_string(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link split` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn split_error(
+    ws_name: &str,
+    tree_id: &str,
+    link_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkSplitData> {
+    CommandOutput {
+        success: false,
+        action: "link_split".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkSplitData {
+            extracted_link: String::new(),
+            original_link: link_id.to_string(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link split`.
+///
+/// Extracts one or more causes from a grouped edge (`from.len() > 1`)
+/// without fully dissolving it, per ENGINE_SPEC.md §2.7. The extracted
+/// causes form a brand-new independent edge to the same `to` node: SINGLE
+/// if exactly one cause is extracted, otherwise the original edge's own
+/// operator (this interface has no `--new-operator` override; use
+/// `link reoperator` afterwards to change it).
+///
+/// The original edge keeps whatever causes were not extracted. If that
+/// leaves it with exactly one cause, it is automatically downgraded to
+/// SINGLE — and any MAG `weight` is dropped, since SINGLE edges never carry
+/// one. Extracting every cause — leaving the original empty — is rejected
+/// with `CANNOT_EXTRACT_ALL_CAUSES`; `link dissolve` is the command for
+/// breaking a group apart entirely.
+///
+/// Fails with `CAUSE_NOT_IN_GROUP` if any requested node is not present in
+/// the edge's `from[]`. Followed by a DAG check for consistency with every
+/// other topology-mutating command, though extracting causes into an edge
+/// that keeps the same direction can never introduce a cycle.
+pub fn execute_link_split(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    extract_nodes: &[String],
+) -> CommandOutput<LinkSplitData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_split";
+
+    if extract_nodes.is_empty() {
+        return split_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "INVALID_ARGS",
+            "`link split` requires at least one node in --extract",
+        );
+    }
+
+    let lock_outcome = match storage.acquire_lock("link split") {
+        Ok(o) => o,
+        Err(e) => return split_error(&ws_name, tree_id, link_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return split_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return split_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    let edge = tree.edges[edge_idx].clone();
+
+    if let Some(missing) = extract_nodes.iter().find(|n| !edge.from.contains(n)) {
+        let _ = storage.release_lock();
+        return split_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CAUSE_NOT_IN_GROUP",
+            format!(
+                "Cause '{}' is not in the from[] of edge '{}'",
+                missing, link_id
+            ),
+        );
+    }
+
+    let remaining: Vec<String> = edge
+        .from
+        .iter()
+        .filter(|n| !extract_nodes.contains(n))
+        .cloned()
+        .collect();
+
+    if remaining.is_empty() {
+        let _ = storage.release_lock();
+        return split_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CANNOT_EXTRACT_ALL_CAUSES",
+            "Cannot extract every cause from a group; use `link dissolve` instead",
+        );
+    }
+
+    let new_id = match storage.next_id("LINK") {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return split_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "ID_GENERATION_ERROR",
+                e.to_string(),
+            );
+        }
+    };
+
+    let mut warnings: Vec<OutputWarning> = vec![];
+
+    // Exactly one extracted cause always becomes a SINGLE edge; extracting
+    // several keeps the original operator (no `--new-operator` override in
+    // this interface).
+    let extracted_operator = if extract_nodes.len() == 1 {
+        Operator::Single
+    } else {
+        edge.operator
+    };
+    if extracted_operator == Operator::Mag {
+        warnings.push(OutputWarning::new(
+            "MAG_WEIGHT_MISSING",
+            "Operator MAG without --weight; magnitude estimation pending",
+        ));
+    }
+    let extracted_edge = Edge {
+        id: new_id.clone(),
+        from: extract_nodes.to_vec(),
+        to: edge.to.clone(),
+        operator: extracted_operator,
+        weight: None,
+        status: EdgeStatus::Active,
+        logic: edge.logic,
+        assumptions: vec![],
+    };
+
+    // Remaining causes reduce the original edge; a single leftover cause
+    // auto-converts it to SINGLE (dropping any MAG weight, which only
+    // applies to grouped edges).
+    let (original_operator, original_weight) = if remaining.len() == 1 {
+        (Operator::Single, None)
+    } else {
+        (edge.operator, edge.weight)
+    };
+
+    let mut new_edges = tree.edges.clone();
+    new_edges[edge_idx].from = remaining;
+    new_edges[edge_idx].operator = original_operator;
+    new_edges[edge_idx].weight = original_weight;
+    new_edges.push(extracted_edge);
+
+    if let Err(e) = check_dag(&new_edges, tree_id) {
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = split_error(&ws_name, tree_id, link_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    tree.edges = new_edges;
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return split_error(&ws_name, tree_id, link_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.insert(0, w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkSplitData {
+            extracted_link: new_id,
+            original_link: link_id.to_string(),
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Builds a failed `link reoperator` output with empty data, sharing the
+/// boilerplate common to every early-exit branch below.
+fn reoperator_error(
+    ws_name: &str,
+    tree_id: &str,
+    link_id: &str,
+    code: &str,
+    detail: impl Into<String>,
+) -> CommandOutput<LinkReoperatorData> {
+    CommandOutput {
+        success: false,
+        action: "link_reoperator".to_string(),
+        workspace: ws_name.to_string(),
+        data: LinkReoperatorData {
+            link_id: link_id.to_string(),
+            old_operator: Operator::Single,
+            new_operator: Operator::Single,
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(code, detail)],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link reoperator`.
+///
+/// Changes the operator of an existing edge in place, per ENGINE_SPEC.md
+/// §2.7. The transition is constrained by `from[]` cardinality rather than
+/// by the specific old/new operator pair:
+///
+/// - Switching *to* SINGLE requires `from.len() == 1`; a grouped edge must
+///   be `link dissolve`d first (`CANNOT_REOPERATE_TO_SINGLE`).
+/// - Switching *to* AND/OR/MAG/XOR requires `from.len() > 1`; a lone-cause
+///   edge has nothing to combine (`CANNOT_REOPERATE_SINGLE_CAUSE`).
+///
+/// Weight handling follows the edge's relationship with MAG:
+/// - Moving *to* MAG without an existing `weight` emits a
+///   `MAG_WEIGHT_MISSING` warning (the estimate is left for a later step).
+/// - Moving *away* from MAG silently discards `weight`, since it is only
+///   meaningful for magnitude-weighted causes.
+///
+/// Followed by a DAG check for consistency with every other
+/// topology-mutating command, though changing only `operator`/`weight`
+/// while leaving `from`/`to` untouched can never introduce a cycle.
+pub fn execute_link_reoperator(
+    storage: &dyn Storage,
+    tree_id: &str,
+    link_id: &str,
+    new_operator: &str,
+) -> CommandOutput<LinkReoperatorData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "link_reoperator";
+
+    let new_op = match parse_operator(new_operator) {
+        Some(o) => o,
+        None => {
+            return reoperator_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "INVALID_OPERATOR",
+                format!("Unknown operator: {}", new_operator),
+            );
+        }
+    };
+
+    let lock_outcome = match storage.acquire_lock("link reoperator") {
+        Ok(o) => o,
+        Err(e) => return reoperator_error(&ws_name, tree_id, link_id, "LOCK_ERROR", e.to_string()),
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return reoperator_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+        }
+    };
+
+    let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return reoperator_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                "LINK_NOT_FOUND",
+                format!("Edge '{}' not found in tree '{}'", link_id, tree_id),
+            );
+        }
+    };
+
+    let old_operator = tree.edges[edge_idx].operator;
+    let from_len = tree.edges[edge_idx].from.len();
+
+    if new_op == Operator::Single && from_len != 1 {
+        let _ = storage.release_lock();
+        return reoperator_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CANNOT_REOPERATE_TO_SINGLE",
+            format!(
+                "Edge '{}' has {} causes; dissolve it before switching to SINGLE",
+                link_id, from_len
+            ),
+        );
+    }
+    if new_op != Operator::Single && from_len <= 1 {
+        let _ = storage.release_lock();
+        return reoperator_error(
+            &ws_name,
+            tree_id,
+            link_id,
+            "CANNOT_REOPERATE_SINGLE_CAUSE",
+            format!(
+                "Edge '{}' has a single cause; add more causes before switching to {:?}",
+                link_id, new_op
+            ),
+        );
+    }
+
+    let mut warnings: Vec<OutputWarning> = vec![];
+    let new_weight = if new_op == Operator::Mag {
+        let existing = tree.edges[edge_idx].weight;
+        if existing.is_none() {
+            warnings.push(OutputWarning::new(
+                "MAG_WEIGHT_MISSING",
+                "Operator MAG without --weight; magnitude estimation pending",
+            ));
+        }
+        existing
+    } else if old_operator == Operator::Mag {
+        None
+    } else {
+        tree.edges[edge_idx].weight
+    };
+
+    tree.edges[edge_idx].operator = new_op;
+    tree.edges[edge_idx].weight = new_weight;
+
+    if let Err(e) = check_dag(&tree.edges, tree_id) {
+        let _ = storage.release_lock();
+        let code = match &e {
+            LtpError::CircularDependencyDetected { .. } => "CIRCULAR_DEPENDENCY_DETECTED",
+            _ => "VALIDATION_ERROR",
+        };
+        let mut out = reoperator_error(&ws_name, tree_id, link_id, code, e.to_string());
+        out.graph_health.valid_dag = false;
+        return out;
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return reoperator_error(&ws_name, tree_id, link_id, "IO_ERROR", e.to_string());
+    }
+
+    let _ = storage.release_lock();
+
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.insert(0, w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: action.to_string(),
+        workspace: ws_name,
+        data: LinkReoperatorData {
+            link_id: link_id.to_string(),
+            old_operator,
+            new_operator: new_op,
             tree_id: tree_id.to_string(),
         },
         graph_health: GraphHealth {

@@ -7,7 +7,7 @@ use tracing_subscriber::EnvFilter;
 use ltp_engine::errors::LtpError;
 use ltp_engine::link::advanced::{
     execute_link_dissolve, execute_link_group, execute_link_insert_between, execute_link_move,
-    execute_link_reverse,
+    execute_link_reoperator, execute_link_reverse, execute_link_split,
 };
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
@@ -1054,6 +1054,28 @@ fn main() {
             }
             LinkAction::Dissolve { tree, link } => {
                 let output = execute_link_dissolve(&storage, &tree, &link);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Split {
+                tree,
+                link,
+                extract,
+            } => {
+                let output = execute_link_split(&storage, &tree, &link, &extract);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Reoperator {
+                tree,
+                link,
+                operator,
+            } => {
+                let output = execute_link_reoperator(&storage, &tree, &link, &operator);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
