@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 31% |
-| **Fase actual** | F2b |
-| **Última fase completada** | F4 — Enlaces básicos |
+| **Avance global** | 36% |
+| **Fase actual** | F5 |
+| **Última fase completada** | F2b — Nodos cross-tree |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -22,7 +22,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ✅ Completado | 9/9 | |
 | F3 | Vistas (trees) | 8% | 8% | ✅ Completado | 11/11 | |
 | F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ✅ Completado | 11/11 | |
-| F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ⬜ Pendiente | 0/7 | |
+| F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
 | F5 | Validación completa | 8% | 8% | ⬜ Pendiente | 0/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ⬜ Pendiente | 0/17 | |
 | F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/8 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **37/128** | |
+| | **TOTAL** | **100%** | **100%** | | **44/128** | |
 
 ---
 
@@ -121,6 +121,27 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F2b: Nodos cross-tree (rm/split/inspect)
+
+---
+
+### [F2b] — Nodos cross-tree (rm/split/inspect)
+**Fecha**: 2026-08-13
+**Avance fase**: 7/7 UATs ✅
+**Avance global**: 31% → 36%
+**Esfuerzo estimado**: 5% | **Esfuerzo real (percibido)**: 5%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp node rm` con limpieza cross-tree (edges, feedback_edges, node refs)
+- `ltp node rm` batch (múltiples IDs separados por coma)
+- `ltp node inspect` muestra participación en trees, roles, edges inbound/outbound
+- `ltp node split` divide nodo en dos, hereda edges entrantes→primero, salientes→segundo
+- `ltp node list --tree` filtra por membership en tree (antes se ignoraba el parámetro)
+- `NodeType::prefix()` helper para generación de IDs desde el enum
+- 7 tests de integración CLI (UATs 2b.1–2b.7)
+
+#### Siguiente
+- F5: Validación completa
 
 ---
 
