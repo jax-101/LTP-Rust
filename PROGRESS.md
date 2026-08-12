@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 44% |
-| **Fase actual** | F6 |
-| **Última fase completada** | F5 — Validación completa |
+| **Avance global** | 58% |
+| **Fase actual** | F7 / F8 (paralelizables) |
+| **Última fase completada** | F6 — Enlaces avanzados |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -24,7 +24,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ✅ Completado | 11/11 | |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
 | F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
-| F6 | Enlaces avanzados | 14% | 14% | ⬜ Pendiente | 0/17 | |
+| F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
 | F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/8 | |
 | F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/8 | |
 | F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/4 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **58/128** | |
+| | **TOTAL** | **100%** | **100%** | | **75/128** | |
 
 ---
 
@@ -169,6 +169,31 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F6: Enlaces avanzados / F7: Supuestos / F8: Navegación (parallelizables)
+
+---
+
+### [F6] — Enlaces avanzados
+**Fecha**: 2026-08-13
+**Avance fase**: 17/17 UATs ✅
+**Avance global**: 44% → 58%
+**Esfuerzo estimado**: 14% | **Esfuerzo real (percibido)**: 14%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp link reverse` con gate de --force para assumptions, marca needs_review
+- `ltp link move` redirige from/to con validación de integridad
+- `ltp link insert-between` con 3 variantes (SINGLE, AND+after-cause, AND+before-effect)
+- `ltp link group` agrupa edges SINGLE bajo operador AND/OR/MAG/XOR
+- `ltp link dissolve` deshace grupo, hereda assumptions con needs_review
+- `ltp link split` extrae causas de un grupo, auto-downgrade a SINGLE
+- `ltp link reoperator` cambia operador con reglas de cardinalidad y weight
+- `ltp link add-cause` expande from[] con promote-to para SINGLE
+- `ltp link rm-cause` reduce from[], auto-downgrade a SINGLE
+- Fix: serde rename `NeedsReview` → `needs_review` (snake_case)
+- 17 tests de integración CLI (UATs 6.1–6.17)
+
+#### Siguiente
+- F7: Supuestos / F8: Navegación (parallelizables)
 
 ---
 

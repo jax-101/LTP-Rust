@@ -23,3 +23,6 @@ description: Estandares arquitectonicos y de calidad para desarrollo en Rust den
 
 ## Depuracion
 - Prohibido dejar macros `dbg!()` o `println!()` en codigo final. Usar logging estructurado si se requiere tracing.
+
+## Verificación
+- Antes de dar por finalizada cualquier tarea, el código debe pasar `cargo clippy -- -D warnings` y `cargo fmt --check` sin arrojar errores ni advertencias.
