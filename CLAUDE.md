@@ -86,3 +86,10 @@ mi-proyecto-ltp/
 - Progreso registrado en `PROGRESS.md` tras cada paquete de trabajo.
 - Prohibido `.unwrap()`/`.expect()` en codigo de produccion.
 - Documentacion `///` en todos los items publicos.
+
+## Git Workflow
+
+- **Commit tras cada hito**: al completar un paso significativo (plan creado, sub-modulo funcional, UATs pasando, fase completa), hacer commit inmediatamente. No acumular trabajo sin commitear.
+- **Push al completar cada fase**: tras terminar una fase y actualizar PROGRESS.md, hacer `git push` para sincronizar con origin.
+- **Convencion de mensajes**: `docs(FX):` para planes/docs, `feat(FX):` para implementacion, `test(FX):` para tests, `fix(FX):` para correcciones.
+- **Branch strategy**: trabajo directo en `main` (single developer). Si una fase es grande, crear branch `feat/fX-nombre` y merge al completar.
