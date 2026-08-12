@@ -1,0 +1,29 @@
+[package]
+name = "ltp-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic engine for Dettmer's Logical Thinking Process"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
+
+[lints.clippy]
+complexity = { level = "deny", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+perf = { level = "warn", priority = -1 }
+redundant_clone = "deny"
+implicit_clone = "warn"
+too_many_arguments = "warn"

@@ -1,0 +1,109 @@
+# Progreso del Proyecto — `ltp-engine`
+
+## Dashboard
+
+| Métrica | Valor |
+|---------|-------|
+| **Avance global** | 10% |
+| **Fase actual** | F2a |
+| **Última fase completada** | F1 — Fundación |
+| **Factor de escala (velocity)** | 1.0x |
+| **Paquetes replanificados** | 0 |
+
+---
+
+## Estimación por Paquetes de Trabajo
+
+Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paquete, se registra el esfuerzo real y se calcula el factor de escala para reestimar los restantes.
+
+| Fase | Paquete | Peso Est. | Peso Ajust. | Estado | UATs | Notas |
+|------|---------|-----------|-------------|--------|------|-------|
+| F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | 10% | ✅ Completado | 6/6 | |
+| F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ⬜ Pendiente | 0/9 | |
+| F3 | Vistas (trees) | 8% | 8% | ⬜ Pendiente | 0/11 | |
+| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ⬜ Pendiente | 0/11 | |
+| F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ⬜ Pendiente | 0/7 | |
+| F5 | Validación completa | 8% | 8% | ⬜ Pendiente | 0/14 | |
+| F6 | Enlaces avanzados | 14% | 14% | ⬜ Pendiente | 0/17 | |
+| F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/8 | |
+| F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/8 | |
+| F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/4 | |
+| F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/6 | |
+| F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
+| E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
+| F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
+| | **TOTAL** | **100%** | **100%** | | **6/128** | |
+
+---
+
+## Historial de Avance
+
+### [F1] — Fundación (workspace, traits, IDs, pipeline)
+**Fecha**: 2026-08-12
+**Avance fase**: 6/6 UATs ✅
+**Avance global**: 0% → 10%
+**Esfuerzo estimado**: 10% | **Esfuerzo real (percibido)**: 10%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- Trait `Storage` + impl `FsStorage` con escritura atómica (tmp → rename)
+- Trait `SnapshotHook` + `NoOpHook`
+- Módulo `Counters` con auto-reconstrucción desde filesystem
+- `ltp init` funcional con output JSON canónico
+- `ltp status` con conteo de nodos/trees y validación DAG
+- Lock file con detección de stale PID
+- 6 tests de integración CLI (UATs 1.1–1.6)
+
+#### Siguiente
+- F2a: Nodos standalone (add/edit/list/search)
+
+---
+
+### Plantilla de reporte (se copia tras cada paquete completado)
+
+```
+### [Fase X] — [Nombre del paquete]
+**Fecha**: YYYY-MM-DD
+**Avance fase**: X/Y UATs ✅
+**Avance global**: NN% → MM%
+**Esfuerzo estimado**: N% | **Esfuerzo real (percibido)**: M%
+**Factor de escala acumulado**: X.Xx
+
+#### Descubrimientos
+- (nuevos paquetes, complejidad no prevista, simplificaciones)
+
+#### En curso
+- (qué se está haciendo ahora)
+
+#### Siguiente
+- (próximo paquete según el plan)
+```
+
+---
+
+## Reglas de Reestimación
+
+1. **Tras completar un paquete**: si el esfuerzo real difiere significativamente del estimado (>30%), se recalcula el factor de escala:
+   ```
+   velocity = peso_estimado / peso_real
+   ```
+   Los paquetes restantes se escalan por `1/velocity` para ajustar la predicción.
+
+2. **Descubrimiento de nuevo trabajo**: se añade como nueva fila con peso estimado. Se rebalancea el % total a 100% redistribuyendo proporcionalmente entre todos los paquetes no completados. Los completados mantienen su % real.
+
+3. **Eliminación de trabajo**: si un paquete se simplifica o se descarta, su peso se redistribuye entre los restantes.
+
+4. **El avance global** se calcula como:
+   ```
+   avance = Σ (peso_ajustado × progreso_fase)
+   donde progreso_fase = UATs_pasando / UATs_total de esa fase
+   ```
+
+---
+
+## Histórico de Reestimaciones
+
+| Fecha | Motivo | Cambio | Impacto en total |
+|-------|--------|--------|-----------------|
+| — | Plan inicial | 14 paquetes, 128 UATs | 100% baseline |
+
