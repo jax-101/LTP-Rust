@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 36% |
-| **Fase actual** | F5 |
-| **Última fase completada** | F2b — Nodos cross-tree |
+| **Avance global** | 44% |
+| **Fase actual** | F6 |
+| **Última fase completada** | F5 — Validación completa |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 0 |
 
@@ -23,7 +23,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F3 | Vistas (trees) | 8% | 8% | ✅ Completado | 11/11 | |
 | F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ✅ Completado | 11/11 | |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
-| F5 | Validación completa | 8% | 8% | ⬜ Pendiente | 0/14 | |
+| F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ⬜ Pendiente | 0/17 | |
 | F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/8 | |
 | F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/8 | |
@@ -32,7 +32,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **44/128** | |
+| | **TOTAL** | **100%** | **100%** | | **58/128** | |
 
 ---
 
@@ -142,6 +142,33 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F5: Validación completa
+
+---
+
+### [F5] — Validación completa
+**Fecha**: 2026-08-13
+**Avance fase**: 14/14 UATs ✅
+**Avance global**: 36% → 44%
+**Esfuerzo estimado**: 8% | **Esfuerzo real (percibido)**: 8%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp validate [--tree]` con orquestación completa de reglas
+- Infraestructura de tracing (`tracing` + `tracing-subscriber`, activable con `LTP_LOG`)
+- DAG check sobre edges del tree y cada `nbr_branches[].edges`
+- Integridad referencial: nodos en edges deben existir en pool global
+- EC validation: objective (=1), requirements (>=2), prerequisite por requirement
+- CLR#2 lint: conjunciones causales en labels de nodos del tree
+- CLR#4: nodo con 1 sola entrada SINGLE (candidato a insuficiencia)
+- CLR#4/#5: AND con >4 entradas (mezcla de causas independientes)
+- CLR#6: inversión de tipos (UDE/DE → RC/INT)
+- CLR#7: nodo intangible con <2 salientes (falta efecto predicho)
+- Huérfanos: nodos attached sin edges en el tree
+- `NodeType` ahora deriva `Hash`
+- 14 tests de integración CLI (UATs 5.1–5.14)
+
+#### Siguiente
+- F6: Enlaces avanzados / F7: Supuestos / F8: Navegación (parallelizables)
 
 ---
 
