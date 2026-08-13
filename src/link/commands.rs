@@ -73,6 +73,7 @@ pub fn execute_link_connect(
     to: &[String],
     operator: Option<&str>,
     weight: Option<f64>,
+    nbr_id: Option<&str>,
 ) -> CommandOutput<LinkConnectData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -120,7 +121,7 @@ pub fn execute_link_connect(
         }
     };
 
-    // Validate all nodes exist in pool and are attached to tree
+    // Validate all nodes exist in pool
     let all_node_ids: Vec<&String> = from.iter().chain(to.iter()).collect();
     for node_id in &all_node_ids {
         if storage.load_node(node_id).is_err() {
@@ -145,7 +146,8 @@ pub fn execute_link_connect(
             };
         }
 
-        if !tree.nodes.iter().any(|n| &n.node_ref == *node_id) {
+        // When targeting an NBR, nodes don't need to be attached to the tree
+        if nbr_id.is_none() && !tree.nodes.iter().any(|n| &n.node_ref == *node_id) {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -162,6 +164,31 @@ pub fn execute_link_connect(
                 errors: vec![OutputError::new(
                     "NODE_NOT_IN_TREE",
                     format!("Node '{}' is not attached to tree '{}'", node_id, tree_id),
+                )],
+                warnings: vec![],
+            };
+        }
+    }
+
+    // Validate NBR exists if specified
+    if let Some(nid) = nbr_id {
+        if !tree.nbr_branches.iter().any(|b| b.id == nid) {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "link_connect".to_string(),
+                workspace: ws_name,
+                data: LinkConnectData {
+                    created_links: vec![],
+                    tree_id: tree_id.to_string(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "NBR_NOT_FOUND",
+                    format!("NBR '{}' not found in tree '{}'", nid, tree_id),
                 )],
                 warnings: vec![],
             };
@@ -286,37 +313,78 @@ pub fn execute_link_connect(
         });
     }
 
-    // Validate DAG with new edges
-    let mut all_edges: Vec<Edge> = tree.edges.clone();
-    all_edges.extend(new_edges.iter().cloned());
-
-    if let Err(e) = check_dag(&all_edges, tree_id) {
-        let _ = storage.release_lock();
-        let err = match &e {
-            LtpError::CircularDependencyDetected { .. } => {
-                OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
-            }
-            _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
-        };
-        return CommandOutput {
-            success: false,
-            action: "link_connect".to_string(),
-            workspace: ws_name,
-            data: LinkConnectData {
-                created_links: vec![],
-                tree_id: tree_id.to_string(),
-            },
-            graph_health: GraphHealth {
-                valid_dag: false,
-                orphan_nodes_count: 0,
-            },
-            errors: vec![err],
-            warnings: vec![],
-        };
-    }
-
+    // Validate DAG and insert edges
     let created_ids: Vec<String> = new_edges.iter().map(|e| e.id.clone()).collect();
-    tree.edges.extend(new_edges);
+
+    if let Some(nid) = nbr_id {
+        // Insert into NBR branch and validate NBR DAG
+        let nbr_branch = tree
+            .nbr_branches
+            .iter_mut()
+            .find(|b| b.id == nid)
+            .expect("NBR existence validated above");
+
+        let mut nbr_edges: Vec<Edge> = nbr_branch.edges.clone();
+        nbr_edges.extend(new_edges.iter().cloned());
+
+        if let Err(e) = check_dag(&nbr_edges, &format!("{}:{}", tree_id, nid)) {
+            let _ = storage.release_lock();
+            let err = match &e {
+                LtpError::CircularDependencyDetected { .. } => {
+                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
+                }
+                _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
+            };
+            return CommandOutput {
+                success: false,
+                action: "link_connect".to_string(),
+                workspace: ws_name,
+                data: LinkConnectData {
+                    created_links: vec![],
+                    tree_id: tree_id.to_string(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: false,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![err],
+                warnings,
+            };
+        }
+
+        nbr_branch.edges.extend(new_edges);
+    } else {
+        // Insert into trunk edges and validate trunk DAG
+        let mut all_edges: Vec<Edge> = tree.edges.clone();
+        all_edges.extend(new_edges.iter().cloned());
+
+        if let Err(e) = check_dag(&all_edges, tree_id) {
+            let _ = storage.release_lock();
+            let err = match &e {
+                LtpError::CircularDependencyDetected { .. } => {
+                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
+                }
+                _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
+            };
+            return CommandOutput {
+                success: false,
+                action: "link_connect".to_string(),
+                workspace: ws_name,
+                data: LinkConnectData {
+                    created_links: vec![],
+                    tree_id: tree_id.to_string(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: false,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![err],
+                warnings: vec![],
+            };
+        }
+
+        tree.edges.extend(new_edges);
+    }
 
     if let Err(e) = storage.save_tree(&tree) {
         let _ = storage.release_lock();

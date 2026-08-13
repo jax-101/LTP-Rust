@@ -17,6 +17,7 @@ use ltp_engine::link::advanced::{
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
 };
+use ltp_engine::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
     execute_node_search, execute_node_split,
@@ -281,6 +282,9 @@ enum LinkAction {
         operator: Option<String>,
         #[arg(long)]
         weight: Option<f64>,
+        /// Target NBR branch for the edge (creates edge inside NBR, not trunk)
+        #[arg(long)]
+        nbr: Option<String>,
     },
     Disconnect {
         #[arg(long)]
@@ -476,6 +480,12 @@ enum NbrAction {
         source_node: String,
         #[arg(long)]
         trim: Option<String>,
+    },
+    Rm {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        nbr: String,
     },
     List {
         #[arg(long)]
@@ -974,9 +984,17 @@ fn main() {
                 to,
                 operator,
                 weight,
+                nbr,
             } => {
-                let output =
-                    execute_link_connect(&storage, &tree, &from, &to, operator.as_deref(), weight);
+                let output = execute_link_connect(
+                    &storage,
+                    &tree,
+                    &from,
+                    &to,
+                    operator.as_deref(),
+                    weight,
+                    nbr.as_deref(),
+                );
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1245,7 +1263,41 @@ fn main() {
                 }
             }
         },
-        _ => {
+        Commands::Nbr { action } => match action {
+            NbrAction::Add {
+                tree,
+                source_node,
+                trim,
+            } => {
+                let output = execute_nbr_add(&storage, &tree, &source_node, trim.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NbrAction::Rm { tree, nbr } => {
+                let output = execute_nbr_rm(&storage, &tree, &nbr);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NbrAction::List { tree } => {
+                let output = execute_nbr_list(&storage, &tree);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            NbrAction::Inspect { nbr_id, tree } => {
+                let output = execute_nbr_inspect(&storage, &tree, &nbr_id);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
+        Commands::Undo { .. } | Commands::Redo { .. } | Commands::History { .. } => {
             let output = error_output(
                 "unknown",
                 "",

@@ -4,12 +4,12 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 78% |
-| **Fase actual** | F10 (NBR) |
-| **Última fase completada** | F9 — Abstracción (path) |
+| **Avance global** | 83% |
+| **Fase actual** | F11 (Historial) |
+| **Última fase completada** | F10 — NBR |
 | **Factor de escala (velocity)** | 1.0x |
-| **Paquetes replanificados** | 1 (UATs expandidas) |
-| **UATs totales** | 170 (era 128) |
+| **Paquetes replanificados** | 2 (UATs expandidas) |
+| **UATs totales** | 175 (era 170, +5 en F10) |
 
 ---
 
@@ -29,11 +29,11 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F7 | Supuestos (assumptions) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs error paths + idempotencia |
 | F8 | Navegación (trace) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs broken links + errors |
 | F9 | Abstracción (path) | 8% | 8% | ✅ Completado | 12/12 | +8 UATs sub-grafo + errors |
-| F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/12 | +6 UATs incl. nbr rm (ADR-010) |
+| F10 | NBR | 5% | 5% | ✅ Completado | 17/17 | +5 UATs Six Hats (ciclo, inspect err, trim err, multi-source, trace) |
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **117/170** | |
+| | **TOTAL** | **100%** | **100%** | | **134/175** | |
 
 ---
 
@@ -266,6 +266,32 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F10: NBR (Negative Branch Reservations)
+
+---
+
+### [F10] — NBR (Negative Branch Reservations)
+**Fecha**: 2026-08-13
+**Avance fase**: 17/17 UATs ✅
+**Avance global**: 78% → 83%
+**Esfuerzo estimado**: 5% | **Esfuerzo real (percibido)**: 5%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp nbr add` crea NBR vacía con source_node + optional trim_injection
+- Validación: source_node existe en pool, attached al tree, trim_injection existe si se proporciona
+- `ltp nbr rm` elimina NBR branch (ADR-010 Decisión 2: nodos permanecen en pool)
+- `ltp nbr list` muestra resumen: id, source_node, edge_count, has_trim
+- `ltp nbr inspect` detalle completo: edges, nodes_involved, trim_injection
+- `ltp link connect --nbr NBR-XXX` crea edges dentro de la NBR (no en trunk)
+- Validación DAG independiente por NBR branch (ciclo en NBR = error bloqueante)
+- Nodos en NBR edges solo requieren existencia en pool (no attached al tree)
+- Soporte para múltiples NBRs con mismo source_node (una inyección genera N ramas)
+- Recursión por referencia: NBR-002.source_node = NBR-001.trim_injection
+- Error codes: NODE_NOT_FOUND, NODE_NOT_IN_TREE, NBR_NOT_FOUND, REFERENTIAL_INTEGRITY_VIOLATION, CIRCULAR_DEPENDENCY_DETECTED
+- 17 tests de integración CLI (UATs 10.1–10.17, expandidos con Six Hats)
+
+#### Siguiente
+- F11: Historial (undo/redo)
 
 ---
 
