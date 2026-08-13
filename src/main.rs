@@ -23,6 +23,7 @@ use ltp_engine::node::commands::{
 };
 use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
 use ltp_engine::storage::Storage;
+use ltp_engine::trace::{execute_link_find, execute_link_inspect, execute_trace};
 use ltp_engine::tree::commands::{
     execute_tree_attach, execute_tree_clone, execute_tree_detach, execute_tree_diff,
     execute_tree_list, execute_tree_new, execute_tree_rm, execute_tree_walk,
@@ -1113,17 +1114,19 @@ fn main() {
                     process::exit(1);
                 }
             }
-            _ => {
-                let output = error_output(
-                    "link.not_implemented",
-                    "",
-                    vec![OutputError::new(
-                        "NOT_IMPLEMENTED",
-                        "Link subcommand not yet implemented",
-                    )],
-                );
+            LinkAction::Inspect { link_id, tree } => {
+                let output = execute_link_inspect(&storage, &link_id, &tree);
                 render_output(&output, cli.human);
-                process::exit(1);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::Find { tree, from, to } => {
+                let output = execute_link_find(&storage, &tree, &from, &to);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
             }
         },
         Commands::Validate { tree } => {
@@ -1177,6 +1180,28 @@ fn main() {
             injection,
         } => {
             let output = execute_invalidate(&storage, &tree, &link, &asm, injection.as_deref());
+            render_output(&output, cli.human);
+            if !output.success {
+                process::exit(1);
+            }
+        }
+        Commands::Trace {
+            node_id,
+            tree,
+            direction,
+            depth,
+            no_feedback,
+            nbr,
+        } => {
+            let output = execute_trace(
+                &storage,
+                &node_id,
+                &tree,
+                &direction,
+                depth,
+                no_feedback,
+                nbr,
+            );
             render_output(&output, cli.human);
             if !output.success {
                 process::exit(1);

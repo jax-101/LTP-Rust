@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 64% |
-| **Fase actual** | F8 (Navegación) |
-| **Última fase completada** | F7 — Supuestos (assumptions) |
+| **Avance global** | 70% |
+| **Fase actual** | F9 (Abstracción) |
+| **Última fase completada** | F8 — Navegación (trace) |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 1 (UATs expandidas) |
 | **UATs totales** | 170 (era 128) |
@@ -27,13 +27,13 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
 | F7 | Supuestos (assumptions) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs error paths + idempotencia |
-| F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/15 | +7 UATs broken links + errors |
+| F8 | Navegación (trace) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs broken links + errors |
 | F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/12 | +8 UATs sub-grafo + errors |
 | F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/12 | +6 UATs incl. nbr rm (ADR-010) |
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **90/170** | |
+| | **TOTAL** | **100%** | **100%** | | **105/170** | |
 
 ---
 
@@ -219,6 +219,29 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F8: Navegación (trace)
+
+---
+
+### [F8] — Navegación (trace)
+**Fecha**: 2026-08-13
+**Avance fase**: 15/15 UATs ✅
+**Avance global**: 64% → 70%
+**Esfuerzo estimado**: 6% | **Esfuerzo real (percibido)**: 6%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp trace` BFS upstream/downstream con chain_health (broken_links, superseded_links)
+- Soporte feedback_edges incluidos por defecto, excluidos con `--no-feedback`
+- Soporte NBR edges con flag `--nbr` (incluye nbr_branches[].edges en traversal)
+- `--depth N` limita profundidad de BFS
+- ADR-010: trace no se detiene ante broken/superseded/needs_review links
+- `ltp link inspect` detalle completo: from con labels, to, operator, weight, status, logic, assumptions
+- `ltp link find --from A --to B` encuentra edges entre dos nodos (array vacío si no hay)
+- Error codes: TREE_NOT_FOUND, NODE_NOT_FOUND, NODE_NOT_IN_TREE, LINK_NOT_FOUND
+- 15 tests de integración CLI (UATs 8.1–8.15)
+
+#### Siguiente
+- F9: Abstracción (path collapse/explode/replace)
 
 ---
 
