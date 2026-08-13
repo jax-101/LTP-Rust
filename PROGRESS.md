@@ -4,7 +4,7 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 44% |
+| **Avance global** | 58% |
 | **Fase actual** | F7 / F8 (paralelizables) |
 | **Última fase completada** | F6 — Enlaces avanzados |
 | **Factor de escala (velocity)** | 1.0x |
@@ -245,5 +245,5 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | Fecha | Motivo | Cambio | Impacto en total |
 |-------|--------|--------|-----------------|
 | — | Plan inicial | 14 paquetes, 128 UATs | 100% baseline |
-| 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global 58% → 44% (mismas fases completadas, denominador mayor). Pesos sin cambio — la complejidad por fase no aumenta proporcionalmente al nº de tests. |
+| 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global sigue 58% (pesos por fase sin cambio; fases completadas mantienen 100% de su peso). |
 
