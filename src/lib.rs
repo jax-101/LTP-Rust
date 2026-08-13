@@ -2,6 +2,7 @@ pub mod assume;
 pub mod errors;
 pub mod history;
 pub mod link;
+pub mod mcp;
 pub mod nbr;
 pub mod node;
 pub mod output;

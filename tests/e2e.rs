@@ -8,7 +8,7 @@ use serde_json::Value;
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 fn ltp_bin() -> String {
-    env!("CARGO_BIN_EXE_ltp-engine").to_string()
+    env!("CARGO_BIN_EXE_ltp").to_string()
 }
 
 fn run_ltp(dir: &std::path::Path, args: &[&str]) -> (Value, i32) {

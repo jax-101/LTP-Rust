@@ -4,12 +4,12 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 93% |
-| **Fase actual** | F12 — MCP Server |
-| **Última fase completada** | E2E Tests |
+| **Avance global** | 100% |
+| **Fase actual** | Completado |
+| **Última fase completada** | F12 — MCP Server |
 | **Factor de escala (velocity)** | 1.0x |
-| **Paquetes replanificados** | 3 (UATs expandidas) |
-| **UATs totales** | 185 (era 179, +6 E2E Six Hats) |
+| **Paquetes replanificados** | 4 (UATs expandidas) |
+| **UATs totales** | 191 (era 185, +6 F12 Six Hats) |
 
 ---
 
@@ -32,8 +32,8 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F10 | NBR | 5% | 5% | ✅ Completado | 17/17 | +5 UATs Six Hats (ciclo, inspect err, trim err, multi-source, trace) |
 | F11 | Historial (undo/redo) | 6% | 6% | ✅ Completado | 22/22 | +4 UATs redo-dry-run + divergence + creation + rotation |
 | E2E | Tests end-to-end | 4% | 4% | ✅ Completado | 19/19 | +6 UATs Six Hats (agent sim, undo cross-tree, EC incremental, path replace+undo, history divergence, multi-warning fix) |
-| F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **156/179** | |
+| F12 | MCP Server | 7% | 7% | ✅ Completado | 16/16 | +6 UATs Six Hats (parse error, method not found, isError flag, EOF, workflow, tools/list standalone) |
+| | **TOTAL** | **100%** | **100%** | | **191/191** | |
 
 ---
 
@@ -354,6 +354,30 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F12: MCP Server
+
+---
+
+### [F12] — MCP Server
+**Fecha**: 2026-08-13
+**Avance fase**: 16/16 UATs ✅
+**Avance global**: 93% → 100%
+**Esfuerzo estimado**: 7% | **Esfuerzo real (percibido)**: 7%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- Binario `ltp-mcp` como servidor MCP (JSON-RPC 2.0 sobre stdin/stdout)
+- Módulo `src/mcp/` con 4 archivos: types.rs, tools.rs, dispatch.rs, server.rs
+- 54 tools expuestos con inputSchema JSON Schema (paridad total con CLI)
+- Protocolo: initialize, tools/list, tools/call + notifications ignoradas
+- History hooks integrados: mutaciones generan undo entries (paridad con CLI)
+- Error codes: -32700 (parse), -32600 (invalid request), -32601 (method not found), -32602 (invalid params), -32001 (workspace not initialized)
+- `isError: true` en tool result cuando CommandOutput.success es false (no JSON-RPC error)
+- Graceful shutdown en EOF (exit 0, sin panic)
+- Zero dependencias nuevas (solo serde_json ya existente)
+- 16 tests de integración (UATs 12.1–12.16, +6 Six Hats robustness)
+
+#### Siguiente
+- Proyecto completado. Todas las fases implementadas.
 
 ---
 

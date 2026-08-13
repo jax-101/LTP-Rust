@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "Deterministic engine for Dettmer's Logical Thinking Process"
 
+[[bin]]
+name = "ltp"
+path = "src/main.rs"
+
+[[bin]]
+name = "ltp-mcp"
+path = "src/bin/ltp_mcp.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
