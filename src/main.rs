@@ -4,6 +4,10 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use tracing_subscriber::EnvFilter;
 
+use ltp_engine::assume::{
+    execute_assume_add, execute_assume_edit, execute_assume_list, execute_assume_move,
+    execute_assume_rm, execute_invalidate,
+};
 use ltp_engine::errors::LtpError;
 use ltp_engine::link::advanced::{
     execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
@@ -1124,6 +1128,55 @@ fn main() {
         },
         Commands::Validate { tree } => {
             let output = execute_validate(&storage, tree.as_deref());
+            render_output(&output, cli.human);
+            if !output.success {
+                process::exit(1);
+            }
+        }
+        Commands::Assume { action } => match action {
+            AssumeAction::Add { tree, link, text } => {
+                let output = execute_assume_add(&storage, &tree, &link, &text);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            AssumeAction::Edit { tree, asm, text } => {
+                let output = execute_assume_edit(&storage, &tree, &asm, &text);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            AssumeAction::Rm { tree, asm } => {
+                let output = execute_assume_rm(&storage, &tree, &asm);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            AssumeAction::List { tree, status } => {
+                let output = execute_assume_list(&storage, &tree, status.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            AssumeAction::Move { tree, asm, to_link } => {
+                let output = execute_assume_move(&storage, &tree, &asm, &to_link);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
+        Commands::Invalidate {
+            tree,
+            link,
+            asm,
+            injection,
+        } => {
+            let output = execute_invalidate(&storage, &tree, &link, &asm, injection.as_deref());
             render_output(&output, cli.human);
             if !output.success {
                 process::exit(1);

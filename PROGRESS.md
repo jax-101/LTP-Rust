@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 58% |
-| **Fase actual** | F7 / F8 (paralelizables) |
-| **Última fase completada** | F6 — Enlaces avanzados |
+| **Avance global** | 64% |
+| **Fase actual** | F8 (Navegación) |
+| **Última fase completada** | F7 — Supuestos (assumptions) |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 1 (UATs expandidas) |
 | **UATs totales** | 170 (era 128) |
@@ -26,14 +26,14 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
 | F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
-| F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/15 | +7 UATs error paths + idempotencia |
+| F7 | Supuestos (assumptions) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs error paths + idempotencia |
 | F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/15 | +7 UATs broken links + errors |
 | F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/12 | +8 UATs sub-grafo + errors |
 | F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/12 | +6 UATs incl. nbr rm (ADR-010) |
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **75/170** | |
+| | **TOTAL** | **100%** | **100%** | | **90/170** | |
 
 ---
 
@@ -195,6 +195,30 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F7: Supuestos / F8: Navegación (parallelizables)
+
+---
+
+### [F7] — Supuestos (assumptions)
+**Fecha**: 2026-08-13
+**Avance fase**: 15/15 UATs ✅
+**Avance global**: 58% → 64%
+**Esfuerzo estimado**: 6% | **Esfuerzo real (percibido)**: 6%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp assume add` crea assumption con ID secuencial (ASM-XXX) en un edge
+- `ltp assume edit` actualiza texto de assumption (scan lineal por ID)
+- `ltp assume list [--status]` lista assumptions con filtro opcional por status
+- `ltp assume move` mueve assumption entre edges (rollback si target no existe)
+- `ltp assume rm` elimina assumption de su edge
+- `ltp invalidate` marca ASM invalid + edge broken + crea INJ opcional
+- Idempotencia (ADR-010): re-invalidate retorna success + changed:false + warning
+- Auto-reparación de estados inconsistentes (ASM invalid/edge active o viceversa)
+- Error codes: ASSUMPTION_NOT_FOUND, ASSUMPTION_NOT_IN_LINK, LINK_NOT_FOUND, TREE_NOT_FOUND
+- 15 tests de integración CLI (UATs 7.1–7.15)
+
+#### Siguiente
+- F8: Navegación (trace)
 
 ---
 
