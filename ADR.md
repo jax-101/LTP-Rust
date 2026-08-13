@@ -79,3 +79,81 @@ Diseño:
 Consecuencias
 - Positivas: Correctitud garantizada (snapshot = restore infalible). Independiente de Git. Detección universal de divergencias (Git, ediciones manuales, bugs). Stack lineal previene corrupción por deshacer fuera de orden. Metadata legible (action, command, timestamp).
 - Negativas: Storage local (mitigado: negligible con workspaces ≤500 nodos, ~1MB máximo con rotación). Undo post-merge Git probablemente invalidado (mitigado: `ltp history check` detecta, usuario decide). Undo de `invalidate` resucita assumptions (comportamiento correcto pero documentar para evitar confusión).
+
+ADR-010: Semántica de Operaciones de Navegación y Abstracción
+
+Contexto
+
+Cuatro decisiones de diseño interrelacionadas surgieron durante la definición de UATs para F7–F9. Afectan el contrato de salida y la semántica de `collapse`, `trace` e `invalidate`. Se evaluaron con el framework Six Thinking Hats.
+
+Decisión 1 — Collapse opera sobre sub-grafos completos (single-pair, agente orquesta)
+
+`ltp path collapse --from A --to E` colapsa TODOS los nodos alcanzables entre A y E en el DAG (no solo cadenas lineales). Si el sub-grafo entre A y E es un diamond (A→B→D→E, A→C→D→E), los nodos B, C, D son todos `interior_nodes` del macro_edge resultante.
+
+Restricciones:
+- Solo acepta un par (from, to) por llamada. El agente compone múltiples collapses para construir un Executive Summary Tree (Dettmer, Appendix B).
+- Error `NO_DIRECTED_PATH` si no existe camino de from a to.
+- Error `NESTED_MACRO_NOT_ALLOWED` si el sub-grafo ya contiene un macro_edge.
+
+Justificación: El Executive Summary Tree de Dettmer selecciona múltiples pares RC→UDE. Esa selección es juicio semántico del agente (ADR-001). El motor ejecuta la primitiva determinista; el agente decide qué colapsar. `MacroEdge` tiene `from: String, to: String` — mantener singular evita solapamiento ambiguo de `interior_nodes` entre macro_edges.
+
+Decisión 2 — nbr rm con limpieza mínima
+
+Se añade `ltp nbr rm --tree T --nbr NBR-001`. Semántica:
+- Elimina la entrada `nbr_branches[i]` del tree (con todos sus edges internos).
+- Los nodos referenciados en los edges de la NBR permanecen en el pool global `/nodes/`.
+- El `trim_injection` permanece en el pool global.
+- El `source_node` no se toca (pertenece al trunk).
+
+Justificación: Consistente con `tree rm` (nodos quedan en pool), `link disconnect` (nodos quedan). Los nodos podrían estar referenciados en otra NBR o en el trunk. Menor riesgo de destrucción accidental. Si el agente quiere eliminar nodos, usa `node rm` explícitamente.
+
+Decisión 3 — Trace incluye broken links con metadata (no se detiene)
+
+`ltp trace` recorre TODA la cadena causal sin detenerse ante edges con status `broken`, `superseded` o `needs_review`. Cada entry de la cadena incluye `link_status`. El output top-level incluye un campo `chain_health` con resumen:
+
+```json
+{
+  "chain": [
+    {"node": "RC-001", "link_to_next": {"id": "LINK-002", "status": "broken", "operator": "SINGLE"}},
+    {"node": "INT-002", "link_to_next": {"id": "LINK-003", "status": "active", "operator": "AND"}},
+    {"node": "UDE-001", "link_to_next": null}
+  ],
+  "chain_health": {
+    "fully_connected": false,
+    "broken_links": ["LINK-002"],
+    "superseded_links": []
+  }
+}
+```
+
+Flag opcional `--status active` filtra la cadena (solo edges con ese status). Consistente con el precedente `--no-feedback`.
+
+Justificación: ADR-001 — el motor informa, no interpreta. Ocultar edges broken es decidir que "no importan". El agente LLM necesita ver la cadena completa + dónde está el quiebre para razonar sobre inyecciones. Detenerse pierde contexto upstream irrecuperable sin inspects adicionales.
+
+Decisión 4 — Invalidate es idempotente sin side-effects
+
+Si `ltp invalidate` se ejecuta sobre un ASM ya `invalid` + edge ya `broken`:
+- Retorna `success: true`
+- Warning `ALREADY_INVALIDATED`
+- Campo `"changed": false` en data
+- NO crea nodo INJ aunque se pase `--injection` (sin side-effects en no-op)
+
+Si el estado es inconsistente (ASM invalid pero edge active, o viceversa), el motor auto-repara al estado correcto con warning `EDGE_STATUS_REPAIRED` o `ASM_STATUS_REPAIRED`.
+
+Contrato completo:
+
+| Estado previo | --injection | Resultado |
+|---|---|---|
+| ASM valid + Edge active | No | Transición. changed: true |
+| ASM valid + Edge active | Sí | Transición + crea INJ. changed: true |
+| ASM invalid + Edge broken | No | No-op. changed: false. Warning |
+| ASM invalid + Edge broken | Sí | No-op. changed: false. Warning. NO crea INJ |
+| ASM invalid + Edge active | — | Repara edge→broken. changed: true. Warning |
+| ASM valid + Edge broken | — | Repara ASM→invalid. changed: true. Warning |
+
+Justificación: El agente LLM es stateless entre llamadas. Un retry tras timeout no debe penalizarse ni generar basura en el pool. Patrón consistente con PUT idempotente (RFC 7231) y `kubectl apply`. El campo `changed: bool` permite al agente sofisticado detectar bugs de loop sin obligar al agente simple a verificar precondiciones.
+
+Consecuencias
+
+- Positivas: Contratos deterministas y predecibles. El agente puede componer operaciones sin verificar estado previo. Trace expone toda la información; el filtrado es opt-in. Collapse mantiene la primitiva simple; la inteligencia de selección vive en el agente.
+- Negativas: Collapse sobre grafos densos puede generar macro_edges con muchos interior_nodes (mitigado: el agente controla la granularidad). Trace de grafos con muchos broken links puede ser ruidoso (mitigado: flag --status). Idempotencia de invalidate oculta bugs de loop del agente (mitigado: campo changed + warning).

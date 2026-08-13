@@ -291,18 +291,25 @@ Toda mutación sigue este flujo:
 |----|---------|-------------------|
 | 7.1 | `ltp assume add --tree T --link L1 --text "Capacidad no aumenta"` | Crea ASM-001 dentro del edge. |
 | 7.2 | `ltp assume edit --tree T --asm ASM-001 --text "Nuevo texto"` | Actualiza texto. |
-| 7.3 | `ltp assume list --tree T` | Lista todos con status. |
+| 7.3 | `ltp assume list --tree T` | Lista todos con status y link_id al que pertenecen. |
 | 7.4 | `ltp assume list --tree T --status valid` | Filtra por status. |
 | 7.5 | `ltp assume move --tree T --asm ASM-001 --to-link L2` | Mueve a otro edge. |
 | 7.6 | `ltp assume rm --tree T --asm ASM-001` | Elimina assumption. |
-| 7.7 | `ltp invalidate --tree T --link L1 --asm ASM-001` | Marca ASM como `invalid`, link como `broken`. |
+| 7.7 | `ltp invalidate --tree T --link L1 --asm ASM-001` | Marca ASM como `invalid`, link como `broken`. `changed: true`. |
 | 7.8 | `ltp invalidate ... --injection "Aumentar flota"` | Además crea nodo INJ borrador en pool. |
+| 7.9 | `ltp assume add --tree T --link LINK-999 --text "..."` (link inexistente) | Error `LINK_NOT_FOUND`. |
+| 7.10 | `ltp assume add --tree tree-inexistente --link L1 --text "..."` | Error `TREE_NOT_FOUND`. |
+| 7.11 | `ltp assume edit --tree T --asm ASM-999 --text "..."` (ASM inexistente) | Error `ASSUMPTION_NOT_FOUND`. |
+| 7.12 | `ltp assume move --tree T --asm ASM-001 --to-link LINK-999` (target inexistente) | Error `LINK_NOT_FOUND`. ASM permanece en edge original. |
+| 7.13 | `ltp invalidate --tree T --link L1 --asm ASM-001` (ASM pertenece a L2, no L1) | Error `ASSUMPTION_NOT_IN_LINK`. |
+| 7.14 | `ltp invalidate --tree T --link L1 --asm ASM-001` (ya invalid + broken) | Idempotente: `success: true`, `changed: false`, warning `ALREADY_INVALIDATED`. No crea INJ. |
+| 7.15 | `ltp assume list --tree T` con 3 ASMs en 2 edges distintos | Los 3 listados, cada entry incluye `link_id`. |
 
 ---
 
 ## Fase 8: Navegación (Trace & Inspección)
 
-**Scope**: `trace`, `link inspect/find`.
+**Scope**: `trace`, `link inspect/find`. Trace incluye TODOS los edges (broken, superseded, needs_review) con metadata por entry + `chain_health` top-level (ADR-010).
 
 **Archivos**: `src/trace/`
 
@@ -312,20 +319,27 @@ Toda mutación sigue este flujo:
 
 | ID | Comando | Resultado esperado |
 |----|---------|-------------------|
-| 8.1 | `ltp trace RC-001 --tree T --direction downstream` | Cadena completa hasta UDEs/DEs. |
+| 8.1 | `ltp trace RC-001 --tree T --direction downstream` | Cadena completa hasta UDEs/DEs. Cada entry incluye `link_status`. |
 | 8.2 | `ltp trace UDE-005 --tree T --direction upstream` | Llega a causas raíz. |
 | 8.3 | `ltp trace UDE-005 --tree T --direction upstream --depth 2` | Solo 2 niveles. |
 | 8.4 | `ltp trace` con feedback loops presentes | Los incluye por defecto en sección separada. |
 | 8.5 | `ltp trace ... --no-feedback` | Excluye feedback edges. |
 | 8.6 | `ltp trace ... --nbr` | Incluye edges de NBR branches. |
-| 8.7 | `ltp link inspect L1 --tree T` | Detalle completo: from (con labels), to, operator, weight, status, assumptions. |
-| 8.8 | `ltp link find --tree T --from A --to B` | Encuentra edge(s) entre dos nodos. |
+| 8.7 | `ltp link inspect L1 --tree T` | Detalle completo: from (con labels), to, operator, weight, status, assumptions (todos). |
+| 8.8 | `ltp link find --tree T --from A --to B` | Encuentra edge(s) entre dos nodos. Array vacío si no hay. |
+| 8.9 | `ltp trace NODO-INEXISTENTE --tree T --direction upstream` | Error `NODE_NOT_FOUND`. |
+| 8.10 | `ltp trace UDE-001 --tree tree-inexistente --direction upstream` | Error `TREE_NOT_FOUND`. |
+| 8.11 | `ltp trace UDE-001 --tree T --direction upstream` (no attached) | Error `NODE_NOT_IN_TREE`. |
+| 8.12 | `ltp trace RC-001 --tree T --direction downstream` (nodo hoja) | `success: true`, `data.chain: []`. No es error. |
+| 8.13 | `ltp trace UDE-001 --tree T --direction upstream` (nodo raíz) | `success: true`, `data.chain: []`. No es error. |
+| 8.14 | Cadena A→B→C, B→C broken. `ltp trace A --tree T --direction downstream` | Cadena incluye B→C con `link_status: "broken"`. `chain_health.fully_connected: false`. |
+| 8.15 | `ltp link inspect L1 --tree T` (L1 con 2 assumptions: 1 valid, 1 invalid) | Output expone ambas assumptions con su status. |
 
 ---
 
 ## Fase 9: Abstracción (Path)
 
-**Scope**: `path collapse/explode/replace`
+**Scope**: `path collapse/explode/replace`. Collapse opera sobre sub-grafos completos entre from y to (ADR-010).
 
 **Archivos**: `src/path/`
 
@@ -335,16 +349,24 @@ Toda mutación sigue este flujo:
 
 | ID | Comando | Resultado esperado |
 |----|---------|-------------------|
-| 9.1 | `ltp path collapse --tree T --from A --to E --label "Cadena logística"` | Crea `macro_edge` con `interior_nodes` e `interior_links`. Nodos tácticos intactos en disco. |
+| 9.1 | `ltp path collapse --tree T --from A --to E --label "Cadena logística"` | Crea `macro_edge` con todos los `interior_nodes` entre A y E (incluye bifurcaciones). Nodos tácticos intactos en disco. |
 | 9.2 | `ltp tree walk T` tras collapse | Macro edge visible; nodos interiores siguen en walk táctico. |
-| 9.3 | `ltp path explode --tree T --link L1 --asm ASM-001 --label "Nodo intermedio"` | Crea nodo INT, parte el edge en 2, elimina el assumption del edge original. |
+| 9.3 | `ltp path explode --tree T --link L1 --asm ASM-001 --label "Nodo intermedio"` | Crea nodo INT, parte el edge en 2, elimina el assumption del edge original. Edges nuevos heredan `logic` y `status: active`. |
 | 9.4 | `ltp path replace --tree T --macro-link MACRO-001 --by-node INJ-001` | Sub-grafo táctico marcado `superseded`. INJ conectada en su lugar. |
+| 9.5 | `ltp path collapse --tree T --from A --to E` sin camino dirigido A→...→E | Error `NO_DIRECTED_PATH`. |
+| 9.6 | `ltp path collapse --tree T --from A --to E` con diamond (A→B→D→E, A→C→D→E) | Colapsa sub-grafo completo: `interior_nodes: [B, C, D]`, `interior_links: [L1, L2, L3, L4]`. |
+| 9.7 | `ltp path explode --tree T --link L1 --asm ASM-999 --label "..."` (ASM inexistente en L1) | Error `ASSUMPTION_NOT_IN_LINK`. |
+| 9.8 | `ltp path replace --tree T --macro-link MACRO-999 --by-node INJ-001` | Error `MACRO_EDGE_NOT_FOUND`. |
+| 9.9 | `ltp path replace --tree T --macro-link MACRO-001 --by-node NODO-999` | Error `NODE_NOT_FOUND`. |
+| 9.10 | `ltp path collapse --tree T --from A --to B` (un solo edge directo A→B) | Válido: `interior_nodes: []`, `interior_links: ["LINK-001"]`. Caso degenerado legal. |
+| 9.11 | Collapse sobre camino que ya contiene un macro_edge interior | Error `NESTED_MACRO_NOT_ALLOWED`. |
+| 9.12 | `ltp path explode` → verificar edges nuevos | 2 edges con `logic: sufficiency`, `status: active`. ASM eliminado del edge original. |
 
 ---
 
 ## Fase 10: NBR (Negative Branch Reservations)
 
-**Scope**: `nbr add/list/inspect`, edges dentro de NBR.
+**Scope**: `nbr add/rm/list/inspect`, edges dentro de NBR. `nbr rm` con limpieza mínima (ADR-010).
 
 **Archivos**: `src/nbr/`
 
@@ -360,6 +382,12 @@ Toda mutación sigue este flujo:
 | 10.4 | `ltp nbr inspect NBR-001 --tree T` | Cadena causal completa de la NBR. |
 | 10.5 | `ltp nbr add --tree T --source-node INJ-001 --trim INJ-003` | NBR con trim_injection asignada. |
 | 10.6 | `ltp validate` sobre tree con NBR | Valida DAG de cada NBR como sub-grafo independiente. |
+| 10.7 | `ltp nbr add --tree T --source-node NODO-999` (no existe en pool) | Error `NODE_NOT_FOUND`. |
+| 10.8 | `ltp nbr add --tree T --source-node UDE-001` (no attached al tree) | Error `NODE_NOT_IN_TREE`. |
+| 10.9 | `ltp link connect --tree T --nbr NBR-001 --from A --to B` (B no existe en pool) | Error `REFERENTIAL_INTEGRITY_VIOLATION`. |
+| 10.10 | `ltp nbr rm --tree T --nbr NBR-001` | Elimina NBR branch del tree. Nodos permanecen en pool. |
+| 10.11 | `ltp nbr rm --tree T --nbr NBR-999` (inexistente) | Error `NBR_NOT_FOUND`. |
+| 10.12 | NBR-001 con trim INJ-003. Crear NBR-002 con source INJ-003. `ltp validate` | Válido: cada NBR es sub-grafo DAG independiente. Recursión por referencia soportada. |
 
 ---
 
@@ -389,6 +417,12 @@ Toda mutación sigue este flujo:
 | 11.10 | Stack supera `max_size_mb` (5MB) | Rotación FIFO: entradas más antiguas descartadas. |
 | 11.11 | `ltp history invalidate --from 3` | Descarta entries desde seq 3 en adelante. |
 | 11.12 | `ltp history clear` | Limpia undo + redo stacks. |
+| 11.13 | `ltp undo` con undo stack vacío | Error `UNDO_STACK_EMPTY`. |
+| 11.14 | `ltp redo` con redo stack vacío | Error `REDO_STACK_EMPTY`. |
+| 11.15 | `ltp history end-batch` sin begin-batch previo | Error `NO_BATCH_IN_PROGRESS`. |
+| 11.16 | `ltp history begin-batch` anidado (ya hay batch abierto) | Error `BATCH_ALREADY_IN_PROGRESS`. |
+| 11.17 | `ltp node add X` → `ltp node rm X` → `ltp undo` | Nodo X recreado en disco con todos sus campos originales. |
+| 11.18 | `ltp link group --links L1,L2 --operator AND` → `ltp undo` | Edges originales (L1, L2 SINGLE) restaurados. Edge agrupado eliminado. |
 
 ---
 
@@ -414,6 +448,11 @@ Toda mutación sigue este flujo:
 | E2E.6 | **Batch undo**: begin-batch → 10 operaciones de construcción → end-batch → undo → verificar que TODOS los cambios se revierten | Batch es atómico. |
 | E2E.7 | **Clone + diff**: clone tree → modificar clone (add edge, rm edge, reoperator) → diff → verify report correcto | Diff detecta todas las diferencias. |
 | E2E.8 | **Trace depth**: construir cadena de 8 niveles → trace upstream depth 3 → verificar que solo muestra 3 niveles → trace sin depth → muestra todos | Depth limita correctamente. |
+| E2E.9 | **Nodo compartido multi-tree**: attach UDE-001 a tree-A y tree-B → `node edit UDE-001 --label "Nuevo"` → verificar que ambos trees ven el label actualizado (NodeRef es por referencia) | Consistencia cross-tree. |
+| E2E.10 | **Counters recovery**: init → add 5 nodos → borrar `.ltp/counters.json` → `ltp node add --type UDE` → verificar ID = UDE-006 + warning `COUNTERS_REBUILT` | Resiliencia ante corrupción parcial. |
+| E2E.11 | **Invalidate + trace lifecycle**: assume add → invalidate (L1 broken) → trace upstream a través de L1 → verificar `link_status: broken` en cadena → undo → trace de nuevo → `link_status: active` | Ciclo invalidate → trace → undo → trace. |
+| E2E.12 | **Path collapse + validate**: cadena A→B→C→D → collapse A→D → validate → 0 errores (interior_nodes no son falsos huérfanos) | Validate no genera falsos positivos por macro_edges. |
+| E2E.13 | **NBR + invalidate + undo**: FRT con INJ-001 → nbr add → connect edges en NBR → invalidate supuesto del trunk → undo → verificar NBR intacta + trunk restaurado | Aislamiento trunk/NBR ante mutaciones. |
 
 ---
 
@@ -436,27 +475,31 @@ Toda mutación sigue este flujo:
 | 12.5 | Invocar tool de manipulación | Muta estado + genera undo entry. |
 | 12.6 | Invocar `ltp/validate` | Retorna errors + warnings en formato MCP. |
 | 12.7 | `--dry-run` via MCP | Tool de manipulación con dry_run retorna preview sin mutar. |
+| 12.8 | JSON-RPC request sin workspace inicializado | Error JSON-RPC `code: -32001`, `message: "Workspace not initialized"`. Sin crash. |
+| 12.9 | JSON-RPC `ltp/node_add` que genera warning CLR#2 | Response incluye `success: true` + campo `warnings` preservado en serialización MCP. |
+| 12.10 | `initialize` → verificar tools list completa | Contiene TODOS los subcomandos expuestos (node ×7, tree ×8, link ×14, assume ×5, invalidate, validate, trace, path ×3, nbr ×4, undo, redo, history, status). |
 
 ---
 
 ## Estimación de Complejidad
 
-| Fase | Archivos principales | Complejidad |
-|------|---------------------|-------------|
-| F1 | workspace/, storage.rs, engine.rs | Media |
-| F2a | node/ (standalone) | Baja |
-| F3 | tree/ | Media |
-| F4 | link/ (connect/disconnect) | Media |
-| F2b | node/ (cross-tree) | Media |
-| F5 | validate/ | Media |
-| F6 | link/ (avanzado) | Alta |
-| F7 | assume/ | Media |
-| F8 | trace/ | Media |
-| F9 | path/ | Alta |
-| F10 | nbr/ | Media |
-| F11 | history/ | Media (hook ya diseñado) |
-| E2E | tests/e2e/ | Media |
-| F12 | mcp/ | Media-Alta |
+| Fase | Archivos principales | UATs | Complejidad |
+|------|---------------------|:---:|-------------|
+| F1 | workspace/, storage.rs, engine.rs | 6 | Media |
+| F2a | node/ (standalone) | 9 | Baja |
+| F3 | tree/ | 11 | Media |
+| F4 | link/ (connect/disconnect) | 11 | Media |
+| F2b | node/ (cross-tree) | 7 | Media |
+| F5 | validate/ | 14 | Media |
+| F6 | link/ (avanzado) | 17 | Alta |
+| F7 | assume/ | 15 | Media |
+| F8 | trace/ | 15 | Media |
+| F9 | path/ | 12 | Alta |
+| F10 | nbr/ | 12 | Media |
+| F11 | history/ | 18 | Media (hook ya diseñado) |
+| E2E | tests/e2e/ | 13 | Media |
+| F12 | mcp/ | 10 | Media-Alta |
+| | **TOTAL** | **170** | |
 
 ---
 

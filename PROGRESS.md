@@ -4,11 +4,12 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 58% |
+| **Avance global** | 44% |
 | **Fase actual** | F7 / F8 (paralelizables) |
 | **Última fase completada** | F6 — Enlaces avanzados |
 | **Factor de escala (velocity)** | 1.0x |
-| **Paquetes replanificados** | 0 |
+| **Paquetes replanificados** | 1 (UATs expandidas) |
+| **UATs totales** | 170 (era 128) |
 
 ---
 
@@ -25,14 +26,14 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
 | F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
 | F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
-| F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/8 | |
-| F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/8 | |
-| F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/4 | |
-| F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/6 | |
-| F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/12 | |
-| E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/8 | |
-| F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/7 | |
-| | **TOTAL** | **100%** | **100%** | | **75/128** | |
+| F7 | Supuestos (assumptions) | 6% | 6% | ⬜ Pendiente | 0/15 | +7 UATs error paths + idempotencia |
+| F8 | Navegación (trace) | 6% | 6% | ⬜ Pendiente | 0/15 | +7 UATs broken links + errors |
+| F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/12 | +8 UATs sub-grafo + errors |
+| F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/12 | +6 UATs incl. nbr rm (ADR-010) |
+| F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
+| E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
+| F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
+| | **TOTAL** | **100%** | **100%** | | **75/170** | |
 
 ---
 
@@ -244,4 +245,5 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | Fecha | Motivo | Cambio | Impacto en total |
 |-------|--------|--------|-----------------|
 | — | Plan inicial | 14 paquetes, 128 UATs | 100% baseline |
+| 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global 58% → 44% (mismas fases completadas, denominador mayor). Pesos sin cambio — la complejidad por fase no aumenta proporcionalmente al nº de tests. |
 
