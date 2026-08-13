@@ -22,6 +22,7 @@ use ltp_engine::node::commands::{
     execute_node_search, execute_node_split,
 };
 use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
+use ltp_engine::path::{execute_path_collapse, execute_path_explode, execute_path_replace};
 use ltp_engine::storage::Storage;
 use ltp_engine::trace::{execute_link_find, execute_link_inspect, execute_trace};
 use ltp_engine::tree::commands::{
@@ -1207,6 +1208,43 @@ fn main() {
                 process::exit(1);
             }
         }
+        Commands::Path { action } => match action {
+            PathAction::Collapse {
+                tree,
+                from,
+                to,
+                label,
+            } => {
+                let output = execute_path_collapse(&storage, &tree, &from, &to, &label);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            PathAction::Explode {
+                tree,
+                link,
+                asm,
+                label,
+            } => {
+                let output = execute_path_explode(&storage, &tree, &link, &asm, &label);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            PathAction::Replace {
+                tree,
+                macro_link,
+                by_node,
+            } => {
+                let output = execute_path_replace(&storage, &tree, &macro_link, &by_node);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
         _ => {
             let output = error_output(
                 "unknown",

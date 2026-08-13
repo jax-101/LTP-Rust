@@ -4,9 +4,9 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 70% |
-| **Fase actual** | F9 (Abstracción) |
-| **Última fase completada** | F8 — Navegación (trace) |
+| **Avance global** | 78% |
+| **Fase actual** | F10 (NBR) |
+| **Última fase completada** | F9 — Abstracción (path) |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 1 (UATs expandidas) |
 | **UATs totales** | 170 (era 128) |
@@ -28,12 +28,12 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
 | F7 | Supuestos (assumptions) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs error paths + idempotencia |
 | F8 | Navegación (trace) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs broken links + errors |
-| F9 | Abstracción (path) | 8% | 8% | ⬜ Pendiente | 0/12 | +8 UATs sub-grafo + errors |
+| F9 | Abstracción (path) | 8% | 8% | ✅ Completado | 12/12 | +8 UATs sub-grafo + errors |
 | F10 | NBR | 5% | 5% | ⬜ Pendiente | 0/12 | +6 UATs incl. nbr rm (ADR-010) |
 | F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **105/170** | |
+| | **TOTAL** | **100%** | **100%** | | **117/170** | |
 
 ---
 
@@ -242,6 +242,30 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F9: Abstracción (path collapse/explode/replace)
+
+---
+
+### [F9] — Abstracción (path)
+**Fecha**: 2026-08-13
+**Avance fase**: 12/12 UATs ✅
+**Avance global**: 70% → 78%
+**Esfuerzo estimado**: 8% | **Esfuerzo real (percibido)**: 8%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `ltp path collapse` colapsa sub-grafo completo (from→to) en macro_edge (ADR-010 Decisión 1)
+- BFS bidireccional (forward+backward) para calcular interior_nodes/interior_links del DAG
+- Soporte para diamonds: A→B→D→E, A→C→D→E → interior_nodes: [B,C,D]
+- Caso degenerado: single edge directo → interior_nodes: [], interior_links: [link]
+- Validación: `NESTED_MACRO_NOT_ALLOWED` si sub-grafo ya contiene macro_edge
+- `ltp path explode` convierte assumption en nodo INT intermedio, split edge en 2
+- Edges nuevos heredan `logic` del original, status: active, operator: SINGLE
+- `ltp path replace` marca sub-grafo táctico como superseded, conecta nodo inyección
+- Error codes: NO_DIRECTED_PATH, NESTED_MACRO_NOT_ALLOWED, ASSUMPTION_NOT_IN_LINK, MACRO_EDGE_NOT_FOUND, NODE_NOT_FOUND
+- 12 tests de integración CLI (UATs 9.1–9.12)
+
+#### Siguiente
+- F10: NBR (Negative Branch Reservations)
 
 ---
 
