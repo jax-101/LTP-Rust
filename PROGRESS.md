@@ -4,12 +4,12 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 83% |
-| **Fase actual** | F11 (Historial) |
-| **Última fase completada** | F10 — NBR |
+| **Avance global** | 89% |
+| **Fase actual** | E2E Tests |
+| **Última fase completada** | F11 — Historial |
 | **Factor de escala (velocity)** | 1.0x |
-| **Paquetes replanificados** | 2 (UATs expandidas) |
-| **UATs totales** | 175 (era 170, +5 en F10) |
+| **Paquetes replanificados** | 3 (UATs expandidas) |
+| **UATs totales** | 179 (era 175, +4 en F11) |
 
 ---
 
@@ -30,10 +30,10 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F8 | Navegación (trace) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs broken links + errors |
 | F9 | Abstracción (path) | 8% | 8% | ✅ Completado | 12/12 | +8 UATs sub-grafo + errors |
 | F10 | NBR | 5% | 5% | ✅ Completado | 17/17 | +5 UATs Six Hats (ciclo, inspect err, trim err, multi-source, trace) |
-| F11 | Historial (undo/redo) | 6% | 6% | ⬜ Pendiente | 0/18 | +6 UATs stack vacío + destructivas |
+| F11 | Historial (undo/redo) | 6% | 6% | ✅ Completado | 22/22 | +4 UATs redo-dry-run + divergence + creation + rotation |
 | E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
-| | **TOTAL** | **100%** | **100%** | | **134/175** | |
+| | **TOTAL** | **100%** | **100%** | | **156/179** | |
 
 ---
 
@@ -292,6 +292,34 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - F11: Historial (undo/redo)
+
+---
+
+### [F11] — Historial (Undo/Redo)
+**Fecha**: 2026-08-13
+**Avance fase**: 22/22 UATs ✅
+**Avance global**: 83% → 89%
+**Esfuerzo estimado**: 6% | **Esfuerzo real (percibido)**: 6%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `HistoryManager` como componente central con snapshot-based undo/redo (ADR-009)
+- SHA-256 checksums para detección de divergencias externas (edición manual, Git)
+- `ltp undo [--dry-run]` con restauración atómica cross-file (write-then-rename)
+- `ltp redo [--dry-run]` con verificación de before_hash
+- `ltp history [--last N]` lista el stack con seq, timestamp, action, command
+- `ltp history check` valida integridad de cada entry contra disco
+- `ltp history invalidate --from <seq>` descarta entries desde punto de divergencia
+- `ltp history clear` limpia ambos stacks
+- `ltp history begin-batch --label` / `end-batch` colapsa N operaciones en una sola entry
+- Rotación FIFO por `max_size_mb` (configurable en ltp.config.json)
+- Captura integrada en todos los comandos mutantes (30+ commands) sin modificar el trait Storage
+- Error codes: UNDO_STACK_EMPTY, REDO_STACK_EMPTY, UNDO_STATE_DIVERGED, REDO_STATE_DIVERGED, BATCH_ALREADY_IN_PROGRESS, NO_BATCH_IN_PROGRESS, HISTORY_DISABLED
+- Paths relativos en entries (portabilidad entre máquinas)
+- 22 tests de integración CLI (UATs 11.1–11.22, expandidos con Six Hats)
+
+#### Siguiente
+- E2E Tests: Workflows completos
 
 ---
 

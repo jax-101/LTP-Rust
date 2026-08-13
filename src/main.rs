@@ -9,6 +9,11 @@ use ltp_engine::assume::{
     execute_assume_rm, execute_invalidate,
 };
 use ltp_engine::errors::LtpError;
+use ltp_engine::history::{
+    execute_history_begin_batch, execute_history_check, execute_history_clear,
+    execute_history_end_batch, execute_history_invalidate, execute_history_list, execute_redo,
+    execute_undo, HistoryManager,
+};
 use ltp_engine::link::advanced::{
     execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
     execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
@@ -22,7 +27,7 @@ use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
     execute_node_search, execute_node_split,
 };
-use ltp_engine::output::{error_output, CommandOutput, GraphHealth, OutputError};
+use ltp_engine::output::{CommandOutput, GraphHealth, OutputError};
 use ltp_engine::path::{execute_path_collapse, execute_path_explode, execute_path_replace};
 use ltp_engine::storage::Storage;
 use ltp_engine::trace::{execute_link_find, execute_link_inspect, execute_trace};
@@ -798,6 +803,60 @@ fn render_human<T: Serialize>(output: &CommandOutput<T>) {
     );
 }
 
+/// Snapshot all mutable workspace files (nodes/ + trees/ + config) for history capture.
+fn snapshot_workspace_paths(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    let nodes_dir = root.join("nodes");
+    let trees_dir = root.join("trees");
+
+    if let Ok(entries) = std::fs::read_dir(&nodes_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                paths.push(path);
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(&trees_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+/// Record a mutation in history. Called before/after a mutating command.
+/// Returns a CaptureContext if history is enabled; caller must commit after mutation.
+fn history_begin(
+    storage: &FsStorage,
+) -> Option<(HistoryManager, ltp_engine::history::CaptureContext)> {
+    let config = storage.load_config().ok()?;
+    if !config.history.enabled {
+        return None;
+    }
+    let manager = HistoryManager::new(storage.root().to_path_buf(), config.history);
+    if manager.is_batch_active() {
+        return None;
+    }
+    let paths = snapshot_workspace_paths(storage.root());
+    let ctx = manager.begin_capture(&paths).ok()?;
+    Some((manager, ctx))
+}
+
+/// Commit the capture after a successful mutation.
+fn history_commit(
+    capture: Option<(HistoryManager, ltp_engine::history::CaptureContext)>,
+    action: &str,
+    command: &str,
+) {
+    if let Some((manager, ctx)) = capture {
+        let _ = manager.commit_capture(ctx, action, command);
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_env("LTP_LOG"))
@@ -815,6 +874,7 @@ fn main() {
     };
 
     let storage = FsStorage::new(cwd.clone());
+    let full_command: String = std::env::args().collect::<Vec<_>>().join(" ");
 
     match cli.command {
         Commands::Init { name } => {
@@ -843,7 +903,11 @@ fn main() {
                 tags,
                 observable,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_node_add(&storage, &label, &r#type, tags, observable);
+                if output.success {
+                    history_commit(capture, "node_add", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -856,6 +920,7 @@ fn main() {
                 rm_tag,
                 observable,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_node_edit(
                     &storage,
                     &id,
@@ -864,6 +929,9 @@ fn main() {
                     rm_tag.as_deref(),
                     observable,
                 );
+                if output.success {
+                    history_commit(capture, "node_edit", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -893,7 +961,11 @@ fn main() {
                 }
             }
             NodeAction::Rm { ids, force } => {
+                let capture = history_begin(&storage);
                 let output = execute_node_rm(&storage, &ids, force);
+                if output.success {
+                    history_commit(capture, "node_rm", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -907,7 +979,11 @@ fn main() {
                 }
             }
             NodeAction::Split { id, into, tree } => {
+                let capture = history_begin(&storage);
                 let output = execute_node_split(&storage, &id, &into, &tree);
+                if output.success {
+                    history_commit(capture, "node_split", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -916,7 +992,11 @@ fn main() {
         },
         Commands::Tree { action } => match action {
             TreeAction::New { r#type, name } => {
+                let capture = history_begin(&storage);
                 let output = execute_tree_new(&storage, &r#type, &name);
+                if output.success {
+                    history_commit(capture, "tree_new", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -930,28 +1010,44 @@ fn main() {
                 }
             }
             TreeAction::Rm { tree_id } => {
+                let capture = history_begin(&storage);
                 let output = execute_tree_rm(&storage, &tree_id);
+                if output.success {
+                    history_commit(capture, "tree_rm", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             TreeAction::Attach { tree, node, role } => {
+                let capture = history_begin(&storage);
                 let output = execute_tree_attach(&storage, &tree, &node, role.as_deref());
+                if output.success {
+                    history_commit(capture, "tree_attach", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             TreeAction::Detach { tree, node } => {
+                let capture = history_begin(&storage);
                 let output = execute_tree_detach(&storage, &tree, &node);
+                if output.success {
+                    history_commit(capture, "tree_detach", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             TreeAction::Clone { tree_id, name } => {
+                let capture = history_begin(&storage);
                 let output = execute_tree_clone(&storage, &tree_id, &name);
+                if output.success {
+                    history_commit(capture, "tree_clone", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -986,6 +1082,7 @@ fn main() {
                 weight,
                 nbr,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_connect(
                     &storage,
                     &tree,
@@ -995,13 +1092,20 @@ fn main() {
                     weight,
                     nbr.as_deref(),
                 );
+                if output.success {
+                    history_commit(capture, "link_connect", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             LinkAction::Disconnect { tree, links } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_disconnect(&storage, &tree, &links);
+                if output.success {
+                    history_commit(capture, "link_disconnect", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1014,15 +1118,23 @@ fn main() {
                 r#type,
                 label,
             } => {
+                let capture = history_begin(&storage);
                 let output =
                     execute_link_feedback(&storage, &tree, &from, &to, &r#type, label.as_deref());
+                if output.success {
+                    history_commit(capture, "link_feedback", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             LinkAction::Reverse { tree, link, force } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_reverse(&storage, &tree, &link, force);
+                if output.success {
+                    history_commit(capture, "link_reverse", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1034,6 +1146,7 @@ fn main() {
                 new_from,
                 new_to,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_move(
                     &storage,
                     &tree,
@@ -1041,6 +1154,9 @@ fn main() {
                     new_from.as_deref(),
                     new_to.as_deref(),
                 );
+                if output.success {
+                    history_commit(capture, "link_move", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1053,6 +1169,7 @@ fn main() {
                 insert_after_cause,
                 insert_before_effect,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_insert_between(
                     &storage,
                     &tree,
@@ -1061,6 +1178,9 @@ fn main() {
                     insert_after_cause.as_deref(),
                     insert_before_effect,
                 );
+                if output.success {
+                    history_commit(capture, "link_insert_between", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1071,14 +1191,22 @@ fn main() {
                 links,
                 operator,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_group(&storage, &tree, &links, &operator);
+                if output.success {
+                    history_commit(capture, "link_group", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             LinkAction::Dissolve { tree, link } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_dissolve(&storage, &tree, &link);
+                if output.success {
+                    history_commit(capture, "link_dissolve", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1089,7 +1217,11 @@ fn main() {
                 link,
                 extract,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_split(&storage, &tree, &link, &extract);
+                if output.success {
+                    history_commit(capture, "link_split", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1100,7 +1232,11 @@ fn main() {
                 link,
                 operator,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_reoperator(&storage, &tree, &link, &operator);
+                if output.success {
+                    history_commit(capture, "link_reoperator", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1113,6 +1249,7 @@ fn main() {
                 weight,
                 promote_to,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_add_cause(
                     &storage,
                     &tree,
@@ -1121,13 +1258,20 @@ fn main() {
                     weight,
                     promote_to.as_deref(),
                 );
+                if output.success {
+                    history_commit(capture, "link_add_cause", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             LinkAction::RmCause { tree, link, node } => {
+                let capture = history_begin(&storage);
                 let output = execute_link_rm_cause(&storage, &tree, &link, &node);
+                if output.success {
+                    history_commit(capture, "link_rm_cause", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1157,21 +1301,33 @@ fn main() {
         }
         Commands::Assume { action } => match action {
             AssumeAction::Add { tree, link, text } => {
+                let capture = history_begin(&storage);
                 let output = execute_assume_add(&storage, &tree, &link, &text);
+                if output.success {
+                    history_commit(capture, "assume_add", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             AssumeAction::Edit { tree, asm, text } => {
+                let capture = history_begin(&storage);
                 let output = execute_assume_edit(&storage, &tree, &asm, &text);
+                if output.success {
+                    history_commit(capture, "assume_edit", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             AssumeAction::Rm { tree, asm } => {
+                let capture = history_begin(&storage);
                 let output = execute_assume_rm(&storage, &tree, &asm);
+                if output.success {
+                    history_commit(capture, "assume_rm", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1185,7 +1341,11 @@ fn main() {
                 }
             }
             AssumeAction::Move { tree, asm, to_link } => {
+                let capture = history_begin(&storage);
                 let output = execute_assume_move(&storage, &tree, &asm, &to_link);
+                if output.success {
+                    history_commit(capture, "assume_move", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1198,7 +1358,11 @@ fn main() {
             asm,
             injection,
         } => {
+            let capture = history_begin(&storage);
             let output = execute_invalidate(&storage, &tree, &link, &asm, injection.as_deref());
+            if output.success {
+                history_commit(capture, "invalidate", &full_command);
+            }
             render_output(&output, cli.human);
             if !output.success {
                 process::exit(1);
@@ -1233,7 +1397,11 @@ fn main() {
                 to,
                 label,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_path_collapse(&storage, &tree, &from, &to, &label);
+                if output.success {
+                    history_commit(capture, "path_collapse", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1245,7 +1413,11 @@ fn main() {
                 asm,
                 label,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_path_explode(&storage, &tree, &link, &asm, &label);
+                if output.success {
+                    history_commit(capture, "path_explode", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1256,7 +1428,11 @@ fn main() {
                 macro_link,
                 by_node,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_path_replace(&storage, &tree, &macro_link, &by_node);
+                if output.success {
+                    history_commit(capture, "path_replace", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1269,14 +1445,22 @@ fn main() {
                 source_node,
                 trim,
             } => {
+                let capture = history_begin(&storage);
                 let output = execute_nbr_add(&storage, &tree, &source_node, trim.as_deref());
+                if output.success {
+                    history_commit(capture, "nbr_add", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
                 }
             }
             NbrAction::Rm { tree, nbr } => {
+                let capture = history_begin(&storage);
                 let output = execute_nbr_rm(&storage, &tree, &nbr);
+                if output.success {
+                    history_commit(capture, "nbr_rm", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1297,17 +1481,66 @@ fn main() {
                 }
             }
         },
-        Commands::Undo { .. } | Commands::Redo { .. } | Commands::History { .. } => {
-            let output = error_output(
-                "unknown",
-                "",
-                vec![OutputError::new(
-                    "NOT_IMPLEMENTED",
-                    "Command not yet implemented",
-                )],
-            );
+        Commands::Undo { dry_run: undo_dry } => {
+            let effective_dry_run = cli.dry_run || undo_dry;
+            let output = execute_undo(&storage, effective_dry_run);
             render_output(&output, cli.human);
-            process::exit(1);
+            if !output.success {
+                process::exit(1);
+            }
         }
+        Commands::Redo { dry_run: redo_dry } => {
+            let effective_dry_run = cli.dry_run || redo_dry;
+            let output = execute_redo(&storage, effective_dry_run);
+            render_output(&output, cli.human);
+            if !output.success {
+                process::exit(1);
+            }
+        }
+        Commands::History { action, last } => match action {
+            Some(HistoryAction::Check) => {
+                let output = execute_history_check(&storage);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            Some(HistoryAction::Invalidate { from }) => {
+                let from_seq = from.unwrap_or(1);
+                let output = execute_history_invalidate(&storage, from_seq);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            Some(HistoryAction::BeginBatch { label }) => {
+                let output = execute_history_begin_batch(&storage, &label);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            Some(HistoryAction::EndBatch) => {
+                let output = execute_history_end_batch(&storage);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            Some(HistoryAction::Clear) => {
+                let output = execute_history_clear(&storage);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            None => {
+                let output = execute_history_list(&storage, last);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
     }
 }
