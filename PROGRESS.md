@@ -4,12 +4,12 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 89% |
-| **Fase actual** | E2E Tests |
-| **Última fase completada** | F11 — Historial |
+| **Avance global** | 93% |
+| **Fase actual** | F12 — MCP Server |
+| **Última fase completada** | E2E Tests |
 | **Factor de escala (velocity)** | 1.0x |
 | **Paquetes replanificados** | 3 (UATs expandidas) |
-| **UATs totales** | 179 (era 175, +4 en F11) |
+| **UATs totales** | 185 (era 179, +6 E2E Six Hats) |
 
 ---
 
@@ -31,7 +31,7 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 | F9 | Abstracción (path) | 8% | 8% | ✅ Completado | 12/12 | +8 UATs sub-grafo + errors |
 | F10 | NBR | 5% | 5% | ✅ Completado | 17/17 | +5 UATs Six Hats (ciclo, inspect err, trim err, multi-source, trace) |
 | F11 | Historial (undo/redo) | 6% | 6% | ✅ Completado | 22/22 | +4 UATs redo-dry-run + divergence + creation + rotation |
-| E2E | Tests end-to-end | 4% | 4% | ⬜ Pendiente | 0/13 | +5 UATs cross-tree + lifecycle |
+| E2E | Tests end-to-end | 4% | 4% | ✅ Completado | 19/19 | +6 UATs Six Hats (agent sim, undo cross-tree, EC incremental, path replace+undo, history divergence, multi-warning fix) |
 | F12 | MCP Server | 7% | 7% | ⬜ Pendiente | 0/10 | +3 UATs error workspace + tools list |
 | | **TOTAL** | **100%** | **100%** | | **156/179** | |
 
@@ -320,6 +320,40 @@ Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paqu
 
 #### Siguiente
 - E2E Tests: Workflows completos
+
+---
+
+### [E2E] — Tests End-to-End (Workflows Completos)
+**Fecha**: 2026-08-13
+**Avance fase**: 19/19 UATs ✅
+**Avance global**: 89% → 93%
+**Esfuerzo estimado**: 4% | **Esfuerzo real (percibido)**: 4%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- 19 tests E2E en `tests/e2e.rs` (13 originales + 6 Six Hats)
+- E2E.1: CRT completo (10 nodos, cadena causal, validate + status)
+- E2E.2: Insuficiencia → corrección (CLR#4 cycle)
+- E2E.3: Invalidación completa (assume → invalidate → undo roundtrip)
+- E2E.4: EC validation (roles, requirements, prerequisites, XOR)
+- E2E.5: CRT→EC→FRT cycle (multi-tree, nodos compartidos, NBR con trim)
+- E2E.6: Batch undo (10 ops atómicas)
+- E2E.7: Clone + diff (edges independientes, link find en clone)
+- E2E.8: Trace depth (8 niveles, depth-limited vs full)
+- E2E.9: Nodo compartido multi-tree (edit visible en ambos trees)
+- E2E.10: Counters recovery (auto-rebuild tras borrado)
+- E2E.11: Invalidate + trace lifecycle (broken links en cadena, undo restaura)
+- E2E.12: Path collapse + validate (macro_edges sin falsos positivos)
+- E2E.13: NBR + invalidate + undo (aislamiento trunk/NBR)
+- E2E.14: Agent simulation (navegación intercalada con mutaciones + undo/redo)
+- E2E.15: Undo cross-tree cascade (node rm multi-tree → undo restaura ambos)
+- E2E.16: EC incremental construction (error → fix iterativo)
+- E2E.17: Path replace + undo roundtrip (superseded → active)
+- E2E.18: History divergence recovery (edición externa → check → invalidate)
+- E2E.19: Multi-warning iterative fix (CLR#4, CLR#6, CLR#7 → fix secuencial)
+
+#### Siguiente
+- F12: MCP Server
 
 ---
 

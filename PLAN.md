@@ -453,6 +453,12 @@ Toda mutación sigue este flujo:
 | E2E.11 | **Invalidate + trace lifecycle**: assume add → invalidate (L1 broken) → trace upstream a través de L1 → verificar `link_status: broken` en cadena → undo → trace de nuevo → `link_status: active` | Ciclo invalidate → trace → undo → trace. |
 | E2E.12 | **Path collapse + validate**: cadena A→B→C→D → collapse A→D → validate → 0 errores (interior_nodes no son falsos huérfanos) | Validate no genera falsos positivos por macro_edges. |
 | E2E.13 | **NBR + invalidate + undo**: FRT con INJ-001 → nbr add → connect edges en NBR → invalidate supuesto del trunk → undo → verificar NBR intacta + trunk restaurado | Aislamiento trunk/NBR ante mutaciones. |
+| E2E.14 | **Agent simulation workflow**: status → trace → link inspect → add-cause → validate → undo → trace again → redo — intercalando navegación con mutación | Patrón real del consumidor LLM (ADR-001) funciona sin interferencia entre lecturas y escrituras. |
+| E2E.15 | **Undo cross-tree cascade**: attach UDE-001 a tree-A y tree-B → connect en ambos → node rm UDE-001 → undo → verificar nodo + edges en AMBOS trees restaurados | Snapshot multi-file cross-tree es correcto. |
+| E2E.16 | **EC incremental construction**: new EC → attach solo objective → validate (error: missing requirements) → attach requirements → validate (error: missing prerequisites) → fix → validate clean | Ciclo iterativo de corrección EC funciona. |
+| E2E.17 | **Path replace + undo roundtrip**: collapse A→D → replace con INJ → verificar sub-grafo superseded → undo → verificar sub-grafo activo de nuevo | Undo de replace restaura status original. |
+| E2E.18 | **History divergence recovery**: add nodos → editar JSON manualmente → history check (detecta divergencia) → history invalidate --from N → verificar entradas previas funcionales | Recuperación ante edición externa funciona. |
+| E2E.19 | **Multi-warning iterative fix**: crear grafo con 3 warnings distintos (CLR#4, CLR#6, CLR#7) → fix cada uno secuencialmente → validate limpio al final | Ciclo iterativo de mejora de calidad del grafo. |
 
 ---
 
@@ -497,9 +503,9 @@ Toda mutación sigue este flujo:
 | F9 | path/ | 12 | Alta |
 | F10 | nbr/ | 12 | Media |
 | F11 | history/ | 18 | Media (hook ya diseñado) |
-| E2E | tests/e2e/ | 13 | Media |
+| E2E | tests/e2e/ | 19 | Media |
 | F12 | mcp/ | 10 | Media-Alta |
-| | **TOTAL** | **170** | |
+| | **TOTAL** | **176** | |
 
 ---
 
