@@ -157,3 +157,35 @@ Consecuencias
 
 - Positivas: Contratos deterministas y predecibles. El agente puede componer operaciones sin verificar estado previo. Trace expone toda la información; el filtrado es opt-in. Collapse mantiene la primitiva simple; la inteligencia de selección vive en el agente.
 - Negativas: Collapse sobre grafos densos puede generar macro_edges con muchos interior_nodes (mitigado: el agente controla la granularidad). Trace de grafos con muchos broken links puede ser ruidoso (mitigado: flag --status). Idempotencia de invalidate oculta bugs de loop del agente (mitigado: campo changed + warning).
+
+ADR-011: Resolución Portable de Workspace para ltp-mcp
+
+Contexto
+
+El servidor MCP (`ltp-mcp`) necesita saber en qué directorio operar (crear `nodes/`, `trees/`, `.ltp/`). La configuración inicial hardcodeaba rutas absolutas en `.mcp.json`, limitando el uso a una sola máquina y directorio. El objetivo es que `ltp-engine` sea instalable en cualquier ordenador y funcione automáticamente en cualquier carpeta donde se abra Claude Code.
+
+Se evaluaron con Six Thinking Hats:
+1. Wrapper script con `$(pwd)` → frágil (cwd del proceso hijo no está garantizado por Claude Code), no portable entre shells/OS.
+2. Skill que genera `.mcp.json` por proyecto → exige reinicio de sesión, riesgo de sobrescribir otros servidores MCP configurados.
+3. Workspace por tool-call (`ltp/set_workspace`) → viola la regla del proyecto contra `Arc<Mutex<T>>` como parche, invasivo (54 firmas).
+4. Discovery ascendente tipo git → YAGNI, sin evidencia de necesidad, abre edge cases sin beneficio no cubierto.
+5. **Cadena de fallback con `CLAUDE_PROJECT_DIR`** → usa el mecanismo oficial de Claude Code, coste cero en Rust, portable.
+
+Decisión
+
+Adoptar cadena de resolución de workspace con tres niveles de prioridad:
+1. `--workspace <path>` (flag CLI explícito — para testing, CI, override manual)
+2. `CLAUDE_PROJECT_DIR` (variable de entorno inyectada por Claude Code al lanzar el servidor)
+3. `env::current_dir()` (fallback último — compatibilidad con uso standalone)
+
+Instalación portable en dos comandos:
+```
+cargo install --path .
+claude mcp add --scope user ltp -- ltp-mcp
+```
+
+El `.mcp.json` local se elimina del repo (añadido a `.gitignore`) para evitar conflictos con el registro global.
+
+Consecuencias
+- Positivas: Instalable en cualquier máquina con Rust + Claude Code. Cero configuración manual por proyecto. El workspace es siempre la carpeta donde el usuario abre Claude Code. Compatible con el uso standalone del binario (cae a cwd). No rompe ningún test existente.
+- Negativas: Requiere que `~/.cargo/bin` esté en PATH (estándar en toda instalación Rust). Si el usuario lanza Claude Code desde una carpeta no deseada, `ltp/init` creará estructura ahí (mitigado: `ltp/init` requiere invocación explícita — red de seguridad existente vía `WORKSPACE_NOT_INITIALIZED`).

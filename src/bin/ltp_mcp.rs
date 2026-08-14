@@ -8,12 +8,14 @@ use ltp_engine::workspace::FsStorage;
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let workspace_path = parse_workspace_arg(&args).unwrap_or_else(|| {
-        env::current_dir().unwrap_or_else(|e| {
-            eprintln!("Cannot determine current directory: {e}");
-            process::exit(1);
-        })
-    });
+    let workspace_path = parse_workspace_arg(&args)
+        .or_else(|| env::var("CLAUDE_PROJECT_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(|| {
+            env::current_dir().unwrap_or_else(|e| {
+                eprintln!("Cannot determine current directory: {e}");
+                process::exit(1);
+            })
+        });
 
     let storage = FsStorage::new(workspace_path);
     run(storage);
