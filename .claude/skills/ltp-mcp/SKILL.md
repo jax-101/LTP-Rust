@@ -91,6 +91,98 @@ Auditar en este orden estricto. Si una categoria falla como bloqueante, la audit
 
 `ltp/validate` detecta automaticamente: CLR#2 (conjunciones en labels), CLR#4 (SINGLE solitario, AND >4 entradas), CLR#6 (inversion de tipos), CLR#7 (intangible sin predicho), CLR#8 (ciclos — BLOQUEANTE), huerfanos.
 
+### 4.1 Heuristicos de Validacion Causal (solo arboles de suficiencia: CRT, FRT, TT)
+
+Estos heuristicos operativizan CLR#3 (existencia de causalidad) y CLR#4 (insuficiencia de causa). NO aplican a arboles de necesidad (GT, EC, PRT) — esos usan la lectura "Para lograr X, necesito Y".
+
+**Cuando activar:**
+- `ltp/validate` emite warning CLR#4 (SINGLE solitario o AND >4).
+- El usuario cuestiona una conexion ("¿por que A causa B?").
+- Se construye un enlace critico (CRC del CRT, inyeccion clave del FRT).
+- Antes de presentar el arbol a stakeholders (scrutiny grupal).
+
+#### 4.1.1 MMM — Means, Method, Motivation (test de suficiencia real)
+
+Valida que una causa tiene la fuerza necesaria para producir su efecto en el mundo real. Responde a CLR#4: "¿falta algun factor co-dependiente?"
+
+| Componente | Pregunta | Si falta... |
+|-----------|----------|-------------|
+| **Means** (Recursos) | ¿Existe la capacidad fisica, autoridad, herramientas o presupuesto para ejecutar la causa? | La causa es fisicamente incapaz de producir el efecto. |
+| **Method** (Conocimiento) | ¿Existe el procedimiento, know-how o proceso para ejecutar? | Aun con recursos, nadie sabe como hacerlo. |
+| **Motivation** (Impulso) | ¿Existe incentivo, accountability o razon para actuar? | Means + Method permanecen dormidos — el efecto nunca ocurre. |
+
+**Protocolo operativo:**
+
+1. Para el enlace bajo escrutinio, evaluar cada componente:
+   - Means: ¿verificable por observacion? → SI/NO
+   - Method: ¿verificable por observacion? → SI/NO
+   - Motivation: **preguntar al usuario** (no inferir — el LLM no puede verificar motivacion interna de actores reales)
+2. Si falta un componente:
+   - Identificar que elemento especifico falta.
+   - `ltp/node_add` para crear el nodo del factor faltante.
+   - `ltp/link_group --operator AND` para agrupar la causa original + el factor faltante como co-dependientes.
+3. Si faltan dos o mas: la causa es estructuralmente insuficiente — considerar reescribirla.
+
+**Anti-patron "Dormant Motivation":** El error mas comun en CRTs es asumir que un actor va a ejecutar una accion porque puede (Means) y sabe como (Method). Sin incentivo o accountability, la cadena causal se rompe. Siempre verificar: "¿Quien va a hacer esto y POR QUE lo haria?"
+
+#### 4.1.2 Silogismo — Test de Estructura Logica (surface hidden assumptions)
+
+Deconstruye un enlace If-Then en premisas explicitas para verificar que la relacion es logicamente valida y para surfacear supuestos ocultos.
+
+**Estructura:**
+
+```
+Major Premise: [Principio universal o regla general]
+Minor Premise: [Hecho especifico del sistema actual]
+─────────────────────────────────────────────────
+Conclusion:    [El enlace If-Then que estamos validando]
+```
+
+**Protocolo operativo:**
+
+1. Tomar el enlace: "Si [Causa], entonces [Efecto]"
+2. Formular la Major Premise: ¿que principio general justifica esta relacion?
+3. Formular la Minor Premise: ¿que hecho del sistema actual activa ese principio?
+4. Verificar: si ambas premisas son verdaderas, ¿la conclusion es inevitable?
+
+**Guard para Major Premise (obligatorio):** La premisa mayor DEBE ser una de estas categorias verificables:
+
+| Categoria valida | Ejemplo |
+|-----------------|---------|
+| Hecho empirico verificable | "Los sistemas con single point of failure tienen disponibilidad inferior al 99.9%" |
+| Principio de dominio aceptado | "Un proceso sin feedback loop no puede auto-corregirse" |
+| Politica organizacional vigente | "El comite de compliance requiere aprobacion para cambios en datos de cliente" |
+
+- ❌ PROHIBIDO: generalizaciones vagas ("Las empresas que no innovan quiebran")
+- ❌ PROHIBIDO: tautologias disfrazadas ("Las cosas que fallan dejan de funcionar")
+
+**Ejemplo aplicado:**
+
+```
+Enlace CRT: "Si [el equipo no tiene metricas de rendimiento], entonces [los cuellos de botella pasan desapercibidos]"
+
+Major Premise: Un proceso solo puede optimizarse si sus puntos de restriccion son visibles para los operadores.
+              (Principio de dominio: Theory of Constraints)
+Minor Premise: El equipo actual no tiene metricas que hagan visibles los cuellos de botella.
+              (Hecho verificable del sistema)
+Conclusion:   Por lo tanto, los cuellos de botella pasan desapercibidos.
+              ✅ Logicamente inevitable si ambas premisas son verdaderas.
+```
+
+**Valor adicional — Surfacing assumptions:** Las premisas formuladas explicitamente son candidatas a supuestos (`ltp/assume_add`) en los enlaces criticos. Si alguien disputa la Major Premise, esa es exactamente la assumption que podria invalidarse para romper el patron.
+
+#### 4.1.3 Uso Combinado (MMM + Silogismo)
+
+MMM valida la **sustancia** (¿puede ocurrir en el mundo real?). El silogismo valida la **estructura** (¿el razonamiento es correcto?). Aplicar ambos en enlaces criticos:
+
+```
+1. Silogismo: ¿La relacion causa-efecto es logicamente valida? (estructura)
+2. MMM: ¿La causa tiene means, method Y motivation para producir el efecto? (sustancia)
+3. Si ambos pasan: enlace robusto — resistira scrutiny.
+4. Si silogismo falla: la logica es incorrecta — reescribir o eliminar enlace.
+5. Si MMM falla: la logica es correcta pero incompleta — agrupar con AND.
+```
+
 ## 5. Arboles
 
 ### 5.1 Goal Tree (GT) — Necesidad
