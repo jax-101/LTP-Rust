@@ -111,9 +111,203 @@ Auditar en este orden estricto. Si una categoria falla como bloqueante, la audit
 
 - **5 nodos:** [A] Objetivo comun (GOAL/OBJ, role=objective), [B,C] Necesidades (REQ, role=requirement), [D,D'] Prerrequisitos en conflicto (PRE/WANT, role=prerequisite) conectados con XOR.
 - **3 tipos:** Nube de UDE (secuencia: D->B->A<-C<-D'), Dilema (D->B->A<-C<-D'), Fire-fighting.
-- **Supuestos (4 reglas):** Explicar mecanismo causal profundo. Prohibida repeticion inversa. Prohibido "es la unica forma" sin sustento. Factuales.
+- **Supuestos:** Generados segun protocolo 5.3.3 (reglas de flechas rectas + reglas de conflicto + 7 errores fatales). Minimo 3 por flecha, rankeados por fragilidad.
 - **Inyecciones:** Deben romper un supuesto, satisfacer las necesidades B y C, y estar dentro de la esfera de influencia.
 - **Anti-patrones:** Espejo (B=C invertido); solucion en D; necesidades "away from" en vez de "toward".
+
+#### 5.3.1 Protocolo de Auditoria EC (Fedurko — "Behind the Cloud")
+
+Ejecutar estos 5 checks en orden estricto tras construir o recibir una EC. Si un check falla, DETENERSE, informar al usuario y proponer correccion antes de continuar.
+
+**Check 0 — Pre-check Estructural (delegado al motor)**
+
+Antes de evaluar semantica, verificar que la EC tiene la estructura minima valida:
+
+- Ejecutar `ltp/validate --tree <ec-tree>`.
+- El motor verifica: objective=1, requirements>=2, prerequisite por requirement, DAG valido.
+- Si falla: corregir estructura (nodos faltantes, roles incorrectos) antes de continuar con checks semanticos.
+
+Accion MCP si falla: `ltp/node_add` + `ltp/tree_attach --role <rol>` para completar la estructura.
+
+**Check 1 — Rigurosidad de Redaccion (Wording Strictness)**
+
+| Regla | Aplica a | Ejemplo de violacion |
+|-------|----------|---------------------|
+| Sin palabras causales ("porque", "por lo tanto", "debido a", "para que", "ya que") | A, B, C, D, D' (todos) | "Reducir costes *porque* el margen cae" |
+| Fraseo positivo obligatorio (sin negaciones) | A, B, C (no aplica a D, D') | "No perder clientes" → reescribir como "Retener clientes" |
+| Oracion simple y atomica (S+V+O) | A, B, C, D, D' (todos) | Compuestas con "y/o" deben splittearse |
+
+Nota: D y D' pueden contener negaciones ("Dejar de invertir en X") porque son acciones/wants, no objetivos ni necesidades.
+
+Accion MCP si falla: `ltp/node_edit --label "<correccion>"` o `ltp/node_split` si es compuesta.
+
+**Check 2 — Logica Vertical ("Lectura en Voz Alta")**
+
+Leer las 4 conexiones en esta secuencia exacta y evaluar si cada una tiene sentido practico e inevitable:
+
+1. "Para lograr **[A]**, necesito obligatoriamente **[B]**."
+2. "Para satisfacer **[B]**, debo hacer **[D]**."
+3. "Para lograr **[A]**, necesito obligatoriamente **[C]**."
+4. "Para satisfacer **[C]**, debo hacer **[D']**."
+
+Criterio de rechazo: si la lectura suena forzada, condicional ("a veces") o evitable ("podria lograrse de otra forma obvia"), la flecha carece de rigor de necesidad.
+
+Nota sobre tipos de EC: en Fire-fighting clouds donde A es implicito o la estructura varia, adaptar las lecturas manteniendo la logica de necesidad (punta requiere cola).
+
+Accion MCP si falla: reescribir el nodo debil con `ltp/node_edit` o insertar nodo intermedio con `ltp/link_insert_between`.
+
+**Check 3 — Conflicto Directo (D vs D')**
+
+Verificar que D y D' son incompatibles **en el contexto real del sistema**: no es viable ejecutar ambos sin que uno anule o comprometa al otro.
+
+- Prueba: "En el contexto real (recursos, tiempo, politicas del sistema), ¿es viable ejecutar D y D' sin que uno anule al otro?" → si la respuesta es SI, el conflicto no es real.
+- Tipos de conflicto validos:
+  - Exclusion fisica (imposible simultaneamente).
+  - Exclusion de recurso (mismo presupuesto/equipo/tiempo finito).
+  - Exclusion logica (uno contradice la premisa del otro).
+- Causa comun de fallo: D y D' son preferencias graduales ("invertir mas" vs "invertir menos") en vez de acciones discretas incompatibles.
+- Correccion: reformular D y D' como acciones concretas cuya co-ejecucion sea inviable en el contexto.
+
+Accion MCP si falla: `ltp/node_edit` sobre D y/o D' para reescribir como acciones incompatibles en contexto.
+
+**Check 4 — Cross-Check de Amenaza (Endangerment — el mas critico)**
+
+Verificar las **relaciones diagonales** — aqui se detectan "necesidades nobles" falsas vs las reales:
+
+- "¿Hacer **[D]** pone en peligro la necesidad **[C]**?" → debe ser SI.
+- "¿Hacer **[D']** pone en peligro la necesidad **[B]**?" → debe ser SI.
+
+**Adversarial guard (obligatorio):** Tras afirmar que la amenaza existe, intentar REFUTAR:
+- "¿Existe algun escenario realista dentro del sistema donde D NO amenace C?"
+- Solo confirmar la amenaza si no se encuentra contra-argumento solido.
+- Si se encuentra refutacion facil → la necesidad probablemente es falsa.
+
+Si alguna diagonal NO se cumple:
+1. La necesidad (B o C) probablemente es una "excusa noble" — suena razonable pero no es la verdadera fuerza motriz detras de la accion.
+2. Buscar la necesidad REAL preguntando: "¿Por que realmente hago [D/D']? ¿Que pierdo si no lo hago?"
+3. Reemplazar la necesidad falsa con la verdadera (puede ser menos elegante pero mas honesta).
+
+Accion MCP si falla: `ltp/node_edit --node <B|C> --label "<necesidad real>"` con la necesidad genuina.
+
+**Resultado de la Auditoria:**
+
+- **Todos los checks pasan** → declarar "EC validada" y proceder a generacion de supuestos (5.3.3).
+- **Algun check falla** → mostrar al usuario: (1) que check fallo, (2) propuesta de correccion, (3) pedir confirmacion antes de mutar.
+- **Override del usuario** → si el usuario rechaza la correccion e insiste en mantener la EC tal cual, registrar advertencia ("EC no pasa Check N — supuestos e inyecciones pueden no ser validos") y continuar con la construccion. El override no silencia la advertencia en outputs futuros de `ltp/validate`.
+
+#### 5.3.2 Secuencia Completa de Construccion + Auditoria EC
+
+```
+1. Construir:  tree_new(ec) → node_add × 5 → tree_attach(roles) → link_connect(XOR entre D,D')
+2. Auditar:    Check 1 (wording) → Check 2 (vertical) → Check 3 (conflicto) → Check 4 (diagonales)
+3. Supuestos:  Generar segun protocolo 5.3.3 (assume_add en cada flecha)
+4. Rankear:    Identificar supuesto mas fragil (creencia que podria cambiar o no tiene evidencia solida)
+5. Romper:     invalidate el supuesto mas fragil → genera INJ
+6. Validar:    validate + verificar que INJ satisface B y C sin conflicto
+```
+
+#### 5.3.3 Protocolo de Generacion de Supuestos EC (Fedurko — "Behind the Cloud")
+
+Genera supuestos validos para cada flecha de la EC. Distingue entre flechas rectas (necesidad) y la flecha de conflicto (D↔D').
+
+**Flechas de la EC y su mapeo a edges del motor:**
+
+| Flecha | Lectura | Edge MCP |
+|--------|---------|----------|
+| B→A | "Para lograr A, necesito B" | Edge de B hacia A (operator SINGLE) |
+| C→A | "Para lograr A, necesito C" | Edge de C hacia A (operator SINGLE) |
+| D→B | "Para satisfacer B, debo hacer D" | Edge de D hacia B (operator SINGLE) |
+| D'→C | "Para satisfacer C, debo hacer D'" | Edge de D' hacia C (operator SINGLE) |
+| D↔D' | "D y D' son incompatibles porque..." | Edge XOR entre D y D' |
+
+##### Reglas para Flechas Rectas (B→A, C→A, D→B, D'→C)
+
+**Regla 1 — Palabras Referentes (forma)**
+
+El supuesto DEBE contener palabras que refieran claramente a ambos nodos (punta y cola de la flecha) E introducir un **tercer elemento** (agente, concepto, factor, mecanismo) que los vincule.
+
+- ✅ "El departamento legal [3er elemento] exige certificacion [B] para aprobar operaciones [A]"
+- ❌ "Necesitamos B para lograr A" (repeticion sin tercer elemento)
+
+**Regla 2 — Explicar el vinculo, no la entidad (validez)**
+
+El supuesto explica POR QUE el nodo cola es el medio necesario para alcanzar el nodo punta.
+
+- ❌ Expandir solo un nodo: "B es importante porque..."
+- ❌ Establecer un objetivo: "B nos permitira alcanzar..."
+- ✅ Explicar el mecanismo: "Dado que [tercer elemento], B es la unica via hacia A"
+
+**Regla 3 — Mecanismo Prevalente (estrategia de descubrimiento)**
+
+Preguntarse: "¿Cual es el mecanismo actual (politica, principio, mentalidad, regulacion) por el cual logramos [punta] a traves de [cola]?"
+
+Categorias tipicas de mecanismos:
+- Politica organizacional / regulacion sectorial
+- Limitacion tecnologica / restriccion de recursos
+- Creencia arraigada / paradigma mental
+- Dependencia temporal / secuencia obligatoria
+
+**Regla 4 — Test "Si... y si... entonces..." (validacion final)**
+
+Colocar el supuesto en esta formula y verificar que tiene sentido logico completo:
+
+> "Si queremos **[nodo punta]**, Y SI **[supuesto]**, entonces debemos **[nodo cola]**."
+
+Requisitos:
+- La oracion resultante debe ser logicamente inevitable.
+- Lo que va despues de "y si" debe ser genuinamente diferente de lo que va despues de "si" (no repeticion disfrazada).
+
+##### Reglas para la Flecha de Conflicto (D↔D')
+
+**Regla C1 — Sintaxis Bilateral Obligatoria**
+
+Usar SIEMPRE esta estructura:
+
+> "**[D]** Y **[D']** estan en conflicto porque... [supuesto]"
+
+- ❌ PROHIBIDO: "D esta en conflicto con D' porque..." (sesga hacia un solo lado)
+- La razon debe mirar AMBAS acciones simultaneamente.
+
+**Regla C2 — "¿Que nos falta?"**
+
+Para descubrir el supuesto del conflicto, preguntar: "¿Que NO tenemos que nos impide eliminar el conflicto?"
+
+Categorias tipicas de carencia:
+- Falta de conocimiento o metodo
+- Falta de reglas o procedimiento claro
+- Falta de confianza mutua o respeto
+- Falta de disposicion a cooperar
+- Falta de recurso (tiempo, dinero, tecnologia)
+
+Los supuestos D↔D' se adjuntan al **edge XOR** del motor (el que conecta D con D' via `link_connect --operator XOR`).
+
+##### 7 Errores Fatales (gate de descarte)
+
+Antes de persistir un supuesto con `ltp/assume_add`, verificar que NO incurre en ninguno de estos errores. Si lo hace, descartar y regenerar:
+
+| # | Error Fatal | Ejemplo | Deteccion rapida |
+|---|-------------|---------|-----------------|
+| 1 | **Repeticion inversa** | "Necesitamos B porque sin B no logramos A" | ¿Solo invierte la flecha? → DESCARTAR |
+| 2 | **"Es la unica forma"** | "...porque es la unica manera de lograr A" | ¿Anade entendimiento nuevo? Si no → DESCARTAR |
+| 3 | **Explicar solo un nodo** | "B es importante para la organizacion" | ¿Menciona ambos nodos + tercer elemento? Si no → DESCARTAR |
+| 4 | **"¿Para lograr que?"** | "B nos permitira expandirnos" | ¿Establece un objetivo en vez de explicar el vinculo? → DESCARTAR |
+| 5 | **Supuesto irrelevante** | Hecho verdadero pero desconectado de la flecha | ¿Pasa la Regla 4 (Si-y si-entonces)? Si no → DESCARTAR |
+| 6 | **Sintaxis sesgada D↔D'** | "D esta en conflicto con D' porque..." | ¿Usa forma bilateral (Regla C1)? Si no → REFORMULAR |
+| 7 | **Cop-out "mismo tiempo"** | "...porque no se pueden hacer al mismo tiempo" | ¿Explica la CAUSA del conflicto o solo lo define? Si solo define → DESCARTAR |
+
+**Nota sobre Error #7 vs Check 3 (5.3.1):** El Check 3 de auditoria VERIFICA que D y D' sean mutuamente excluyentes (condicion necesaria para que la EC sea valida). El Error #7 prohibe USAR esa exclusividad como supuesto, porque no explica POR QUE son excluyentes — solo repite la definicion de conflicto.
+
+##### Protocolo Operativo de Generacion
+
+```
+Por cada flecha de la EC:
+1. Generar 3 supuestos candidatos (Reglas 1 + 2 + 3, o C1 + C2 para D↔D')
+2. Validar cada uno con Regla 4 (Si-y si-entonces)
+3. Filtrar contra los 7 Errores Fatales
+4. Rankear por fragilidad: ¿cual depende de una creencia que PODRIA cambiar?
+5. ltp/assume_add con los supuestos que pasan (el mas fragil primero)
+6. Comunicar al usuario cual es el candidato a invalidacion y por que
+```
 
 ### 5.4 Future Reality Tree (FRT) — Suficiencia
 
