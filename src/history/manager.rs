@@ -294,7 +294,8 @@ impl HistoryManager {
         // Detect newly created files (not in before_contents)
         let nodes_dir = self.root.join("nodes");
         let trees_dir = self.root.join("trees");
-        for dir in [&nodes_dir, &trees_dir] {
+        let knowledge_dir = self.root.join("knowledge");
+        for dir in [&nodes_dir, &trees_dir, &knowledge_dir] {
             if !dir.exists() {
                 continue;
             }

@@ -14,6 +14,11 @@ use ltp_engine::history::{
     execute_history_end_batch, execute_history_invalidate, execute_history_list, execute_redo,
     execute_undo, HistoryManager,
 };
+use ltp_engine::knowledge::commands::{
+    execute_knowledge_add, execute_knowledge_edit, execute_knowledge_inspect,
+    execute_knowledge_list, execute_knowledge_rm,
+};
+use ltp_engine::knowledge::{Confidence, KnowledgeStatus, KnowledgeType};
 use ltp_engine::link::advanced::{
     execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
     execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
@@ -173,6 +178,12 @@ enum Commands {
         /// Label for a new injection node
         #[arg(long)]
         injection: Option<String>,
+    },
+
+    /// Manage knowledge items in the epistemic pool
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeAction,
     },
 }
 
@@ -518,6 +529,61 @@ enum HistoryAction {
     Clear,
 }
 
+#[derive(Subcommand)]
+enum KnowledgeAction {
+    Add {
+        label: String,
+        #[arg(long)]
+        r#type: String,
+        #[arg(long)]
+        source_uri: Option<String>,
+        #[arg(long)]
+        source_excerpt: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        confidence: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+    },
+    Edit {
+        id: String,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        confidence: Option<String>,
+        #[arg(long)]
+        source_uri: Option<String>,
+        #[arg(long)]
+        source_excerpt: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        add_tag: Option<Vec<String>>,
+        #[arg(long, value_delimiter = ',')]
+        rm_tag: Option<Vec<String>>,
+    },
+    Rm {
+        #[arg(value_delimiter = ',')]
+        ids: Vec<String>,
+    },
+    Inspect {
+        id: String,
+    },
+    List {
+        #[arg(long)]
+        r#type: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        confidence: Option<String>,
+        #[arg(long)]
+        unlinked: bool,
+        #[arg(long)]
+        tag: Option<String>,
+    },
+}
+
 // --- Command implementations ---
 
 #[derive(Debug, Serialize)]
@@ -805,25 +871,22 @@ fn render_human<T: Serialize>(output: &CommandOutput<T>) {
     );
 }
 
-/// Snapshot all mutable workspace files (nodes/ + trees/ + config) for history capture.
+/// Snapshot all mutable workspace files (nodes/ + trees/ + knowledge/ + config) for history capture.
 fn snapshot_workspace_paths(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
-    let nodes_dir = root.join("nodes");
-    let trees_dir = root.join("trees");
+    let dirs = [
+        root.join("nodes"),
+        root.join("trees"),
+        root.join("knowledge"),
+    ];
 
-    if let Ok(entries) = std::fs::read_dir(&nodes_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                paths.push(path);
-            }
-        }
-    }
-    if let Ok(entries) = std::fs::read_dir(&trees_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                paths.push(path);
+    for dir in &dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    paths.push(path);
+                }
             }
         }
     }
@@ -1544,5 +1607,240 @@ fn main() {
                 }
             }
         },
+        Commands::Knowledge { action } => match action {
+            KnowledgeAction::Add {
+                label,
+                r#type,
+                source_uri,
+                source_excerpt,
+                status,
+                confidence,
+                tags,
+            } => {
+                let ktype = match parse_knowledge_type(&r#type) {
+                    Ok(t) => t,
+                    Err(msg) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_add",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_KNOWLEDGE_TYPE", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                };
+                let kstatus = match status.as_deref().map(parse_knowledge_status) {
+                    Some(Ok(s)) => Some(s),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_add",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_STATUS", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+                let kconfidence = match confidence.as_deref().map(parse_confidence) {
+                    Some(Ok(c)) => Some(c),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_add",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_CONFIDENCE", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+
+                let capture = history_begin(&storage);
+                let output = execute_knowledge_add(
+                    &storage,
+                    &label,
+                    ktype,
+                    source_uri.as_deref(),
+                    source_excerpt.as_deref(),
+                    kstatus,
+                    kconfidence,
+                    tags,
+                );
+                if output.success {
+                    history_commit(capture, "knowledge_add", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::Edit {
+                id,
+                label,
+                status,
+                confidence,
+                source_uri,
+                source_excerpt,
+                add_tag,
+                rm_tag,
+            } => {
+                let kstatus = match status.as_deref().map(parse_knowledge_status) {
+                    Some(Ok(s)) => Some(s),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_edit",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_STATUS", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+                let kconfidence = match confidence.as_deref().map(parse_confidence) {
+                    Some(Ok(c)) => Some(c),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_edit",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_CONFIDENCE", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+
+                let capture = history_begin(&storage);
+                let output = execute_knowledge_edit(
+                    &storage,
+                    &id,
+                    label.as_deref(),
+                    kstatus,
+                    kconfidence,
+                    source_uri.as_deref(),
+                    source_excerpt.as_deref(),
+                    add_tag,
+                    rm_tag,
+                );
+                if output.success {
+                    history_commit(capture, "knowledge_edit", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::Rm { ids } => {
+                let capture = history_begin(&storage);
+                let output = execute_knowledge_rm(&storage, &ids);
+                if output.success {
+                    history_commit(capture, "knowledge_rm", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::Inspect { id } => {
+                let output = execute_knowledge_inspect(&storage, &id);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::List {
+                r#type,
+                status,
+                confidence,
+                unlinked,
+                tag,
+            } => {
+                let ktype = match r#type.as_deref().map(parse_knowledge_type) {
+                    Some(Ok(t)) => Some(t),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_list",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_KNOWLEDGE_TYPE", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+                let kstatus = match status.as_deref().map(parse_knowledge_status) {
+                    Some(Ok(s)) => Some(s),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_list",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_STATUS", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+                let kconfidence = match confidence.as_deref().map(parse_confidence) {
+                    Some(Ok(c)) => Some(c),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_list",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_CONFIDENCE", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
+
+                let output = execute_knowledge_list(
+                    &storage,
+                    ktype,
+                    kstatus,
+                    kconfidence,
+                    unlinked,
+                    tag.as_deref(),
+                );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
+    }
+}
+
+fn parse_knowledge_type(s: &str) -> std::result::Result<KnowledgeType, String> {
+    match s.to_lowercase().as_str() {
+        "measurement" => Ok(KnowledgeType::Measurement),
+        "testimony" => Ok(KnowledgeType::Testimony),
+        "hypothesis" => Ok(KnowledgeType::Hypothesis),
+        "document" => Ok(KnowledgeType::Document),
+        "observation" => Ok(KnowledgeType::Observation),
+        "derived" => Ok(KnowledgeType::Derived),
+        other => Err(format!("Unknown knowledge type: {}", other)),
+    }
+}
+
+fn parse_knowledge_status(s: &str) -> std::result::Result<KnowledgeStatus, String> {
+    match s.to_lowercase().as_str() {
+        "unverified" => Ok(KnowledgeStatus::Unverified),
+        "verified" => Ok(KnowledgeStatus::Verified),
+        "refuted" => Ok(KnowledgeStatus::Refuted),
+        "superseded" => Ok(KnowledgeStatus::Superseded),
+        other => Err(format!("Unknown knowledge status: {}", other)),
+    }
+}
+
+fn parse_confidence(s: &str) -> std::result::Result<Confidence, String> {
+    match s.to_lowercase().as_str() {
+        "high" => Ok(Confidence::High),
+        "medium" => Ok(Confidence::Medium),
+        "low" => Ok(Confidence::Low),
+        other => Err(format!("Unknown confidence level: {}", other)),
     }
 }

@@ -1,9 +1,10 @@
-# Plan de Implementación — Knowledge Pool (ADR-012)
+# Plan de Implementacion — Knowledge Pool (ADR-012)
 
 **Fecha**: 2026-08-17
 **Spec**: [KNOWLEDGE_SPEC.md](../../KNOWLEDGE_SPEC.md)
 **ADR**: ADR-012
-**Prerequisito**: Motor completo (F1–F12 al 100%)
+**Prerequisito**: Motor completo (F1-F12 al 100%)
+**UATs detalladas**: [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md) (224 UATs)
 
 ## Dependencias entre Fases
 
@@ -17,197 +18,157 @@ K1 ──→ K2 ──→ K3 ──→ K4 ──→ K5
                           K7 (MCP)
 ```
 
-- **K1** (fundación): schema, storage, init, counters — base mínima.
+- **K1** (fundacion): schema, storage, init, counters — base minima. **[COMPLETADA]**
 - **K2** (CRUD): knowledge add/edit/rm/inspect/list — operaciones standalone.
 - **K3** (linking): knowledge link/unlink + validate refs — conecta con el grafo.
 - **K4** (epistemic): campo en nodos + node add/edit/list extensions.
-- **K5** (integración): status/validate/trace extensions — reportes y queries.
+- **K5** (integracion): status/validate/trace extensions — reportes y queries.
 - **K6** (E2E): workflows completos hypothesis-driven.
-- **K7** (MCP): exposición de los nuevos tools en ltp-mcp.
+- **K7** (MCP): exposicion de los nuevos tools en ltp-mcp.
 
 ---
 
-## Fase K1: Fundación Knowledge (Schema, Storage, Init)
+## Decisiones de Diseno (Resueltas por Analisis de UATs)
+
+| # | Decision | Resolucion | Razon |
+|---|----------|-----------|-------|
+| D1 | Mismo target con different relations | **Permitido** | Caso legitimo: "dato refuerza existencia pero contradice magnitud" |
+| D2 | Link a nodo huerfano (en pool, no en tree) | **Permitido** | Validacion de attachment es concern del tree, no del knowledge |
+| D3 | `unlink --from X` con multiples links al target | **Elimina TODOS** | Unlink es por target, no por relation. Simplifica la API |
+| D4 | `list --target X` con KN que tiene multiples links a X | **Una vez** con array de relations | Evita duplicados confusos en el output |
+| D5 | UNGROUNDED threshold | **0 supports totales** (cualquier status) | Cualquier support (incluso unverified) es grounding. Sin support = no grounded |
+| D6 | UPGRADEABLE con contradiccion activa | **No se emite** | No sugieres promover algo que esta contradecido por evidencia verified |
+| D7 | Validate con tree filter y knowledge | **Solo nodos en ese tree** | Consistente con validate existente que es per-tree |
+| D8 | `node split` y knowledge refs | **Deja dangling** | El ID original desaparece; es responsabilidad del usuario re-linkear |
+
+---
+
+## Fase K1: Fundacion Knowledge (Schema, Storage, Init) — COMPLETADA
 
 **Scope**: Definir structs/enums, extender Storage trait, crear `knowledge/` en init, extender counters.
 
-**Archivos**: `src/knowledge/mod.rs`, `src/knowledge/types.rs`, `src/storage.rs`, `src/workspace/`
+**Archivos creados/modificados**: `src/knowledge/mod.rs`, `src/knowledge/types.rs`, `src/storage.rs`, `src/errors.rs`, `src/workspace/fs_storage.rs`, `src/workspace/counters.rs`, `src/main.rs`, `src/mcp/dispatch.rs`
 
-**Peso estimado**: 8%
+**Peso**: 8% | **UATs**: 16 | **Estado**: COMPLETADA
 
-### Diseño
+### Diseno Implementado
 
 ```rust
-/// Tipo del knowledge item
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum KnowledgeType {
-    Measurement,
-    Testimony,
-    Hypothesis,
-    Document,
-    Observation,
-    Derived,
-}
+pub enum KnowledgeType { Measurement, Testimony, Hypothesis, Document, Observation, Derived }
+pub enum KnowledgeStatus { Unverified, Verified, Refuted, Superseded }
+pub enum Confidence { High, Medium, Low }
+pub enum KnowledgeRelation { Supports, Contradicts, Contextualizes }
+pub struct KnowledgeSource { uri: Option<String>, excerpt: Option<String> }
+pub struct KnowledgeLink { target: String, relation: KnowledgeRelation }
+pub struct KnowledgeItem { id, knowledge_type, label, status, confidence, source, captured, links, tags }
+```
 
-/// Estado epistémico del item
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum KnowledgeStatus {
-    Unverified,
-    Verified,
-    Refuted,
-    Superseded,
-}
+Storage trait extendido con: `load_knowledge`, `save_knowledge`, `delete_knowledge`, `list_knowledge_ids`, `ensure_knowledge_dir`.
 
-/// Nivel de confianza
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Confidence {
-    High,
-    Medium,
-    Low,
-}
+### UATs (16) — Ver K1.1-K1.16 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-/// Tipo de relación con entidad del grafo
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum KnowledgeRelation {
-    Supports,
-    Contradicts,
-    Contextualizes,
-}
+---
 
-/// Fuente del conocimiento
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeSource {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub excerpt: Option<String>,
-}
+## Fase K2: CRUD de Knowledge Items — COMPLETADA
 
-/// Vínculo a entidad del grafo
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeLink {
-    pub target: String,
-    pub relation: KnowledgeRelation,
-}
+**Scope**: `knowledge add/edit/rm/inspect/list` — operaciones standalone sin interaccion con el grafo.
 
-/// Entidad de conocimiento
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeItem {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub knowledge_type: KnowledgeType,
-    pub label: String,
-    pub status: KnowledgeStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<Confidence>,
-    pub source: KnowledgeSource,
-    pub captured: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<KnowledgeLink>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
+**Archivos**: `src/knowledge/commands.rs`, CLI dispatch en `src/main.rs`
+
+**Peso**: 18% | **UATs**: 47 | **Estado**: COMPLETADA
+
+### Diseno
+
+Subcommand `knowledge` con subcomandos `add`, `edit`, `rm`, `inspect`, `list`.
+
+```rust
+#[derive(Subcommand)]
+enum KnowledgeCommands {
+    Add { label: String, #[arg(long)] r#type: KnowledgeType, ... },
+    Edit { id: String, #[arg(long)] label: Option<String>, ... },
+    Rm { ids: String },  // comma-separated
+    Inspect { id: String },
+    List { #[arg(long)] r#type: Option<KnowledgeType>, ... },
 }
 ```
 
-Extender `Storage` trait:
-```rust
-fn load_knowledge(&self, id: &str) -> Result<KnowledgeItem>;
-fn save_knowledge(&self, item: &KnowledgeItem) -> Result<()>;
-fn delete_knowledge(&self, id: &str) -> Result<()>;
-fn list_knowledge_ids(&self) -> Result<Vec<String>>;
+Validaciones en add:
+- `label` no vacio (error `LABEL_REQUIRED`)
+- `source` con al menos uri o excerpt no vacios (error `SOURCE_REQUIRED`)
+- Counter no incrementa si validacion falla
+
+Validaciones en edit:
+- `--label ""` rechazado (LABEL_REQUIRED)
+- `--source-uri "" --source-excerpt ""` rechazado si ambos vaciarian source (SOURCE_REQUIRED)
+- `--add-tag` deduplica
+- `--rm-tag` de tag inexistente: no-op silencioso (o warning leve)
+
+Batch rm:
+- Parcial: si un ID no existe, reporta error para ese ID pero borra los demas
+
+Undo/redo:
+- Cada operacion (add/edit/rm) genera entry en undo
+- Counter NO retrocede con undo (IDs son monotonicos)
+
+### UATs (47) — Ver K2.1-K2.47 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+
+Categorias: 12 happy, 14 boundary, 8 interaction, 1 corrupt, 4 idempotent, 4 ordering.
+
+---
+
+## Fase K3: Linking (Vinculos al Grafo)
+
+**Scope**: `knowledge link/unlink`, filtro `--target` en list, validacion de integridad referencial de targets.
+
+**Archivos**: `src/knowledge/commands.rs` (extension), resolucion de targets contra pool+trees
+
+**Peso**: 15% | **UATs**: 37
+
+### Diseno
+
+```
+ltp knowledge link KN-001 --to UDE-003 --relation supports
+ltp knowledge unlink KN-001 --from UDE-003
+ltp knowledge list --target UDE-003 [--relation supports]
 ```
 
-### UATs
+Resolucion de targets:
+- Nodos: buscar en node pool (`nodes/`)
+- Edges (LINK-XXX): buscar en todos los trees (`.edges[]`)
+- Assumptions (ASM-XXX): buscar en todos los trees (edges con assumptions)
 
-| ID | Acción | Resultado esperado |
-|----|--------|-------------------|
-| K1.1 | `ltp init --name "Test"` (versión nueva) | Crea carpeta `knowledge/` vacía. `counters.json` incluye `"KN": 0`. |
-| K1.2 | Abrir workspace existente (sin `knowledge/`) → ejecutar cualquier comando | Auto-crea `knowledge/` + añade `"KN": 0` a counters. Warning `KNOWLEDGE_DIR_CREATED`. |
-| K1.3 | Serializar/deserializar `KnowledgeItem` round-trip | JSON canónico (BTreeMap-ordered keys, indent 2). Todos los campos opcionales omitidos cuando None/empty. |
-| K1.4 | `KnowledgeSource` con `uri: None, excerpt: None` | Error de validación `SOURCE_REQUIRED` (al menos uno debe estar presente). |
+Reglas de linking (D1, D2):
+- Mismo target + misma relation = DUPLICATE_LINK (warning, idempotente)
+- Mismo target + diferente relation = PERMITIDO (D1)
+- Target huerfano (en pool, no en tree) = PERMITIDO (D2)
+- Target con status invalidated/broken = PERMITIDO (motor no juzga)
+- Target interior a macro_edge = PERMITIDO (nodo sigue en pool)
+- Target es MACRO-XXX = NOT FOUND (macro_edges no son entidades standalone)
 
----
+Unlink (D3):
+- `--from X` elimina TODOS los links con target=X (sin filtrar por relation)
 
-## Fase K2: CRUD de Knowledge Items
+List con --target (D4):
+- KN aparece una vez con array de relations matching
 
-**Scope**: `knowledge add/edit/rm/inspect/list` — operaciones standalone sin interacción con el grafo.
+### UATs (37) — Ver K3.1-K3.37 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-**Archivos**: `src/knowledge/add.rs`, `src/knowledge/edit.rs`, `src/knowledge/rm.rs`, `src/knowledge/inspect.rs`, `src/knowledge/list.rs`, CLI dispatch.
-
-**Peso estimado**: 18%
-
-### UATs
-
-| ID | Comando | Resultado esperado |
-|----|---------|-------------------|
-| K2.1 | `ltp knowledge add "Media entrega 18.3 días" --type measurement --source-excerpt "ERP Q2" --status verified --confidence high` | Crea `knowledge/KN-001.json`. Output: `success: true, data.created_knowledge_id: "KN-001"`. Counter KN incrementa. |
-| K2.2 | `ltp knowledge add "Director dice mejoraron" --type testimony --source-uri "slack://C04/p123"` | Crea KN-002. Status default `unverified`, confidence default `medium`. |
-| K2.3 | `ltp knowledge add "Sin fuente" --type observation` (sin --source-uri ni --source-excerpt) | Error `SOURCE_REQUIRED`. |
-| K2.4 | `ltp knowledge add "Hipótesis cambio proveedor" --type hypothesis --source-excerpt "Entrevista con ops" --tags logistica,proveedor` | Crea con tags. |
-| K2.5 | `ltp knowledge edit KN-001 --label "Nuevo texto"` | Actualiza label en disco. |
-| K2.6 | `ltp knowledge edit KN-001 --status refuted` | Actualiza status. |
-| K2.7 | `ltp knowledge edit KN-001 --confidence low` | Actualiza confidence. |
-| K2.8 | `ltp knowledge edit KN-001 --add-tag q2-2026` | Añade tag. |
-| K2.9 | `ltp knowledge edit KN-001 --rm-tag logistica` | Quita tag. |
-| K2.10 | `ltp knowledge edit KN-999 --label "..."` | Error `KNOWLEDGE_NOT_FOUND`. |
-| K2.11 | `ltp knowledge rm KN-001` | Elimina fichero. |
-| K2.12 | `ltp knowledge rm KN-001,KN-002` (batch) | Elimina ambos. |
-| K2.13 | `ltp knowledge rm KN-999` | Error `KNOWLEDGE_NOT_FOUND`. |
-| K2.14 | `ltp knowledge inspect KN-001` | Detalle completo: todos los campos, links con target_label resuelto. |
-| K2.15 | `ltp knowledge inspect KN-999` | Error `KNOWLEDGE_NOT_FOUND`. |
-| K2.16 | `ltp knowledge list` | Lista todos los items (id, type, label, status, confidence, link_count). |
-| K2.17 | `ltp knowledge list --type measurement` | Filtra por tipo. |
-| K2.18 | `ltp knowledge list --status unverified` | Filtra por status. |
-| K2.19 | `ltp knowledge list --unlinked` | Solo items con `links: []`. |
-| K2.20 | `ltp knowledge list --tag logistica` | Filtra por tag. |
-| K2.21 | `ltp knowledge list --confidence high` | Filtra por confidence. |
+Categorias: 6 happy, 6 boundary, 8 interaction, 1 idempotent, 9 referential.
 
 ---
 
-## Fase K3: Linking (Vínculos al Grafo)
+## Fase K4: Campo Epistemico en Nodos
 
-**Scope**: `knowledge link/unlink`, filtro `--target` en list, validación de integridad referencial en targets.
+**Scope**: Anadir campo `epistemic` a struct Node, extender `node add/edit/list/inspect` con `--epistemic`.
 
-**Archivos**: `src/knowledge/link.rs`, `src/knowledge/unlink.rs`, extensión de `list.rs`
+**Archivos**: `src/node/types.rs`, `src/node/commands.rs`, CLI dispatch
 
-**Peso estimado**: 15%
+**Peso**: 10% | **UATs**: 16
 
-### UATs
-
-| ID | Comando | Resultado esperado |
-|----|---------|-------------------|
-| K3.1 | `ltp knowledge link KN-001 --to UDE-003 --relation supports` | Añade link a KN-001. Output: `success: true`. |
-| K3.2 | `ltp knowledge link KN-001 --to LINK-007 --relation supports` | Link a un edge. Valida que LINK-007 existe en algún tree. |
-| K3.3 | `ltp knowledge link KN-001 --to ASM-002 --relation contradicts` | Link a un assumption. Valida que ASM-002 existe en algún tree. |
-| K3.4 | `ltp knowledge link KN-001 --to NODO-999 --relation supports` | Error `TARGET_NOT_FOUND`. |
-| K3.5 | `ltp knowledge link KN-999 --to UDE-003 --relation supports` | Error `KNOWLEDGE_NOT_FOUND`. |
-| K3.6 | `ltp knowledge link KN-001 --to UDE-003 --relation supports` (duplicado) | Warning `DUPLICATE_LINK`. Idempotente: no añade segundo link. |
-| K3.7 | `ltp knowledge unlink KN-001 --from UDE-003` | Elimina el link. |
-| K3.8 | `ltp knowledge unlink KN-001 --from RC-005` (no existe ese link) | Error `LINK_NOT_FOUND`. |
-| K3.9 | `ltp knowledge list --target UDE-003` | Lista items vinculados a UDE-003 (incluye campo `relation`). |
-| K3.10 | `ltp knowledge list --target UDE-003 --relation supports` | Filtra por target + relation. |
-| K3.11 | `ltp knowledge list --target NODO-999` | Lista vacía (no es error). |
-| K3.12 | KN-001 linked a UDE-003 y LINK-007. `ltp knowledge inspect KN-001` | Ambos links con `target_label` resuelto desde disco. |
-| K3.13 | KN-001 linked a UDE-003 (borrado previamente). `ltp knowledge inspect KN-001` | Link mostrado con `target_label: null` (dangling ref, no crash). |
-
----
-
-## Fase K4: Campo Epistémico en Nodos
-
-**Scope**: Añadir campo `epistemic` a struct Node, extender `node add/edit/list` con `--epistemic`.
-
-**Archivos**: `src/node/types.rs`, `src/node/add.rs`, `src/node/edit.rs`, `src/node/list.rs`
-
-**Peso estimado**: 10%
-
-### Diseño
+### Diseno
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EpistemicStatus {
     Fact,
@@ -219,85 +180,94 @@ pub enum EpistemicStatus {
 
 Campo en Node:
 ```rust
-pub struct Node {
-    // ... campos existentes ...
-    #[serde(default = "default_epistemic", skip_serializing_if = "is_hypothesis")]
-    pub epistemic: EpistemicStatus,
+#[serde(default = "default_epistemic", skip_serializing_if = "is_hypothesis")]
+pub epistemic: EpistemicStatus,
+```
+
+- Default: `Hypothesis`
+- Se OMITE del JSON si es hypothesis (backwards-compatible con nodos existentes)
+- `node inspect` muestra el valor efectivo (incluyendo default)
+- `node list --epistemic hypothesis` incluye nodos sin campo explicito
+
+### UATs (16) — Ver K4.1-K4.16 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+
+Categorias: 5 happy, 4 boundary, 2 interaction, 2 corrupt, 1 idempotent.
+
+---
+
+## Fase K5: Integracion con Comandos Existentes
+
+**Scope**: Extender `status`, `validate`, `trace`, `node rm`, `tree walk` con awareness de knowledge pool.
+
+**Archivos**: `src/workspace/status.rs` (o donde viva status), `src/validate/knowledge.rs`, `src/trace/mod.rs`, `src/node/commands.rs`, `src/tree/commands.rs`
+
+**Peso**: 20% | **UATs**: 47
+
+### Diseno
+
+#### Status — `knowledge_health`
+```json
+{
+  "knowledge_health": {
+    "total": 10,
+    "unlinked_items": 2,
+    "contradictions": 1,
+    "by_status": { "unverified": 3, "verified": 5, "refuted": 1, "superseded": 1 },
+    "epistemic_coverage": { "fact": 3, "hypothesis": 5, "assumption": 1, "derived": 1 }
+  }
 }
 ```
 
-Default: `Hypothesis`. Se omite del JSON si es hypothesis (backwards-compatible con nodos existentes).
+#### Validate — 4 warnings nuevos
 
-### UATs
+| Warning | Condicion | Aplica a |
+|---------|-----------|----------|
+| `DANGLING_KNOWLEDGE_REF` | KN.link.target no existe en pool ni trees | Cualquier link |
+| `EPISTEMIC_UNGROUNDED` | Nodo `fact` con 0 supports totales (D5) | Solo nodos `fact` |
+| `EPISTEMIC_CONTRADICTED` | Nodo `fact` con >= 1 KN `contradicts` verified | Solo nodos `fact` |
+| `EPISTEMIC_UPGRADEABLE` | Nodo `hypothesis/assumption` con >= 2 KN `supports` verified Y 0 contradicts verified (D6) | Solo `hypothesis`/`assumption` |
 
-| ID | Comando | Resultado esperado |
-|----|---------|-------------------|
-| K4.1 | `ltp node add "Test" --type UDE --epistemic fact` | Crea nodo con `"epistemic": "fact"` en JSON. |
-| K4.2 | `ltp node add "Test" --type UDE` (sin --epistemic) | Crea nodo SIN campo epistemic en JSON (default hypothesis, omitido por serde). |
-| K4.3 | `ltp node edit UDE-001 --epistemic fact` | Añade/actualiza campo epistemic. |
-| K4.4 | `ltp node edit UDE-001 --epistemic hypothesis` | Vuelve a default → campo omitido del JSON. |
-| K4.5 | `ltp node list --tree T --epistemic hypothesis` | Filtra por epistemic status. Incluye nodos sin campo (implícit hypothesis). |
-| K4.6 | `ltp node list --tree T --epistemic fact` | Solo nodos explícitamente marcados como fact. |
-| K4.7 | `ltp node inspect UDE-001` (con epistemic fact) | Output incluye `"epistemic": "fact"`. |
-| K4.8 | Cargar nodo existente (sin campo epistemic en JSON) | Deserializa correctamente con default `Hypothesis`. Backwards-compatible. |
+Validate con `--tree T` (D7): solo reporta para nodos attached a T.
 
----
+#### Trace — `--show-knowledge`
+Cada nodo en chain incluye `knowledge: [{id, relation, status, confidence}]`.
+Solo knowledge linked directamente al nodo (no a sus edges).
+Sin flag = output normal (backwards-compatible).
 
-## Fase K5: Integración con Comandos Existentes
+#### Node rm — Warning `KNOWLEDGE_ORPHANED`
+Warning informativo con IDs de KN afectados. El nodo se borra igualmente. Los KN quedan con dangling refs.
 
-**Scope**: Extender `status`, `validate`, `trace`, `node rm` con awareness de knowledge pool.
+#### Tree walk — `--show-knowledge`
+Cada nodo muestra count por relation: `knowledge: {supports: 2, contradicts: 1, contextualizes: 0}`.
 
-**Archivos**: `src/workspace/status.rs`, `src/validate/`, `src/trace/`, `src/node/rm.rs`
+### UATs (47) — Ver K5.1-K5.47 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-**Peso estimado**: 20%
-
-### UATs
-
-| ID | Comando | Resultado esperado |
-|----|---------|-------------------|
-| **status** | | |
-| K5.1 | `ltp status` (con knowledge items) | Output incluye `knowledge_health`: total, unlinked, contradictions, by_status, epistemic_coverage. |
-| K5.2 | `ltp status` (sin knowledge items) | `knowledge_health` con todos los conteos a 0. |
-| **validate** | | |
-| K5.3 | KN-001 linked a UDE-999 (borrado). `ltp validate` | Warning `DANGLING_KNOWLEDGE_REF`. |
-| K5.4 | UDE-003 con `epistemic: fact`, 0 knowledge items `supports`. `ltp validate` | Warning `EPISTEMIC_UNGROUNDED`. |
-| K5.5 | UDE-003 con `epistemic: fact`, KN-007 `contradicts` con status `verified`. `ltp validate` | Warning `EPISTEMIC_CONTRADICTED`. |
-| K5.6 | RC-001 con `epistemic: hypothesis`, 2+ knowledge `supports` con status `verified`. `ltp validate` | Warning `EPISTEMIC_UPGRADEABLE`. |
-| K5.7 | `ltp validate` con knowledge pool sano | 0 warnings de knowledge. |
-| **trace** | | |
-| K5.8 | `ltp trace UDE-003 --tree T --direction upstream --show-knowledge` | Cada nodo en chain incluye campo `knowledge: [{id, relation, status, confidence}]`. |
-| K5.9 | `ltp trace UDE-003 --tree T --direction upstream` (sin flag) | Output normal sin knowledge (backwards-compatible). |
-| K5.10 | `ltp trace` con `--show-knowledge`, nodo sin knowledge | Campo `knowledge: []` (no se omite). |
-| **node rm** | | |
-| K5.11 | `ltp node rm UDE-003` (tiene knowledge apuntando) | Warning `KNOWLEDGE_ORPHANED` con IDs de los KN afectados. Nodo se borra igual. |
-| K5.12 | `ltp node rm UDE-003` (sin knowledge apuntando) | Sin warning extra. Comportamiento normal. |
-| **tree walk** | | |
-| K5.13 | `ltp tree walk T --show-knowledge` | Cada nodo en output incluye resumen de knowledge (count por relation). |
+Categorias: 8 happy, 22 boundary, 4 interaction, 5 referential.
 
 ---
 
-## Fase K6: Tests End-to-End (Workflows Knowledge)
+## Fase K6: Tests End-to-End (Workflows)
 
-**Scope**: Workflows completos de hypothesis-driven analysis, inbox management, contradicciones.
+**Scope**: Workflows completos que combinan multiples features y verifican coherencia end-to-end.
 
 **Archivos**: `tests/e2e_knowledge.rs`
 
-**Peso estimado**: 12%
+**Peso**: 12% | **UATs**: 28
 
-### UATs
+### Workflows Criticos
 
-| ID | Workflow | Resultado esperado |
-|----|---------|-------------------|
-| K6.1 | **Hypothesis-driven cycle**: knowledge add (hypothesis) → link to RC → node edit --epistemic hypothesis → knowledge edit --status verified → node edit --epistemic fact → validate clean | Ciclo completo de promoción funciona. |
-| K6.2 | **Refutation cascade**: knowledge add → link → build chain on RC → knowledge edit --status refuted → status reports weakened node | Status detecta nodo sostenido solo por evidencia refutada. |
-| K6.3 | **Inbox workflow**: add 5 KN sin links → list --unlinked (5) → link 3 → list --unlinked (2) → link 2 → list --unlinked (0) | Inbox se vacía correctamente. |
-| K6.4 | **Contradiction detection**: KN-001 supports UDE-003, KN-002 contradicts UDE-003. `validate` | Warning `EPISTEMIC_CONTRADICTED` (UDE-003 es fact). |
-| K6.5 | **Multi-target link**: KN-001 supports UDE-003, KN-001 supports RC-001. `knowledge inspect KN-001` | Ambos links visibles con labels resueltos. |
-| K6.6 | **Undo roundtrip**: knowledge add → knowledge link → undo → verify link gone → undo → verify KN gone | Undo granular funciona sobre knowledge. |
-| K6.7 | **Batch + undo**: begin-batch → knowledge add + link + node edit epistemic → end-batch → undo | Todo el batch se revierte en un undo. |
-| K6.8 | **Node rm + dangling**: link KN to UDE → node rm UDE → validate → DANGLING_KNOWLEDGE_REF | Warning correcto tras eliminación de target. |
-| K6.9 | **Backwards compatibility**: workspace con nodos sin campo epistemic → node list --epistemic hypothesis | Nodos existentes se tratan como hypothesis (default). |
-| K6.10 | **Knowledge + trace integration**: build chain RC→INT→UDE, link knowledge a cada nodo, trace --show-knowledge | Cada entry muestra su knowledge con status/confidence. |
+1. **Hypothesis-driven cycle** (K6.1-K6.2): add → link → promote → validate
+2. **Refutation cascade** (K6.3-K6.4): evidencia refutada deja nodo sin grounding
+3. **Inbox management** (K6.5): unlinked items como inbox que se vacia
+4. **Contradiction detection** (K6.6-K6.7): supports vs contradicts en mismo nodo
+5. **Undo roundtrip** (K6.10-K6.11): granularidad correcta de undo/redo
+6. **Batch + undo** (K6.12): atomicidad de batch con knowledge
+7. **Cross-feature interactions** (K6.19-K6.26): invalidate, collapse, split, group, dissolve, nbr rm
+8. **Status coherence** (K6.27-K6.28): status siempre refleja estado real
+
+### UATs (28) — Ver K6.1-K6.28 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+
+Categorias: 7 happy, 3 boundary, 15 interaction, 3 ordering.
 
 ---
 
@@ -307,63 +277,78 @@ Default: `Hypothesis`. Se omite del JSON si es hypothesis (backwards-compatible 
 
 **Archivos**: `src/mcp/tools.rs`, `src/mcp/dispatch.rs`
 
-**Peso estimado**: 17%
+**Peso**: 17% | **UATs**: 33
 
-### UATs
+### Tools Nuevos
 
-| ID | Acción | Resultado esperado |
-|----|--------|-------------------|
-| K7.1 | `tools/list` | Incluye 7 nuevos tools: `ltp/knowledge_add`, `ltp/knowledge_edit`, `ltp/knowledge_rm`, `ltp/knowledge_inspect`, `ltp/knowledge_list`, `ltp/knowledge_link`, `ltp/knowledge_unlink`. |
-| K7.2 | Invocar `ltp/knowledge_add` via JSON-RPC | Mismo resultado que CLI. Genera undo entry. |
-| K7.3 | Invocar `ltp/knowledge_link` via JSON-RPC | Link creado. Target validado. |
-| K7.4 | Invocar `ltp/knowledge_list` con filtro `unlinked: true` | Retorna items sin links. |
-| K7.5 | Invocar `ltp/knowledge_list` con filtro `target: "UDE-003"` | Retorna items linked a ese nodo. |
-| K7.6 | `ltp/node_add` con campo `epistemic` en params | Nodo creado con epistemic status. |
-| K7.7 | `ltp/node_edit` con campo `epistemic` en params | Epistemic actualizado. |
-| K7.8 | `ltp/node_list` con filtro `epistemic` en params | Filtra correctamente. |
-| K7.9 | `ltp/trace` con `show_knowledge: true` en params | Incluye knowledge por nodo. |
-| K7.10 | `ltp/tree_walk` con `show_knowledge: true` en params | Incluye resumen knowledge por nodo. |
-| K7.11 | `ltp/status` | Incluye `knowledge_health` en output. |
-| K7.12 | `ltp/validate` | Reporta warnings de knowledge (DANGLING_KNOWLEDGE_REF, EPISTEMIC_*). |
-| K7.13 | `ltp/knowledge_add` con params inválidos (sin source) | Error JSON-RPC -32602 con detalle `SOURCE_REQUIRED`. |
-| K7.14 | `ltp/knowledge_link` con target inexistente | isError: true, error `TARGET_NOT_FOUND`. |
+| Tool | Params principales |
+|------|-------------------|
+| `ltp/knowledge_add` | label, type, source_uri, source_excerpt, status, confidence, tags |
+| `ltp/knowledge_edit` | id, label?, status?, confidence?, source_uri?, source_excerpt?, add_tags?, rm_tags? |
+| `ltp/knowledge_rm` | ids (comma-separated) |
+| `ltp/knowledge_inspect` | id |
+| `ltp/knowledge_list` | type?, status?, confidence?, unlinked?, target?, relation?, tag? |
+| `ltp/knowledge_link` | id, target, relation |
+| `ltp/knowledge_unlink` | id, target |
+
+### Extensiones a Tools Existentes
+
+| Tool | Param nuevo |
+|------|-------------|
+| `ltp/node_add` | `epistemic?: string` |
+| `ltp/node_edit` | `epistemic?: string` |
+| `ltp/node_list` | `epistemic?: string` |
+| `ltp/trace` | `show_knowledge?: bool` |
+| `ltp/tree_walk` | `show_knowledge?: bool` |
+| `ltp/status` | (sin params, output extendido automatico) |
+| `ltp/validate` | (sin params, warnings extendidos automatico) |
+
+### UATs (33) — Ver K7.1-K7.33 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+
+Categorias: 16 happy, 6 boundary, 3 interaction, 1 idempotent, 1 ordering, 1 referential.
 
 ---
 
-## Estimación de Complejidad
+## Estimacion de Complejidad (Revisada)
 
 | Fase | Archivos principales | UATs | Complejidad | Peso |
 |------|---------------------|:----:|-------------|:----:|
-| K1 | knowledge/types.rs, storage.rs, workspace/ | 4 | Baja | 8% |
-| K2 | knowledge/add,edit,rm,inspect,list.rs | 21 | Media | 18% |
-| K3 | knowledge/link,unlink.rs | 13 | Media | 15% |
-| K4 | node/types.rs, node/add,edit,list.rs | 8 | Baja | 10% |
-| K5 | status, validate, trace, node/rm | 13 | Media-Alta | 20% |
-| K6 | tests/e2e_knowledge.rs | 10 | Media | 12% |
-| K7 | mcp/tools.rs, mcp/dispatch.rs | 14 | Media | 17% |
-| | **TOTAL** | **83** | | **100%** |
+| K1 | knowledge/types.rs, storage.rs, workspace/ | 16 | Baja | 8% |
+| K2 | knowledge/commands.rs, main.rs | 47 | Media | 18% |
+| K3 | knowledge/commands.rs (link/unlink), target resolution | 37 | Media-Alta | 15% |
+| K4 | node/types.rs, node/commands.rs | 16 | Baja | 10% |
+| K5 | validate/knowledge.rs, trace, status, node/rm | 47 | Alta | 20% |
+| K6 | tests/e2e_knowledge.rs | 28 | Media | 12% |
+| K7 | mcp/tools.rs, mcp/dispatch.rs | 33 | Media | 17% |
+| | **TOTAL** | **224** | | **100%** |
 
 ---
 
-## Estimación Temporal
+## Estimacion Temporal
 
-Basado en la velocity del proyecto original (191 UATs completadas en ~2 días de trabajo intensivo con factor 1.0x):
-
-| Métrica | Valor |
+| Metrica | Valor |
 |---------|-------|
-| UATs totales Knowledge Pool | 83 |
-| Ratio vs proyecto original | 83/191 = 43% |
-| Complejidad relativa | Más baja (sin DFS, sin DAG validation, sin macro_edges — primitivas CRUD + queries) |
-| Estimación optimista | 1 día de trabajo intensivo |
-| Estimación conservadora | 1.5 días |
-| Factor de riesgo | K5 (integración) puede requerir refactoring de validate/trace |
+| UATs totales Knowledge Pool | 224 |
+| Complejidad principal | K3 (target resolution across trees) y K5 (validate matrix) |
+| Estimacion optimista | 2 dias de trabajo intensivo |
+| Estimacion conservadora | 3 dias |
+| Factor de riesgo principal | K5 validate interactions con operaciones destructivas existentes |
 
 ---
 
-## Decisiones Técnicas
+## Error Codes Nuevos
 
-1. **Backwards compatibility**: El campo `epistemic` usa `#[serde(default)]` → nodos existentes sin el campo deserializan como `Hypothesis`. No se requiere migración.
-2. **Knowledge en undo/redo**: Participa del mismo pipeline. `before_mutation` captura `knowledge/KN-XXX.json`. Sin cambios en HistoryManager.
-3. **Init migration**: Si workspace existe sin `knowledge/`, se crea on-demand al primer acceso (K1.2). No requiere comando de migración manual.
-4. **Scan para queries inversas**: `list --target X` escanea todos los KN files. Con <1000 items, <10ms. YAGNI un índice.
-5. **Error codes nuevos**: `SOURCE_REQUIRED`, `KNOWLEDGE_NOT_FOUND`, `TARGET_NOT_FOUND`, `LINK_NOT_FOUND`, `DUPLICATE_LINK`, `DANGLING_KNOWLEDGE_REF`, `EPISTEMIC_UNGROUNDED`, `EPISTEMIC_CONTRADICTED`, `EPISTEMIC_UPGRADEABLE`, `KNOWLEDGE_ORPHANED`, `KNOWLEDGE_DIR_CREATED`.
+| Code | Fase | Contexto |
+|------|------|----------|
+| `LABEL_REQUIRED` | K2 | add/edit con label vacio |
+| `SOURCE_REQUIRED` | K2 | add/edit sin uri ni excerpt validos |
+| `KNOWLEDGE_NOT_FOUND` | K2+ | ID no existe en pool |
+| `TARGET_NOT_FOUND` | K3 | link target no existe en pool/trees |
+| `LINK_NOT_FOUND` | K3 | unlink target no esta en KN.links |
+| `DUPLICATE_LINK` | K3 | link ya existe (warning, no error) |
+| `DANGLING_KNOWLEDGE_REF` | K5 | validate: KN.link.target no resolvible |
+| `EPISTEMIC_UNGROUNDED` | K5 | validate: fact sin supports |
+| `EPISTEMIC_CONTRADICTED` | K5 | validate: fact con contradiccion verified |
+| `EPISTEMIC_UPGRADEABLE` | K5 | validate: hypothesis con >=2 supports verified |
+| `KNOWLEDGE_ORPHANED` | K5 | node rm: KN apuntaba al nodo eliminado |
+| `KNOWLEDGE_DIR_CREATED` | K1 | auto-creacion de knowledge/ on demand |

@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 0% |
-| **Fase actual** | KP pendiente de inicio |
-| **Última fase completada** | F12 — MCP Server |
+| **Avance Knowledge Pool** | 26% |
+| **Fase actual** | K3 — Linking |
+| **Última fase completada** | K2 — CRUD |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 0/83 |
+| **UATs Knowledge Pool** | 63/224 |
 
 ---
 
@@ -20,14 +20,14 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 | Fase | Paquete | Peso Est. | Peso Ajust. | Estado | UATs | Notas |
 |------|---------|-----------|-------------|--------|------|-------|
-| K1 | Fundación (schema, storage, init, counters) | 8% | 8% | [ ] Pendiente | 0/4 | |
-| K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | [ ] Pendiente | 0/21 | |
-| K3 | Linking (link/unlink, validación refs) | 15% | 15% | [ ] Pendiente | 0/13 | |
-| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/8 | |
-| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/13 | |
-| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/10 | |
-| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/14 | |
-| | **TOTAL** | **100%** | **100%** | | **0/83** | |
+| K1 | Fundación (schema, storage, init, counters) | 8% | 8% | ✅ Completada | 16/16 | |
+| K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
+| K3 | Linking (link/unlink, validación refs) | 15% | 15% | [ ] Pendiente | 0/37 | |
+| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/16 | |
+| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/47 | |
+| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/28 | |
+| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/33 | |
+| | **TOTAL** | **100%** | **100%** | | **63/224** | |
 
 ---
 
@@ -393,7 +393,46 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 - 16 tests de integración (UATs 12.1–12.16, +6 Six Hats robustness)
 
 #### Siguiente
-- Proyecto completado. Todas las fases implementadas.
+- Knowledge Pool (K1-K7)
+
+---
+
+### [K1] — Fundación Knowledge (Schema, Storage, Init)
+**Fecha**: 2026-08-17
+**Avance fase**: 16/16 UATs ✅
+**Avance Knowledge Pool**: 0% → 8%
+**Esfuerzo estimado**: 8% | **Esfuerzo real (percibido)**: 8%
+
+#### Entregables
+- Enums: KnowledgeType, KnowledgeStatus, Confidence, KnowledgeRelation
+- Structs: KnowledgeItem, KnowledgeLink, KnowledgeSource
+- Storage trait extendido: load/save/delete/list_knowledge, ensure_knowledge_dir
+- FsStorage impl con escritura atómica y path traversal protection
+- Counter "KN" integrado con rebuild desde knowledge/
+- `ltp init` crea knowledge/ y counter KN=0
+- Round-trip serialization con skip_serializing_if para campos opcionales
+
+---
+
+### [K2] — CRUD de Knowledge Items
+**Fecha**: 2026-08-17
+**Avance fase**: 47/47 UATs ✅
+**Avance Knowledge Pool**: 8% → 26%
+**Esfuerzo estimado**: 18% | **Esfuerzo real (percibido)**: 18%
+
+#### Entregables
+- `knowledge add`: validación label/source, generación ID, defaults (unverified/medium)
+- `knowledge edit`: actualización parcial, validación source integrity, dedup tags
+- `knowledge rm`: batch con partial success, error reporting per-ID
+- `knowledge inspect`: detalle completo del item
+- `knowledge list`: filtros por type/status/confidence/unlinked/tag (AND combinado)
+- Undo/redo integrado (snapshot_workspace_paths incluye knowledge/)
+- History manager actualizado para detectar nuevos archivos en knowledge/
+- Error codes: LABEL_REQUIRED, SOURCE_REQUIRED, KNOWLEDGE_NOT_FOUND, TAG_NOT_FOUND
+- 40 tests de integración CLI (UATs K2.1-K2.47)
+
+#### Siguiente
+- K3: Linking (link/unlink, target resolution, validate refs)
 
 ---
 

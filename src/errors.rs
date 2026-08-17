@@ -53,6 +53,9 @@ pub enum LtpError {
     #[error("knowledge source required: at least uri or excerpt must be provided")]
     KnowledgeSourceRequired,
 
+    #[error("label required: label cannot be empty")]
+    LabelRequired,
+
     #[error("EC validation: {0}")]
     EcValidation(String),
 
