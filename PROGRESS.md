@@ -10,7 +10,7 @@
 | **Última fase completada** | K3 — Linking |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 94/224 |
+| **UATs Knowledge Pool** | 94/239 |
 
 ---
 
@@ -23,11 +23,11 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | K1 | Fundación (schema, storage, init, counters) | 8% | 8% | ✅ Completada | 16/16 | |
 | K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
 | K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
-| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/16 | |
-| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/47 | |
-| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/28 | |
-| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/33 | |
-| | **TOTAL** | **100%** | **100%** | | **94/224** | |
+| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/19 | |
+| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/51 | |
+| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/31 | |
+| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/38 | |
+| | **TOTAL** | **100%** | **100%** | | **94/239** | |
 
 ---
 

@@ -4,7 +4,7 @@
 **Spec**: [KNOWLEDGE_SPEC.md](../../KNOWLEDGE_SPEC.md)
 **ADR**: ADR-012
 **Prerequisito**: Motor completo (F1-F12 al 100%)
-**UATs detalladas**: [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md) (224 UATs)
+**UATs detalladas**: [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md) (239 UATs)
 
 ## Dependencias entre Fases
 
@@ -36,7 +36,7 @@ K1 ──→ K2 ──→ K3 ──→ K4 ──→ K5
 | D2 | Link a nodo huerfano (en pool, no en tree) | **Permitido** | Validacion de attachment es concern del tree, no del knowledge |
 | D3 | `unlink --from X` con multiples links al target | **Elimina TODOS** | Unlink es por target, no por relation. Simplifica la API |
 | D4 | `list --target X` con KN que tiene multiples links a X | **Una vez** con array de relations | Evita duplicados confusos en el output |
-| D5 | UNGROUNDED threshold | **0 supports totales** (cualquier status) | Cualquier support (incluso unverified) es grounding. Sin support = no grounded |
+| D5 | UNGROUNDED threshold | **0 supports activos** (status ∈ {unverified, verified}) | Supports refuted/superseded no cuentan. Sin support activo = no grounded |
 | D6 | UPGRADEABLE con contradiccion activa | **No se emite** | No sugieres promover algo que esta contradecido por evidencia verified |
 | D7 | Validate con tree filter y knowledge | **Solo nodos en ese tree** | Consistente con validate existente que es per-tree |
 | D8 | `node split` y knowledge refs | **Deja dangling** | El ID original desaparece; es responsabilidad del usuario re-linkear |
@@ -163,7 +163,7 @@ Categorias: 6 happy, 6 boundary, 8 interaction, 1 idempotent, 9 referential.
 
 **Archivos**: `src/node/types.rs`, `src/node/commands.rs`, CLI dispatch
 
-**Peso**: 10% | **UATs**: 16
+**Peso**: 10% | **UATs**: 19
 
 ### Diseno
 
@@ -189,9 +189,9 @@ pub epistemic: EpistemicStatus,
 - `node inspect` muestra el valor efectivo (incluyendo default)
 - `node list --epistemic hypothesis` incluye nodos sin campo explicito
 
-### UATs (16) — Ver K4.1-K4.16 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+### UATs (19) — Ver K4.1-K4.19 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-Categorias: 5 happy, 4 boundary, 2 interaction, 2 corrupt, 1 idempotent.
+Categorias: 5 happy, 5 boundary, 3 interaction, 3 corrupt, 1 idempotent.
 
 ---
 
@@ -201,7 +201,7 @@ Categorias: 5 happy, 4 boundary, 2 interaction, 2 corrupt, 1 idempotent.
 
 **Archivos**: `src/workspace/status.rs` (o donde viva status), `src/validate/knowledge.rs`, `src/trace/mod.rs`, `src/node/commands.rs`, `src/tree/commands.rs`
 
-**Peso**: 20% | **UATs**: 47
+**Peso**: 20% | **UATs**: 51
 
 ### Diseno
 
@@ -240,9 +240,9 @@ Warning informativo con IDs de KN afectados. El nodo se borra igualmente. Los KN
 #### Tree walk — `--show-knowledge`
 Cada nodo muestra count por relation: `knowledge: {supports: 2, contradicts: 1, contextualizes: 0}`.
 
-### UATs (47) — Ver K5.1-K5.47 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+### UATs (51) — Ver K5.1-K5.51 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-Categorias: 8 happy, 22 boundary, 4 interaction, 5 referential.
+Categorias: 8 happy, 24 boundary, 4 interaction, 1 corrupt, 6 referential.
 
 ---
 
@@ -265,9 +265,9 @@ Categorias: 8 happy, 22 boundary, 4 interaction, 5 referential.
 7. **Cross-feature interactions** (K6.19-K6.26): invalidate, collapse, split, group, dissolve, nbr rm
 8. **Status coherence** (K6.27-K6.28): status siempre refleja estado real
 
-### UATs (28) — Ver K6.1-K6.28 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+### UATs (31) — Ver K6.1-K6.31 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-Categorias: 7 happy, 3 boundary, 15 interaction, 3 ordering.
+Categorias: 7 happy, 4 boundary, 17 interaction, 3 ordering.
 
 ---
 
@@ -303,9 +303,9 @@ Categorias: 7 happy, 3 boundary, 15 interaction, 3 ordering.
 | `ltp/status` | (sin params, output extendido automatico) |
 | `ltp/validate` | (sin params, warnings extendidos automatico) |
 
-### UATs (33) — Ver K7.1-K7.33 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
+### UATs (38) — Ver K7.1-K7.38 en [knowledge-pool-uats-deep.md](knowledge-pool-uats-deep.md)
 
-Categorias: 16 happy, 6 boundary, 3 interaction, 1 idempotent, 1 ordering, 1 referential.
+Categorias: 17 happy, 8 boundary, 3 interaction, 1 idempotent, 1 ordering, 2 referential.
 
 ---
 
@@ -316,11 +316,11 @@ Categorias: 16 happy, 6 boundary, 3 interaction, 1 idempotent, 1 ordering, 1 ref
 | K1 | knowledge/types.rs, storage.rs, workspace/ | 16 | Baja | 8% |
 | K2 | knowledge/commands.rs, main.rs | 47 | Media | 18% |
 | K3 | knowledge/commands.rs (link/unlink), target resolution | 37 | Media-Alta | 15% |
-| K4 | node/types.rs, node/commands.rs | 16 | Baja | 10% |
-| K5 | validate/knowledge.rs, trace, status, node/rm | 47 | Alta | 20% |
-| K6 | tests/e2e_knowledge.rs | 28 | Media | 12% |
-| K7 | mcp/tools.rs, mcp/dispatch.rs | 33 | Media | 17% |
-| | **TOTAL** | **224** | | **100%** |
+| K4 | node/types.rs, node/commands.rs | 19 | Baja | 10% |
+| K5 | validate/knowledge.rs, trace, status, node/rm | 51 | Alta | 20% |
+| K6 | tests/e2e_knowledge.rs | 31 | Media | 12% |
+| K7 | mcp/tools.rs, mcp/dispatch.rs | 38 | Media | 17% |
+| | **TOTAL** | **239** | | **100%** |
 
 ---
 
@@ -328,7 +328,7 @@ Categorias: 16 happy, 6 boundary, 3 interaction, 1 idempotent, 1 ordering, 1 ref
 
 | Metrica | Valor |
 |---------|-------|
-| UATs totales Knowledge Pool | 224 |
+| UATs totales Knowledge Pool | 239 |
 | Complejidad principal | K3 (target resolution across trees) y K5 (validate matrix) |
 | Estimacion optimista | 2 dias de trabajo intensivo |
 | Estimacion conservadora | 3 dias |

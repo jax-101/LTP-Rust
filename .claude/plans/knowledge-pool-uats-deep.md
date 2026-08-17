@@ -175,6 +175,10 @@
 | K4.15 | `node inspect UDE-001` (sin epistemic = default) | Output muestra `"epistemic": "hypothesis"` (o lo omite — decisión de diseño para inspect). | `[boundary]` |
 | **Interaction con tree clone** | | | |
 | K4.16 | `tree clone` de un tree cuyos nodos tienen epistemic → nodos en el nuevo tree | Nodos son compartidos (pool global). Epistemic es propiedad del nodo, no del tree. Clone no duplica nodos. | `[interaction]` |
+| **Error paths y edge cases adicionales** | | | |
+| K4.17 | `node edit UDE-999 --epistemic fact` (nodo inexistente) | Error `NODE_NOT_FOUND`. | `[boundary]` |
+| K4.18 | Nodo en disco con `"epistemic": null` explícito en JSON | Deserializa con default `Hypothesis` (serde default). No error. | `[corrupt]` |
+| K4.19 | `node split UDE-001 --into "A" "B"` donde UDE-001 tiene epistemic=fact | Nuevos nodos obtienen default hypothesis (no heredan). El campo es propiedad del nodo original que desaparece. | `[interaction]` |
 
 ---
 
@@ -204,9 +208,9 @@
 | ID | Escenario | Resultado esperado | Cat |
 |----|-----------|-------------------|-----|
 | K5.10 | UDE-003 `epistemic: fact`, 0 knowledge items con relation `supports` targeting it. `validate` | Warning `EPISTEMIC_UNGROUNDED`. | `[happy]` |
-| K5.11 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `refuted`. `validate` | Warning `EPISTEMIC_UNGROUNDED` (refuted support no cuenta como grounding). | `[boundary]` |
-| K5.12 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `verified`. `validate` | Sin warning UNGROUNDED (al menos 1 verified support). | `[happy]` |
-| K5.13 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `unverified`. `validate` | ¿Warning o no? **Decisión**: Sin warning UNGROUNDED (tiene support, aunque no verified). UNGROUNDED = 0 supports totales. | `[boundary]` |
+| K5.11 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `refuted`. `validate` | Warning `EPISTEMIC_UNGROUNDED` (refuted support no cuenta como grounding). **D5 revisado**: UNGROUNDED = 0 supports activos (status ∉ {refuted, superseded}). | `[boundary]` |
+| K5.12 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `verified`. `validate` | Sin warning UNGROUNDED (support activo presente). | `[happy]` |
+| K5.13 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `unverified`. `validate` | Sin warning UNGROUNDED (unverified es support activo — aún no descartado). **D5 revisado**: supports activos = status ∈ {unverified, verified}. | `[boundary]` |
 | K5.14 | UDE-003 `epistemic: fact`, 2 KN `contextualizes` pero 0 `supports`. `validate` | Warning `EPISTEMIC_UNGROUNDED` (contextualizes no es support). | `[boundary]` |
 | K5.15 | UDE-003 `epistemic: hypothesis`, 0 supports. `validate` | Sin warning UNGROUNDED (solo aplica a `fact`). | `[boundary]` |
 | K5.16 | UDE-003 `epistemic: assumption`, 0 supports. `validate` | Sin warning UNGROUNDED (solo aplica a `fact`). | `[boundary]` |
@@ -272,6 +276,15 @@
 | K5.46 | `tree walk T` (sin --show-knowledge) | Output normal, sin campo knowledge. | `[happy]` |
 | K5.47 | `tree walk T --show-knowledge` con nodos sin knowledge | Campo presente con counts a 0. | `[boundary]` |
 
+### Adicionales (audit)
+
+| ID | Escenario | Resultado esperado | Cat |
+|----|-----------|-------------------|-----|
+| K5.48 | `validate` en workspace sin directorio `knowledge/` (pre-K1) | Sin crash, sin knowledge warnings. Backwards-compatible. | `[boundary]` |
+| K5.49 | KN-001 linked a FB-002 (eliminado via feedback edge removal). `validate` | Warning `DANGLING_KNOWLEDGE_REF` con target FB-002. | `[referential]` |
+| K5.50 | `status` con `knowledge/KN-003.json` corrupto en disco | Degradación graceful: warning en output, conteos parciales de items válidos. No crash. | `[corrupt]` |
+| K5.51 | UDE-003 `epistemic: fact`, 1 KN `supports` con status `superseded`. `validate` | Warning `EPISTEMIC_UNGROUNDED` (superseded support no cuenta como grounding, igual que refuted). | `[boundary]` |
+
 ---
 
 ## Fase K6: Tests End-to-End (Workflows)
@@ -318,6 +331,10 @@
 | **Status coherence** | | | |
 | K6.27 | 10 KN items, varía: add/rm/link/unlink. `status` after each | `knowledge_health` siempre refleja el estado actual (no cache stale). | `[ordering]` |
 | K6.28 | `knowledge edit KN-001 --status superseded` → `status` | `by_status.superseded` incrementa. | `[ordering]` |
+| **Adicionales (audit)** | | | |
+| K6.29 | `path replace --tree T --from A --to C --via X` destruye LINK-IDs originales. KN linked a LINK viejo → `validate` | Warning `DANGLING_KNOWLEDGE_REF` para LINK eliminado. | `[interaction]` |
+| K6.30 | `begin-batch` → `knowledge add "X" --type measurement` (sin source, FALLA) → `knowledge add "Y" --type measurement --source-excerpt "s"` (OK) → `end-batch` → `undo` | Batch revierte solo la operación exitosa. KN de "Y" desaparece. La fallida nunca existió. | `[interaction]` |
+| K6.31 | KN con `status: superseded` y `relation: contradicts` targeting nodo fact. `validate` | Sin warning CONTRADICTED (superseded KN es inactivo, no genera warnings). | `[boundary]` |
 
 ---
 
@@ -369,6 +386,12 @@
 | K7.32 | `ltp/knowledge_link` → `ltp/undo` | Link eliminado. | `[interaction]` |
 | **Concurrent/sequential** | | | |
 | K7.33 | 3 `ltp/knowledge_add` llamadas secuenciales rápidas | IDs secuenciales sin colisión (lock garantiza). | `[ordering]` |
+| **Adicionales (audit)** | | | |
+| K7.34 | `ltp/knowledge_link` sin campo `relation` en params | Error JSON-RPC -32602 (invalid params, missing required field). | `[boundary]` |
+| K7.35 | `ltp/knowledge_edit` con `add_tags: ["a","b"]` | Tags añadidos correctamente. | `[happy]` |
+| K7.36 | `ltp/knowledge_link` con `relation: "invalid_value"` | Error JSON-RPC con detalle `INVALID_RELATION`. | `[boundary]` |
+| K7.37 | `ltp/knowledge_inspect` con KN que tiene dangling ref | Success con `target_label: null`. No crash. | `[referential]` |
+| K7.38 | `ltp/node_edit` con `epistemic: "invalid_value"` | Error response con detalle claro. | `[boundary]` |
 
 ---
 
@@ -379,11 +402,11 @@
 | K1 | 16 | 4 | 6 | 2 | 2 | 1 | 2 | 0 |
 | K2 | 47 | 12 | 14 | 8 | 1 | 4 | 4 | 0 |
 | K3 | 37 | 6 | 6 | 8 | 0 | 1 | 0 | 9 |
-| K4 | 16 | 5 | 4 | 2 | 2 | 1 | 0 | 0 |
-| K5 | 47 | 8 | 22 | 4 | 0 | 0 | 0 | 5 |
-| K6 | 28 | 7 | 3 | 15 | 0 | 0 | 3 | 0 |
-| K7 | 33 | 16 | 6 | 3 | 0 | 1 | 1 | 1 |
-| **TOTAL** | **224** | **58** | **61** | **42** | **5** | **8** | **10** | **15** |
+| K4 | 19 | 5 | 5 | 3 | 3 | 1 | 0 | 0 |
+| K5 | 51 | 8 | 24 | 4 | 1 | 0 | 0 | 6 |
+| K6 | 31 | 7 | 4 | 17 | 0 | 0 | 3 | 0 |
+| K7 | 38 | 17 | 8 | 3 | 0 | 1 | 1 | 2 |
+| **TOTAL** | **239** | **59** | **67** | **45** | **7** | **8** | **10** | **17** |
 
 ---
 
@@ -395,7 +418,7 @@ Estas UATs revelan puntos donde la spec requiere decisión explícita:
 2. **K3.11**: ¿Link a nodo huérfano (en pool pero no en tree)?  → **Sí** (validación de attachment es concern del tree).
 3. **K3.25**: ¿`unlink --from X` elimina TODOS los links a X o solo uno? → **Todos** (unlink es por target, no por relation).
 4. **K3.32**: ¿`list --target X` muestra KN una vez o una vez por link? → **Una vez** con array de relations.
-5. **K5.13**: ¿`UNGROUNDED` requiere 0 supports totales o 0 supports verified? → **0 supports totales** (cualquier support, incluso unverified, es grounding).
+5. **K5.11/K5.13 (D5 revisado)**: ¿`UNGROUNDED` requiere 0 supports totales o 0 supports activos? → **0 supports activos** (status ∈ {unverified, verified}). Supports con status `refuted` o `superseded` NO cuentan como grounding.
 6. **K5.27**: ¿`UPGRADEABLE` se emite si también hay contradicción? → **No** (contradecido anula sugerencia de upgrade).
 7. **K5.32**: ¿Validate con tree filter reporta warnings de epistemic solo para nodos en ese tree? → **Sí** (consistente con validate existente que es per-tree).
 8. **K6.22**: ¿`node split` deja dangling refs de knowledge? → **Sí** (el ID original desaparece).
