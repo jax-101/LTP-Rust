@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::link::types::{Assumption, AssumptionStatus, EdgeStatus};
-use crate::node::{Node, NodeMetadata, NodeStatus, NodeType};
+use crate::node::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 
@@ -970,6 +970,7 @@ pub fn execute_invalidate(
             label: label.to_string(),
             tags: vec![],
             observable: true,
+            epistemic: EpistemicStatus::default(),
             metadata: NodeMetadata {
                 status: NodeStatus::Active,
                 extra: Default::default(),

@@ -197,6 +197,8 @@ enum NodeAction {
         tags: Option<Vec<String>>,
         #[arg(long)]
         observable: Option<bool>,
+        #[arg(long)]
+        epistemic: Option<String>,
     },
     Edit {
         id: String,
@@ -208,6 +210,8 @@ enum NodeAction {
         rm_tag: Option<String>,
         #[arg(long)]
         observable: Option<bool>,
+        #[arg(long)]
+        epistemic: Option<String>,
     },
     Rm {
         #[arg(value_delimiter = ',')]
@@ -225,6 +229,8 @@ enum NodeAction {
         r#type: Option<Vec<String>>,
         #[arg(long, value_delimiter = ',')]
         status: Option<Vec<String>>,
+        #[arg(long)]
+        epistemic: Option<String>,
     },
     Search {
         #[arg(long)]
@@ -985,9 +991,17 @@ fn main() {
                 r#type,
                 tags,
                 observable,
+                epistemic,
             } => {
                 let capture = history_begin(&storage);
-                let output = execute_node_add(&storage, &label, &r#type, tags, observable);
+                let output = execute_node_add(
+                    &storage,
+                    &label,
+                    &r#type,
+                    tags,
+                    observable,
+                    epistemic.as_deref(),
+                );
                 if output.success {
                     history_commit(capture, "node_add", &full_command);
                 }
@@ -1002,6 +1016,7 @@ fn main() {
                 add_tag,
                 rm_tag,
                 observable,
+                epistemic,
             } => {
                 let capture = history_begin(&storage);
                 let output = execute_node_edit(
@@ -1011,6 +1026,7 @@ fn main() {
                     add_tag.as_deref(),
                     rm_tag.as_deref(),
                     observable,
+                    epistemic.as_deref(),
                 );
                 if output.success {
                     history_commit(capture, "node_edit", &full_command);
@@ -1024,12 +1040,14 @@ fn main() {
                 tree,
                 r#type,
                 status,
+                epistemic,
             } => {
                 let output = execute_node_list(
                     &storage,
                     tree.as_deref(),
                     r#type.as_deref(),
                     status.as_deref(),
+                    epistemic.as_deref(),
                 );
                 render_output(&output, cli.human);
                 if !output.success {

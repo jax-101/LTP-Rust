@@ -33,7 +33,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "label": { "type": "string", "description": "Node label text" },
                 "type": { "type": "string", "description": "Node type (UDE, RC, INJ, NC, GOAL, OBJ, WANT, OBS, IO, INT, DE, REQ, PRE)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional tags" },
-                "observable": { "type": "boolean", "description": "Whether the node is observable" }
+                "observable": { "type": "boolean", "description": "Whether the node is observable" },
+                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status (default: hypothesis)" }
             },
             "required": ["label", "type"]
         }),
@@ -48,7 +49,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "label": { "type": "string", "description": "New label" },
                 "add_tag": { "type": "string", "description": "Tag to add" },
                 "rm_tag": { "type": "string", "description": "Tag to remove" },
-                "observable": { "type": "boolean", "description": "Observable flag" }
+                "observable": { "type": "boolean", "description": "Observable flag" },
+                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status" }
             },
             "required": ["id"]
         }),
@@ -78,13 +80,14 @@ pub fn all_tools() -> Vec<ToolDefinition> {
     ));
     tools.push(tool(
         "ltp/node_list",
-        "List nodes, optionally filtered by tree/type/status",
+        "List nodes, optionally filtered by tree/type/status/epistemic",
         json!({
             "type": "object",
             "properties": {
                 "tree": { "type": "string", "description": "Filter by tree ID" },
                 "type": { "type": "array", "items": { "type": "string" }, "description": "Filter by node types" },
-                "status": { "type": "array", "items": { "type": "string" }, "description": "Filter by status" }
+                "status": { "type": "array", "items": { "type": "string" }, "description": "Filter by status" },
+                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Filter by epistemic status" }
             }
         }),
     ));

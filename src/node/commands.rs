@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::errors::{LtpError, Result};
 use crate::link::Operator;
 use crate::node::clr_lint::lint_clr2;
-use crate::node::types::{Node, NodeMetadata, NodeStatus, NodeType};
+use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 
@@ -17,6 +17,7 @@ pub struct NodeAddData {
     pub label: String,
     pub tags: Vec<String>,
     pub observable: bool,
+    pub epistemic: EpistemicStatus,
 }
 
 /// Data returned by `node edit`.
@@ -27,6 +28,7 @@ pub struct NodeEditData {
     pub label: String,
     pub tags: Vec<String>,
     pub observable: bool,
+    pub epistemic: EpistemicStatus,
 }
 
 /// Summary of a node for listing.
@@ -36,6 +38,7 @@ pub struct NodeSummary {
     pub node_type: NodeType,
     pub label: String,
     pub status: NodeStatus,
+    pub epistemic: EpistemicStatus,
     pub tags: Vec<String>,
 }
 
@@ -88,12 +91,27 @@ fn parse_node_status(s: &str) -> Result<NodeStatus> {
     }
 }
 
+/// Parse an epistemic status string (case-insensitive) into `EpistemicStatus`.
+fn parse_epistemic(s: &str) -> Result<EpistemicStatus> {
+    match s.to_lowercase().as_str() {
+        "fact" => Ok(EpistemicStatus::Fact),
+        "hypothesis" => Ok(EpistemicStatus::Hypothesis),
+        "assumption" => Ok(EpistemicStatus::Assumption),
+        "derived" => Ok(EpistemicStatus::Derived),
+        other => Err(LtpError::EcValidation(format!(
+            "Unknown epistemic status: {}",
+            other
+        ))),
+    }
+}
+
 fn node_to_summary(node: &Node) -> NodeSummary {
     NodeSummary {
         id: node.id.clone(),
         node_type: node.node_type,
         label: node.label.clone(),
         status: node.metadata.status,
+        epistemic: node.epistemic,
         tags: node.tags.clone(),
     }
 }
@@ -115,6 +133,7 @@ pub fn execute_node_add(
     type_str: &str,
     tags: Option<Vec<String>>,
     observable: Option<bool>,
+    epistemic: Option<&str>,
 ) -> CommandOutput<NodeAddData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -131,6 +150,7 @@ pub fn execute_node_add(
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: EpistemicStatus::default(),
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -140,6 +160,34 @@ pub fn execute_node_add(
                 warnings: vec![],
             };
         }
+    };
+
+    let epistemic_status = match epistemic {
+        Some(s) => match parse_epistemic(s) {
+            Ok(e) => e,
+            Err(e) => {
+                return CommandOutput {
+                    success: false,
+                    action: "node_add".to_string(),
+                    workspace: ws_name,
+                    data: NodeAddData {
+                        id: String::new(),
+                        node_type,
+                        label: String::new(),
+                        tags: vec![],
+                        observable: true,
+                        epistemic: EpistemicStatus::default(),
+                    },
+                    graph_health: GraphHealth {
+                        valid_dag: true,
+                        orphan_nodes_count: 0,
+                    },
+                    errors: vec![OutputError::new("INVALID_EPISTEMIC", e.to_string())],
+                    warnings: vec![],
+                };
+            }
+        },
+        None => EpistemicStatus::default(),
     };
 
     let lock_outcome = match storage.acquire_lock("node add") {
@@ -163,6 +211,7 @@ pub fn execute_node_add(
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: epistemic_status,
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -189,6 +238,7 @@ pub fn execute_node_add(
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: epistemic_status,
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -209,6 +259,7 @@ pub fn execute_node_add(
         label: label.to_string(),
         tags: node_tags.clone(),
         observable: obs,
+        epistemic: epistemic_status,
         metadata: NodeMetadata {
             status: NodeStatus::Active,
             extra: Default::default(),
@@ -227,6 +278,7 @@ pub fn execute_node_add(
                 label: String::new(),
                 tags: vec![],
                 observable: true,
+                epistemic: epistemic_status,
             },
             graph_health: GraphHealth {
                 valid_dag: true,
@@ -254,6 +306,7 @@ pub fn execute_node_add(
             label: label.to_string(),
             tags: node_tags,
             observable: obs,
+            epistemic: epistemic_status,
         },
         graph_health: GraphHealth {
             valid_dag: true,
@@ -272,8 +325,37 @@ pub fn execute_node_edit(
     add_tag: Option<&str>,
     rm_tag: Option<&str>,
     observable: Option<bool>,
+    epistemic: Option<&str>,
 ) -> CommandOutput<NodeEditData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let epistemic_status = match epistemic {
+        Some(s) => match parse_epistemic(s) {
+            Ok(e) => Some(e),
+            Err(e) => {
+                return CommandOutput {
+                    success: false,
+                    action: "node_edit".to_string(),
+                    workspace: ws_name,
+                    data: NodeEditData {
+                        id: id.to_string(),
+                        node_type: NodeType::Ude,
+                        label: String::new(),
+                        tags: vec![],
+                        observable: true,
+                        epistemic: EpistemicStatus::default(),
+                    },
+                    graph_health: GraphHealth {
+                        valid_dag: true,
+                        orphan_nodes_count: 0,
+                    },
+                    errors: vec![OutputError::new("INVALID_EPISTEMIC", e.to_string())],
+                    warnings: vec![],
+                };
+            }
+        },
+        None => None,
+    };
 
     let lock_outcome = match storage.acquire_lock("node edit") {
         Ok(outcome) => outcome,
@@ -288,6 +370,7 @@ pub fn execute_node_edit(
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: EpistemicStatus::default(),
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -317,6 +400,7 @@ pub fn execute_node_edit(
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: EpistemicStatus::default(),
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -346,6 +430,10 @@ pub fn execute_node_edit(
         node.observable = obs;
     }
 
+    if let Some(ep) = epistemic_status {
+        node.epistemic = ep;
+    }
+
     if let Err(e) = storage.save_node(&node) {
         let _ = storage.release_lock();
         return CommandOutput {
@@ -358,6 +446,7 @@ pub fn execute_node_edit(
                 label: node.label.clone(),
                 tags: node.tags.clone(),
                 observable: node.observable,
+                epistemic: node.epistemic,
             },
             graph_health: GraphHealth {
                 valid_dag: true,
@@ -390,6 +479,7 @@ pub fn execute_node_edit(
             label: node.label,
             tags: node.tags,
             observable: node.observable,
+            epistemic: node.epistemic,
         },
         graph_health: GraphHealth {
             valid_dag: true,
@@ -403,12 +493,13 @@ pub fn execute_node_edit(
 /// Execute `node list` command.
 ///
 /// Lists nodes from the pool, optionally filtered by tree membership,
-/// node type, and/or status.
+/// node type, status, and/or epistemic status.
 pub fn execute_node_list(
     storage: &dyn Storage,
     tree_filter: Option<&str>,
     type_filter: Option<&[String]>,
     status_filter: Option<&[String]>,
+    epistemic_filter: Option<&str>,
 ) -> CommandOutput<NodeListData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -470,6 +561,8 @@ pub fn execute_node_list(
             .collect()
     });
 
+    let ep_filter: Option<EpistemicStatus> = epistemic_filter.and_then(|s| parse_epistemic(s).ok());
+
     let mut nodes = Vec::new();
     for id in &node_ids {
         let node = match storage.load_node(id) {
@@ -485,6 +578,12 @@ pub fn execute_node_list(
 
         if let Some(ref statuses) = status_filters {
             if !statuses.contains(&node.metadata.status) {
+                continue;
+            }
+        }
+
+        if let Some(ep) = ep_filter {
+            if node.epistemic != ep {
                 continue;
             }
         }
@@ -796,6 +895,7 @@ pub struct NodeInspectData {
     pub label: String,
     pub tags: Vec<String>,
     pub observable: bool,
+    pub epistemic: EpistemicStatus,
     pub status: NodeStatus,
     pub trees: Vec<NodeTreeParticipation>,
 }
@@ -820,6 +920,7 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
                     label: String::new(),
                     tags: vec![],
                     observable: true,
+                    epistemic: EpistemicStatus::default(),
                     status: NodeStatus::Active,
                     trees: vec![],
                 },
@@ -889,6 +990,7 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
             label: node.label,
             tags: node.tags,
             observable: node.observable,
+            epistemic: node.epistemic,
             status: node.metadata.status,
             trees: participations,
         },
@@ -1070,6 +1172,7 @@ pub fn execute_node_split(
         label: labels[0].clone(),
         tags: original.tags.clone(),
         observable: original.observable,
+        epistemic: EpistemicStatus::default(),
         metadata: NodeMetadata {
             status: NodeStatus::Active,
             extra: Default::default(),
@@ -1081,6 +1184,7 @@ pub fn execute_node_split(
         label: labels[1].clone(),
         tags: original.tags.clone(),
         observable: original.observable,
+        epistemic: EpistemicStatus::default(),
         metadata: NodeMetadata {
             status: NodeStatus::Active,
             extra: Default::default(),

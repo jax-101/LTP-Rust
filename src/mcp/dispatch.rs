@@ -338,9 +338,10 @@ fn dispatch_node_add(
     let node_type = get_str(args, "type")?;
     let tags = get_str_array_opt(args, "tags");
     let observable = args.get("observable").and_then(|v| v.as_bool());
+    let epistemic = get_str_opt(args, "epistemic");
 
     let capture = history_begin(storage);
-    let output = execute_node_add(storage, label, node_type, tags, observable);
+    let output = execute_node_add(storage, label, node_type, tags, observable, epistemic);
     if output.success {
         history_commit(capture, "node_add", &format!("mcp:ltp/node_add {label}"));
     }
@@ -356,9 +357,10 @@ fn dispatch_node_edit(
     let add_tag = get_str_opt(args, "add_tag");
     let rm_tag = get_str_opt(args, "rm_tag");
     let observable = args.get("observable").and_then(|v| v.as_bool());
+    let epistemic = get_str_opt(args, "epistemic");
 
     let capture = history_begin(storage);
-    let output = execute_node_edit(storage, id, label, add_tag, rm_tag, observable);
+    let output = execute_node_edit(storage, id, label, add_tag, rm_tag, observable, epistemic);
     if output.success {
         history_commit(capture, "node_edit", &format!("mcp:ltp/node_edit {id}"));
     }
@@ -396,11 +398,13 @@ fn dispatch_node_list(
     let tree = get_str_opt(args, "tree");
     let type_filter = get_str_array_opt(args, "type");
     let status_filter = get_str_array_opt(args, "status");
+    let epistemic = get_str_opt(args, "epistemic");
     let output = execute_node_list(
         storage,
         tree,
         type_filter.as_deref(),
         status_filter.as_deref(),
+        epistemic,
     );
     to_result(&output)
 }

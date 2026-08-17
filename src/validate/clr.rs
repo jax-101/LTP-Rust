@@ -187,7 +187,7 @@ pub fn lint_clr7_intangible(
 mod tests {
     use super::*;
     use crate::link::{Edge, EdgeStatus, Logic, Operator};
-    use crate::node::{Node, NodeMetadata, NodeStatus, NodeType};
+    use crate::node::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
     use std::collections::BTreeMap;
 
     fn make_node(id: &str, node_type: NodeType, observable: bool) -> Node {
@@ -197,6 +197,7 @@ mod tests {
             label: "Test node".to_string(),
             tags: vec![],
             observable,
+            epistemic: EpistemicStatus::default(),
             metadata: NodeMetadata {
                 status: NodeStatus::Active,
                 extra: BTreeMap::new(),
@@ -225,6 +226,7 @@ mod tests {
             label: "Vendemos poco porque no hay marketing".to_string(),
             tags: vec![],
             observable: true,
+            epistemic: EpistemicStatus::default(),
             metadata: NodeMetadata {
                 status: NodeStatus::Active,
                 extra: BTreeMap::new(),

@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::Serialize;
 
 use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
-use crate::node::types::{Node, NodeMetadata, NodeStatus, NodeType};
+use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError};
 use crate::storage::Storage;
 use crate::tree::types::{MacroEdge, NodeRef};
@@ -531,6 +531,7 @@ pub fn execute_path_explode(
         label: label.to_string(),
         tags: vec![],
         observable: true,
+        epistemic: EpistemicStatus::default(),
         metadata: NodeMetadata {
             status: NodeStatus::Active,
             extra: Default::default(),

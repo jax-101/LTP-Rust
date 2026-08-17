@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 41% |
-| **Fase actual** | K4 — Campo Epistémico |
-| **Última fase completada** | K3 — Linking |
+| **Avance Knowledge Pool** | 49% |
+| **Fase actual** | K5 — Integración |
+| **Última fase completada** | K4 — Campo Epistémico |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 94/239 |
+| **UATs Knowledge Pool** | 113/239 |
 
 ---
 
@@ -23,11 +23,11 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | K1 | Fundación (schema, storage, init, counters) | 8% | 8% | ✅ Completada | 16/16 | |
 | K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
 | K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
-| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/19 | |
+| K4 | Campo epistémico en nodos | 10% | 10% | ✅ Completada | 19/19 | 19 integration tests |
 | K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/51 | |
 | K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/31 | |
 | K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/38 | |
-| | **TOTAL** | **100%** | **100%** | | **94/239** | |
+| | **TOTAL** | **100%** | **100%** | | **113/239** | |
 
 ---
 
@@ -54,6 +54,30 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [K4] — Campo Epistémico en Nodos
+**Fecha**: 2026-08-17
+**Avance fase**: 19/19 UATs ✅
+**Avance Knowledge Pool**: 41% → 49%
+**Esfuerzo estimado**: 10% | **Esfuerzo real (percibido)**: 10%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- Enum `EpistemicStatus` {Fact, Hypothesis, Assumption, Derived} con default Hypothesis
+- Campo `epistemic` en `Node` struct con skip_serializing_if hypothesis (backwards-compatible)
+- Custom deserializer que trata `null` como default
+- `node add --epistemic` para crear nodos con status epistémico
+- `node edit --epistemic` para modificar status epistémico
+- `node list --epistemic` filtro por status epistémico (incluye nodos sin campo explícito)
+- `node inspect` muestra epistemic efectivo
+- `node split` genera nuevos nodos con default hypothesis (no hereda)
+- MCP tools `node_add`, `node_edit`, `node_list` extendidos con param `epistemic`
+- 19 tests de integración CLI (UATs K4.1–K4.19)
+
+#### Siguiente
+- K5: Integración con comandos existentes (status/validate/trace/node rm/tree walk)
+
+---
 
 ### [F1] — Fundación (workspace, traits, IDs, pipeline)
 **Fecha**: 2026-08-12
