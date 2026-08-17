@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 use crate::errors::{LtpError, Result};
+use crate::knowledge::KnowledgeItem;
 use crate::node::Node;
 use crate::output::OutputWarning;
 use crate::storage::{LockOutcome, Storage};
@@ -45,6 +46,10 @@ impl FsStorage {
 
     fn trees_dir(&self) -> PathBuf {
         self.root.join("trees")
+    }
+
+    fn knowledge_dir(&self) -> PathBuf {
+        self.root.join("knowledge")
     }
 
     fn config_path(&self) -> PathBuf {
@@ -244,6 +249,7 @@ impl Storage for FsStorage {
 
         fs::create_dir_all(self.nodes_dir())?;
         fs::create_dir_all(self.trees_dir())?;
+        fs::create_dir_all(self.knowledge_dir())?;
         fs::create_dir_all(self.ltp_dir().join("undo"))?;
         fs::create_dir_all(self.ltp_dir().join("redo"))?;
         fs::create_dir_all(self.tmp_dir())?;
@@ -268,6 +274,60 @@ impl Storage for FsStorage {
 
     fn root(&self) -> &Path {
         &self.root
+    }
+
+    fn load_knowledge(&self, id: &str) -> Result<KnowledgeItem> {
+        let path = self.knowledge_dir().join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(LtpError::KnowledgeNotFound(id.to_string()));
+        }
+        let content = fs::read_to_string(&path)?;
+        let item: KnowledgeItem = serde_json::from_str(&content)?;
+        Ok(item)
+    }
+
+    fn save_knowledge(&self, item: &KnowledgeItem) -> Result<()> {
+        self.ensure_knowledge_dir()?;
+        let path = self.knowledge_dir().join(format!("{}.json", item.id));
+        let json = Self::to_canonical_json(item)?;
+        self.atomic_write(&path, &json)
+    }
+
+    fn delete_knowledge(&self, id: &str) -> Result<()> {
+        let path = self.knowledge_dir().join(format!("{}.json", id));
+        if !path.exists() {
+            return Err(LtpError::KnowledgeNotFound(id.to_string()));
+        }
+        fs::remove_file(&path)?;
+        Ok(())
+    }
+
+    fn list_knowledge_ids(&self) -> Result<Vec<String>> {
+        let dir = self.knowledge_dir();
+        if !dir.exists() {
+            return Ok(vec![]);
+        }
+        let mut ids = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if let Some(id) = name_str.strip_suffix(".json") {
+                ids.push(id.to_string());
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
+
+    fn ensure_knowledge_dir(&self) -> Result<bool> {
+        let dir = self.knowledge_dir();
+        if dir.exists() {
+            return Ok(false);
+        }
+        fs::create_dir_all(&dir)?;
+        debug!("created knowledge/ directory on demand");
+        Ok(true)
     }
 }
 

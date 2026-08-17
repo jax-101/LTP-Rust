@@ -259,7 +259,7 @@ fn dispatch_init(
         "init",
         name,
         serde_json::json!({
-            "directories_created": ["nodes/", "trees/", ".ltp/", ".ltp/undo/", ".ltp/redo/", ".ltp/tmp/"],
+            "directories_created": ["nodes/", "trees/", "knowledge/", ".ltp/", ".ltp/undo/", ".ltp/redo/", ".ltp/tmp/"],
             "config_file": "ltp.config.json",
             "counters_file": ".ltp/counters.json"
         }),

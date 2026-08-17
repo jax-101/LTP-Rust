@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::errors::Result;
+use crate::knowledge::KnowledgeItem;
 use crate::node::Node;
 use crate::tree::Tree;
 use crate::workspace::WorkspaceConfig;
@@ -60,6 +61,22 @@ pub trait Storage {
 
     /// Return the workspace root path.
     fn root(&self) -> &Path;
+
+    /// Load a knowledge item by its ID from the knowledge pool.
+    fn load_knowledge(&self, id: &str) -> Result<KnowledgeItem>;
+
+    /// Persist a knowledge item atomically to the knowledge pool.
+    fn save_knowledge(&self, item: &KnowledgeItem) -> Result<()>;
+
+    /// Delete a knowledge item from the pool.
+    fn delete_knowledge(&self, id: &str) -> Result<()>;
+
+    /// List all knowledge item IDs present in the pool.
+    fn list_knowledge_ids(&self) -> Result<Vec<String>>;
+
+    /// Ensure the knowledge directory exists, creating it if needed.
+    /// Returns true if the directory was newly created.
+    fn ensure_knowledge_dir(&self) -> Result<bool>;
 }
 
 /// Outcome of a lock acquisition attempt that may involve stale-lock cleanup.

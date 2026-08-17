@@ -578,6 +578,7 @@ fn execute_init(storage: &FsStorage, name: &str, dry_run: bool) -> CommandOutput
                 directories_created: vec![
                     "nodes/".to_string(),
                     "trees/".to_string(),
+                    "knowledge/".to_string(),
                     ".ltp/".to_string(),
                     ".ltp/undo/".to_string(),
                     ".ltp/redo/".to_string(),
@@ -623,6 +624,7 @@ fn execute_init(storage: &FsStorage, name: &str, dry_run: bool) -> CommandOutput
             directories_created: vec![
                 "nodes/".to_string(),
                 "trees/".to_string(),
+                "knowledge/".to_string(),
                 ".ltp/".to_string(),
                 ".ltp/undo/".to_string(),
                 ".ltp/redo/".to_string(),

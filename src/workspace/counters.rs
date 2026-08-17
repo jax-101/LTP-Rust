@@ -10,7 +10,7 @@ use crate::output::OutputWarning;
 /// All entity types tracked by the counter system.
 const ENTITY_TYPES: &[&str] = &[
     "UDE", "RC", "INJ", "NC", "GOAL", "OBJ", "WANT", "OBS", "IO", "INT", "DE", "REQ", "PRE",
-    "TREE", "LINK", "ASM", "NBR", "MACRO",
+    "TREE", "LINK", "ASM", "NBR", "MACRO", "KN",
 ];
 
 /// Sequential counter state for all entity types in the workspace.
@@ -51,6 +51,7 @@ impl Counters {
 
         Self::scan_directory(&root.join("nodes"), &mut counters);
         Self::scan_directory(&root.join("trees"), &mut counters);
+        Self::scan_directory(&root.join("knowledge"), &mut counters);
 
         (counters, warnings)
     }

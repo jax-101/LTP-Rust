@@ -47,6 +47,12 @@ pub enum LtpError {
     #[error("duplicate node ID: {0}")]
     DuplicateNodeId(String),
 
+    #[error("knowledge item not found: {0}")]
+    KnowledgeNotFound(String),
+
+    #[error("knowledge source required: at least uri or excerpt must be provided")]
+    KnowledgeSourceRequired,
+
     #[error("EC validation: {0}")]
     EcValidation(String),
 
