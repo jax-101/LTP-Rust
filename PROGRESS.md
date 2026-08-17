@@ -4,36 +4,52 @@
 
 | Métrica | Valor |
 |---------|-------|
-| **Avance global** | 100% |
-| **Fase actual** | Completado |
+| **Avance global (motor base)** | 100% ✅ |
+| **Avance Knowledge Pool** | 0% |
+| **Fase actual** | KP pendiente de inicio |
 | **Última fase completada** | F12 — MCP Server |
 | **Factor de escala (velocity)** | 1.0x |
-| **Paquetes replanificados** | 4 (UATs expandidas) |
-| **UATs totales** | 191 (era 185, +6 F12 Six Hats) |
+| **UATs motor base** | 191/191 |
+| **UATs Knowledge Pool** | 0/83 |
 
 ---
 
-## Estimación por Paquetes de Trabajo
+## Knowledge Pool — Estimación por Paquetes (ADR-012)
 
-Cada paquete tiene un peso relativo (% del total = 100%). Tras completar un paquete, se registra el esfuerzo real y se calcula el factor de escala para reestimar los restantes.
+Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.md`
 
 | Fase | Paquete | Peso Est. | Peso Ajust. | Estado | UATs | Notas |
 |------|---------|-----------|-------------|--------|------|-------|
-| F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | 10% | ✅ Completado | 6/6 | |
-| F2a | Nodos standalone (add/edit/list/search) | 4% | 4% | ✅ Completado | 9/9 | |
-| F3 | Vistas (trees) | 8% | 8% | ✅ Completado | 11/11 | |
-| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | 9% | ✅ Completado | 11/11 | |
-| F2b | Nodos cross-tree (rm/split/inspect) | 5% | 5% | ✅ Completado | 7/7 | |
-| F5 | Validación completa | 8% | 8% | ✅ Completado | 14/14 | |
-| F6 | Enlaces avanzados | 14% | 14% | ✅ Completado | 17/17 | |
-| F7 | Supuestos (assumptions) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs error paths + idempotencia |
-| F8 | Navegación (trace) | 6% | 6% | ✅ Completado | 15/15 | +7 UATs broken links + errors |
-| F9 | Abstracción (path) | 8% | 8% | ✅ Completado | 12/12 | +8 UATs sub-grafo + errors |
-| F10 | NBR | 5% | 5% | ✅ Completado | 17/17 | +5 UATs Six Hats (ciclo, inspect err, trim err, multi-source, trace) |
-| F11 | Historial (undo/redo) | 6% | 6% | ✅ Completado | 22/22 | +4 UATs redo-dry-run + divergence + creation + rotation |
-| E2E | Tests end-to-end | 4% | 4% | ✅ Completado | 19/19 | +6 UATs Six Hats (agent sim, undo cross-tree, EC incremental, path replace+undo, history divergence, multi-warning fix) |
-| F12 | MCP Server | 7% | 7% | ✅ Completado | 16/16 | +6 UATs Six Hats (parse error, method not found, isError flag, EOF, workflow, tools/list standalone) |
-| | **TOTAL** | **100%** | **100%** | | **191/191** | |
+| K1 | Fundación (schema, storage, init, counters) | 8% | 8% | [ ] Pendiente | 0/4 | |
+| K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | [ ] Pendiente | 0/21 | |
+| K3 | Linking (link/unlink, validación refs) | 15% | 15% | [ ] Pendiente | 0/13 | |
+| K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/8 | |
+| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/13 | |
+| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/10 | |
+| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/14 | |
+| | **TOTAL** | **100%** | **100%** | | **0/83** | |
+
+---
+
+## Motor Base — Resumen Final (completado)
+
+| Fase | Paquete | Peso | Estado | UATs |
+|------|---------|:----:|--------|------|
+| F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | ✅ | 6/6 |
+| F2a | Nodos standalone (add/edit/list/search) | 4% | ✅ | 9/9 |
+| F3 | Vistas (trees) | 8% | ✅ | 11/11 |
+| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | ✅ | 11/11 |
+| F2b | Nodos cross-tree (rm/split/inspect) | 5% | ✅ | 7/7 |
+| F5 | Validación completa | 8% | ✅ | 14/14 |
+| F6 | Enlaces avanzados | 14% | ✅ | 17/17 |
+| F7 | Supuestos (assumptions) | 6% | ✅ | 15/15 |
+| F8 | Navegación (trace) | 6% | ✅ | 15/15 |
+| F9 | Abstracción (path) | 8% | ✅ | 12/12 |
+| F10 | NBR | 5% | ✅ | 17/17 |
+| F11 | Historial (undo/redo) | 6% | ✅ | 22/22 |
+| E2E | Tests end-to-end | 4% | ✅ | 19/19 |
+| F12 | MCP Server | 7% | ✅ | 16/16 |
+| | **TOTAL** | **100%** | **✅** | **191/191** |
 
 ---
 
