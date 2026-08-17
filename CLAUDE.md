@@ -61,8 +61,9 @@ Todo comando retorna (JSON por defecto, `--human` para legible):
 | [ENGINE_SPEC.md](ENGINE_SPEC.md) | Especificacion completa de comandos, esquemas JSON, contrato de salida |
 | [PLAN.md](PLAN.md) | Plan de desarrollo por fases con UATs y decisiones tecnicas |
 | [PROGRESS.md](PROGRESS.md) | Dashboard de avance, estimaciones y telemetria |
-| [ADR.md](ADR.md) | Registro de Decisiones de Arquitectura (9 ADRs) |
+| [ADR.md](ADR.md) | Registro de Decisiones de Arquitectura (12 ADRs) |
 | [CLR_SPEC.md](CLR_SPEC.md) | Las 8 Categorias de Legitimacion Logica y matriz de auditoria |
+| [KNOWLEDGE_SPEC.md](KNOWLEDGE_SPEC.md) | Knowledge Pool: schema, comandos, interacciones, workflow epistemico |
 
 ## Estructura del Workspace generado por el CLI
 
@@ -71,6 +72,7 @@ mi-proyecto-ltp/
 ├── ltp.config.json       # Config global
 ├── nodes/                # Pool de nodos atomicos (UDE-001.json)
 ├── trees/                # Vistas topologicas (tree-crt-logistica.json)
+├── knowledge/            # Pool de knowledge items (KN-001.json)
 └── .ltp/                 # Estado interno del motor (en .gitignore)
     ├── lock              # Lock de concurrencia (PID + timestamp)
     ├── counters.json     # Contadores secuenciales por tipo

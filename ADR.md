@@ -189,3 +189,77 @@ El `.mcp.json` local se elimina del repo (añadido a `.gitignore`) para evitar c
 Consecuencias
 - Positivas: Instalable en cualquier máquina con Rust + Claude Code. Cero configuración manual por proyecto. El workspace es siempre la carpeta donde el usuario abre Claude Code. Compatible con el uso standalone del binario (cae a cwd). No rompe ningún test existente.
 - Negativas: Requiere que `~/.cargo/bin` esté en PATH (estándar en toda instalación Rust). Si el usuario lanza Claude Code desde una carpeta no deseada, `ltp/init` creará estructura ahí (mitigado: `ltp/init` requiere invocación explícita — red de seguridad existente vía `WORKSPACE_NOT_INITIALIZED`).
+
+ADR-012: Knowledge Pool Separado para Gestión Epistemológica
+
+Contexto
+
+El motor gestiona la estructura lógica de relaciones causales (nodos, edges, assumptions), pero carece de un mecanismo para gestionar el conocimiento del sistema bajo análisis: hechos, hipótesis, mediciones, testimonios y observaciones que respaldan o contradicen las entidades del grafo.
+
+Se necesitan dos capacidades:
+1. **Capa epistémica**: saber si un nodo refleja un hecho establecido o una hipótesis por confirmar.
+2. **Capa evidencial**: almacenar información del mundo real (de cualquier fuente) que sostiene, contradice o contextualiza nodos y enlaces — incluyendo información que aún no se ha traducido a nodos ("conocimiento huérfano").
+
+Se evaluaron con Six Thinking Hats cuatro opciones:
+1. **Evidencia como attachment al nodo** (estilo assumptions en edges) → simple pero no soporta conocimiento huérfano ni multi-link natural. Falla para la capa "input al grafo".
+2. **Puntero/referencia a fuente externa** → ligero pero link rot, no queryable, no permite razonar sin fetch.
+3. **Evidencia como nodo causal en el grafo** → contamina el grafo con relaciones no-causales (epistemológicas ≠ causales). Rompe la pureza semántica de edges ("Si A entonces B") y complica validate/trace.
+4. **Pool separado con links a nodos/edges** → ciclo de vida independiente, soporte para conocimiento huérfano, relaciones no-causales explícitas, queryable por el motor sin contaminar el grafo.
+
+Decisión
+
+Adoptar un **Knowledge Pool separado** (`knowledge/`) a nivel workspace con entidades de primer nivel que se vinculan a nodos, edges y assumptions mediante relaciones no-causales.
+
+Complementariamente, añadir un campo `epistemic` a los nodos del grafo causal como declaración explícita del usuario sobre el estatus epistemológico del nodo.
+
+Diseño:
+
+**Knowledge items** (`knowledge/KN-001.json`):
+```json
+{
+  "id": "KN-001",
+  "type": "measurement",
+  "label": "Media de entrega 18.3 días en Q2-2026",
+  "status": "verified",
+  "confidence": "high",
+  "source": {
+    "uri": "obsidian://vault/MyBrain/notas/kpi-logistica-q2.md",
+    "excerpt": "El tiempo medio de entrega fue 18.3 días, vs 12.1 en Q1"
+  },
+  "captured": "2026-08-17",
+  "links": [
+    {"target": "UDE-003", "relation": "supports"},
+    {"target": "LINK-007", "relation": "supports"}
+  ]
+}
+```
+
+**Campo epistémico en nodos** (`nodes/UDE-003.json`):
+```json
+{
+  "id": "UDE-003",
+  "type": "UDE",
+  "label": "Los tiempos de entrega superan 15 días",
+  "epistemic": "fact"
+}
+```
+
+Principios de diseño:
+- Los links viven unidireccionalmente en el knowledge item (KN apunta a target). Query inverso por scan del pool (aceptable con <1000 items).
+- `type` y `status` son dimensiones ortogonales en knowledge items. `type` = qué es; `status` = qué sabemos de ello.
+- El motor persiste y filtra `confidence` pero nunca bloquea basándose en él (bookkeeping, no juicio).
+- `source` requiere al menos `uri` o `excerpt` (resistencia a link rot + trazabilidad).
+- El campo `epistemic` en nodos es declarativo del usuario. Default: `hypothesis`. El motor no infiere el estatus del knowledge — el usuario decide cuándo promover.
+- `validate` emite warnings de consistencia (no bloqueos): `EPISTEMIC_UNGROUNDED`, `EPISTEMIC_CONTRADICTED`, `EPISTEMIC_UPGRADEABLE`.
+- `node rm` emite warning si hay knowledge apuntando al nodo; no bloquea (consistente con `tree detach`).
+- Knowledge items participan en el stack de undo/redo (ADR-009).
+
+Justificación
+- Precedente ADR-008 (NBR como pool separado): mismo patrón de separación para evitar contaminar la estructura principal.
+- Precedente ADR-007 (feedback_edges separados de edges): mismo principio de no mezclar relaciones de naturaleza distinta.
+- ADR-001: el motor persiste y reporta consistencia; no juzga si la evidencia es "suficiente" para declarar un hecho. Esa evaluación la hace el agente/humano.
+- ADR-002: ficheros JSON individuales en `knowledge/` → git-diffable, branchable. `git log knowledge/` muestra evolución epistémica del proyecto.
+
+Consecuencias
+- Positivas: Conocimiento huérfano tiene hogar propio (inbox de input pendiente). Multi-link natural (1 KN → N targets). Relaciones no-causales explícitas sin contaminar el DAG. Queries epistémicas (`status`, `node list --epistemic hypothesis`). Compone con `tree clone` (what-if sobre hipótesis), `invalidate` (knowledge contradictorio fundamenta la invalidación) y `trace --show-knowledge`. Hypothesis-driven analysis habilitado como flujo completo.
+- Negativas: Más complejidad (nuevo directorio, 7 comandos, nuevo schema). Integridad referencial bidireccional requiere warnings en validate. Scope creep potencial (mitigado: MVP estricto + ADR-001 como guardrail). El scan lineal de `knowledge/` para queries inversas no escala a miles de items (mitigado: YAGNI — un proyecto LTP rara vez supera 500 knowledge items).
