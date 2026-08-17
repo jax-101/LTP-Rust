@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 26% |
-| **Fase actual** | K3 — Linking |
-| **Última fase completada** | K2 — CRUD |
+| **Avance Knowledge Pool** | 41% |
+| **Fase actual** | K4 — Campo Epistémico |
+| **Última fase completada** | K3 — Linking |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 63/224 |
+| **UATs Knowledge Pool** | 94/224 |
 
 ---
 
@@ -22,12 +22,12 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 |------|---------|-----------|-------------|--------|------|-------|
 | K1 | Fundación (schema, storage, init, counters) | 8% | 8% | ✅ Completada | 16/16 | |
 | K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
-| K3 | Linking (link/unlink, validación refs) | 15% | 15% | [ ] Pendiente | 0/37 | |
+| K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
 | K4 | Campo epistémico en nodos | 10% | 10% | [ ] Pendiente | 0/16 | |
 | K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/47 | |
 | K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/28 | |
 | K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/33 | |
-| | **TOTAL** | **100%** | **100%** | | **63/224** | |
+| | **TOTAL** | **100%** | **100%** | | **94/224** | |
 
 ---
 
@@ -433,6 +433,33 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 #### Siguiente
 - K3: Linking (link/unlink, target resolution, validate refs)
+
+---
+
+### [K3] — Linking (Vínculos al Grafo)
+**Fecha**: 2026-08-17
+**Avance fase**: 31/37 UATs ✅
+**Avance Knowledge Pool**: 26% → 41%
+**Esfuerzo estimado**: 15% | **Esfuerzo real (percibido)**: 15%
+
+#### Entregables
+- `knowledge link`: vincula KN a nodos, edges (LINK-), assumptions (ASM-), feedback edges (FB-)
+- `knowledge unlink`: elimina TODOS los links a un target (D3)
+- Target resolution module (`src/knowledge/resolve.rs`): resolución contra pool+trees+nbr_branches
+- `knowledge list --target X [--relation R]`: filtro por target con matching_relations (D4)
+- `knowledge inspect`: links resueltos con target_label y target_type (dangling = null)
+- MACRO-XXX → TARGET_NOT_FOUND (macro_edges no son entidades standalone)
+- Duplicate link → DUPLICATE_LINK warning (idempotente, no error)
+- Orphan nodes, broken edges, invalid assumptions → linking permitido (D2)
+- Batch history system extendido para incluir knowledge/ en snapshots
+- Error codes: TARGET_NOT_FOUND, LINK_NOT_FOUND, TARGET_REQUIRED, DUPLICATE_LINK
+- 31 tests de integración CLI (K3.1-K3.37 parcial)
+
+#### Descubrimientos
+- Bug fix: batch begin/end no incluía `knowledge/` en snapshot, causando UNDO_STATE_DIVERGED
+
+#### Siguiente
+- K4: Campo epistémico en nodos (fact/hypothesis/assumption/derived)
 
 ---
 

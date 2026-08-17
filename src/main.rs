@@ -16,9 +16,9 @@ use ltp_engine::history::{
 };
 use ltp_engine::knowledge::commands::{
     execute_knowledge_add, execute_knowledge_edit, execute_knowledge_inspect,
-    execute_knowledge_list, execute_knowledge_rm,
+    execute_knowledge_link, execute_knowledge_list, execute_knowledge_rm, execute_knowledge_unlink,
 };
-use ltp_engine::knowledge::{Confidence, KnowledgeStatus, KnowledgeType};
+use ltp_engine::knowledge::{Confidence, KnowledgeRelation, KnowledgeStatus, KnowledgeType};
 use ltp_engine::link::advanced::{
     execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
     execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
@@ -581,6 +581,24 @@ enum KnowledgeAction {
         unlinked: bool,
         #[arg(long)]
         tag: Option<String>,
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        relation: Option<String>,
+    },
+    /// Link a knowledge item to a graph entity
+    Link {
+        id: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        relation: String,
+    },
+    /// Unlink a knowledge item from a graph entity
+    Unlink {
+        id: String,
+        #[arg(long)]
+        from: String,
     },
 }
 
@@ -1756,6 +1774,8 @@ fn main() {
                 confidence,
                 unlinked,
                 tag,
+                target,
+                relation,
             } => {
                 let ktype = match r#type.as_deref().map(parse_knowledge_type) {
                     Some(Ok(t)) => Some(t),
@@ -1796,6 +1816,19 @@ fn main() {
                     }
                     None => None,
                 };
+                let krelation = match relation.as_deref().map(parse_knowledge_relation) {
+                    Some(Ok(r)) => Some(r),
+                    Some(Err(msg)) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_list",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_RELATION", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                    None => None,
+                };
 
                 let output = execute_knowledge_list(
                     &storage,
@@ -1804,7 +1837,44 @@ fn main() {
                     kconfidence,
                     unlinked,
                     tag.as_deref(),
+                    target.as_deref(),
+                    krelation,
                 );
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::Link { id, to, relation } => {
+                let krelation = match parse_knowledge_relation(&relation) {
+                    Ok(r) => r,
+                    Err(msg) => {
+                        let output = ltp_engine::output::error_output(
+                            "knowledge_link",
+                            storage.workspace_name().unwrap_or_default(),
+                            vec![OutputError::new("INVALID_RELATION", msg)],
+                        );
+                        render_output(&output, cli.human);
+                        process::exit(1);
+                    }
+                };
+
+                let capture = history_begin(&storage);
+                let output = execute_knowledge_link(&storage, &id, &to, krelation);
+                if output.success {
+                    history_commit(capture, "knowledge_link", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            KnowledgeAction::Unlink { id, from } => {
+                let capture = history_begin(&storage);
+                let output = execute_knowledge_unlink(&storage, &id, &from);
+                if output.success {
+                    history_commit(capture, "knowledge_unlink", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
@@ -1842,5 +1912,14 @@ fn parse_confidence(s: &str) -> std::result::Result<Confidence, String> {
         "medium" => Ok(Confidence::Medium),
         "low" => Ok(Confidence::Low),
         other => Err(format!("Unknown confidence level: {}", other)),
+    }
+}
+
+fn parse_knowledge_relation(s: &str) -> std::result::Result<KnowledgeRelation, String> {
+    match s.to_lowercase().as_str() {
+        "supports" => Ok(KnowledgeRelation::Supports),
+        "contradicts" => Ok(KnowledgeRelation::Contradicts),
+        "contextualizes" => Ok(KnowledgeRelation::Contextualizes),
+        other => Err(format!("Unknown knowledge relation: {}", other)),
     }
 }

@@ -1,7 +1,9 @@
 use serde::Serialize;
 
+use crate::knowledge::resolve::resolve_target;
 use crate::knowledge::types::{
-    Confidence, KnowledgeItem, KnowledgeLink, KnowledgeSource, KnowledgeStatus, KnowledgeType,
+    Confidence, KnowledgeItem, KnowledgeLink, KnowledgeRelation, KnowledgeSource, KnowledgeStatus,
+    KnowledgeType,
 };
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
@@ -48,7 +50,7 @@ pub struct KnowledgeInspectData {
     pub confidence: Option<Confidence>,
     pub source: KnowledgeSource,
     pub captured: String,
-    pub links: Vec<KnowledgeLink>,
+    pub links: Vec<ResolvedLinkInfo>,
     pub tags: Vec<String>,
 }
 
@@ -64,6 +66,8 @@ pub struct KnowledgeSummary {
     pub confidence: Option<Confidence>,
     pub link_count: usize,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matching_relations: Option<Vec<KnowledgeRelation>>,
 }
 
 /// Data returned by `knowledge list`.
@@ -71,6 +75,34 @@ pub struct KnowledgeSummary {
 pub struct KnowledgeListData {
     pub items: Vec<KnowledgeSummary>,
     pub total: usize,
+}
+
+/// Data returned by `knowledge link`.
+#[derive(Debug, Serialize)]
+pub struct KnowledgeLinkData {
+    pub id: String,
+    pub target: String,
+    pub relation: KnowledgeRelation,
+    pub link_count: usize,
+}
+
+/// Data returned by `knowledge unlink`.
+#[derive(Debug, Serialize)]
+pub struct KnowledgeUnlinkData {
+    pub id: String,
+    pub target: String,
+    pub removed_count: usize,
+    pub link_count: usize,
+}
+
+/// Resolved link info for inspect output.
+#[derive(Debug, Serialize)]
+pub struct ResolvedLinkInfo {
+    pub target: String,
+    pub relation: KnowledgeRelation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_label: Option<String>,
+    pub target_type: String,
 }
 
 fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
@@ -560,6 +592,22 @@ pub fn execute_knowledge_inspect(
         }
     };
 
+    let resolved_links: Vec<ResolvedLinkInfo> = item
+        .links
+        .iter()
+        .map(|link| {
+            let resolved = resolve_target(storage, &link.target);
+            ResolvedLinkInfo {
+                target: link.target.clone(),
+                relation: link.relation,
+                target_label: resolved.as_ref().and_then(|r| r.label.clone()),
+                target_type: resolved
+                    .map(|r| r.target_type)
+                    .unwrap_or_else(|| "unknown".to_string()),
+            }
+        })
+        .collect();
+
     CommandOutput::ok(
         "knowledge_inspect",
         &ws_name,
@@ -571,13 +619,14 @@ pub fn execute_knowledge_inspect(
             confidence: item.confidence,
             source: item.source,
             captured: item.captured,
-            links: item.links,
+            links: resolved_links,
             tags: item.tags,
         },
     )
 }
 
 /// Execute `knowledge list`.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_knowledge_list(
     storage: &dyn Storage,
     type_filter: Option<KnowledgeType>,
@@ -585,6 +634,8 @@ pub fn execute_knowledge_list(
     confidence_filter: Option<Confidence>,
     unlinked: bool,
     tag_filter: Option<&str>,
+    target_filter: Option<&str>,
+    relation_filter: Option<KnowledgeRelation>,
 ) -> CommandOutput<KnowledgeListData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -652,6 +703,37 @@ pub fn execute_knowledge_list(
             }
         }
 
+        // Filter by target and/or relation (D4: item appears once with matching relations)
+        if target_filter.is_some() || relation_filter.is_some() {
+            let matching: Vec<KnowledgeRelation> = item
+                .links
+                .iter()
+                .filter(|link| {
+                    let target_match = target_filter.map(|t| link.target == t).unwrap_or(true);
+                    let relation_match =
+                        relation_filter.map(|r| link.relation == r).unwrap_or(true);
+                    target_match && relation_match
+                })
+                .map(|link| link.relation)
+                .collect();
+
+            if matching.is_empty() {
+                continue;
+            }
+
+            items.push(KnowledgeSummary {
+                id: item.id,
+                knowledge_type: item.knowledge_type,
+                label: item.label,
+                status: item.status,
+                confidence: item.confidence,
+                link_count: item.links.len(),
+                tags: item.tags,
+                matching_relations: Some(matching),
+            });
+            continue;
+        }
+
         items.push(KnowledgeSummary {
             id: item.id,
             knowledge_type: item.knowledge_type,
@@ -660,6 +742,7 @@ pub fn execute_knowledge_list(
             confidence: item.confidence,
             link_count: item.links.len(),
             tags: item.tags,
+            matching_relations: None,
         });
     }
 
@@ -674,4 +757,300 @@ pub fn execute_knowledge_list(
         output.warnings = warnings;
     }
     output
+}
+
+/// Execute `knowledge link`.
+pub fn execute_knowledge_link(
+    storage: &dyn Storage,
+    id: &str,
+    target: &str,
+    relation: KnowledgeRelation,
+) -> CommandOutput<KnowledgeLinkData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let empty_data = || KnowledgeLinkData {
+        id: id.to_string(),
+        target: target.to_string(),
+        relation,
+        link_count: 0,
+    };
+
+    if target.is_empty() {
+        return CommandOutput {
+            success: false,
+            action: "knowledge_link".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "TARGET_REQUIRED",
+                "Target cannot be empty",
+            )],
+            warnings: vec![],
+        };
+    }
+
+    let lock_outcome = match storage.acquire_lock("knowledge link") {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "knowledge_link".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut item = match storage.load_knowledge(id) {
+        Ok(item) => item,
+        Err(_) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "knowledge_link".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "KNOWLEDGE_NOT_FOUND",
+                    format!("Knowledge item '{}' not found", id),
+                )],
+                warnings: vec![],
+            };
+        }
+    };
+
+    // Validate target exists in the graph
+    if resolve_target(storage, target).is_none() {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "knowledge_link".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "TARGET_NOT_FOUND",
+                format!("Target '{}' not found in graph", target),
+            )],
+            warnings: vec![],
+        };
+    }
+
+    // Check for duplicate (same target + same relation)
+    let new_link = KnowledgeLink {
+        target: target.to_string(),
+        relation,
+    };
+
+    let mut warnings = Vec::new();
+
+    if item.links.contains(&new_link) {
+        let _ = storage.release_lock();
+        if let Some(w) = stale_lock_warning(&lock_outcome) {
+            warnings.push(w);
+        }
+        warnings.push(OutputWarning::new(
+            "DUPLICATE_LINK",
+            format!(
+                "Link to '{}' with relation '{:?}' already exists",
+                target, relation
+            ),
+        ));
+        return CommandOutput {
+            success: true,
+            action: "knowledge_link".to_string(),
+            workspace: ws_name,
+            data: KnowledgeLinkData {
+                id: id.to_string(),
+                target: target.to_string(),
+                relation,
+                link_count: item.links.len(),
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![],
+            warnings,
+        };
+    }
+
+    item.links.push(new_link);
+
+    if let Err(e) = storage.save_knowledge(&item) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "knowledge_link".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "knowledge_link".to_string(),
+        workspace: ws_name,
+        data: KnowledgeLinkData {
+            id: id.to_string(),
+            target: target.to_string(),
+            relation,
+            link_count: item.links.len(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Execute `knowledge unlink`.
+pub fn execute_knowledge_unlink(
+    storage: &dyn Storage,
+    id: &str,
+    target: &str,
+) -> CommandOutput<KnowledgeUnlinkData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let empty_data = || KnowledgeUnlinkData {
+        id: id.to_string(),
+        target: target.to_string(),
+        removed_count: 0,
+        link_count: 0,
+    };
+
+    let lock_outcome = match storage.acquire_lock("knowledge unlink") {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "knowledge_unlink".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut item = match storage.load_knowledge(id) {
+        Ok(item) => item,
+        Err(_) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "knowledge_unlink".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new(
+                    "KNOWLEDGE_NOT_FOUND",
+                    format!("Knowledge item '{}' not found", id),
+                )],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let original_count = item.links.len();
+    item.links.retain(|link| link.target != target);
+    let removed_count = original_count - item.links.len();
+
+    if removed_count == 0 {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "knowledge_unlink".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "LINK_NOT_FOUND",
+                format!("No links to target '{}' found in '{}'", target, id),
+            )],
+            warnings: vec![],
+        };
+    }
+
+    if let Err(e) = storage.save_knowledge(&item) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "knowledge_unlink".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = Vec::new();
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "knowledge_unlink".to_string(),
+        workspace: ws_name,
+        data: KnowledgeUnlinkData {
+            id: id.to_string(),
+            target: target.to_string(),
+            removed_count,
+            link_count: item.links.len(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
 }

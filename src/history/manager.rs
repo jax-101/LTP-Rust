@@ -696,6 +696,7 @@ impl HistoryManager {
         let mut files_snapshot = BTreeMap::new();
         self.snapshot_dir(&self.root.join("nodes"), &mut files_snapshot)?;
         self.snapshot_dir(&self.root.join("trees"), &mut files_snapshot)?;
+        self.snapshot_dir(&self.root.join("knowledge"), &mut files_snapshot)?;
         let config_path = self.root.join("ltp.config.json");
         if config_path.exists() {
             let content = fs::read_to_string(&config_path)?;
@@ -755,6 +756,7 @@ impl HistoryManager {
         let mut current_files = BTreeMap::new();
         self.snapshot_dir(&self.root.join("nodes"), &mut current_files)?;
         self.snapshot_dir(&self.root.join("trees"), &mut current_files)?;
+        self.snapshot_dir(&self.root.join("knowledge"), &mut current_files)?;
 
         for rel_path in current_files.keys() {
             if !state.files_snapshot.contains_key(rel_path) {
