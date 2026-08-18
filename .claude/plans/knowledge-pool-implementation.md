@@ -19,12 +19,12 @@ K1 ──→ K2 ──→ K3 ──→ K4 ──→ K5
 ```
 
 - **K1** (fundacion): schema, storage, init, counters — base minima. **[COMPLETADA]**
-- **K2** (CRUD): knowledge add/edit/rm/inspect/list — operaciones standalone.
-- **K3** (linking): knowledge link/unlink + validate refs — conecta con el grafo.
-- **K4** (epistemic): campo en nodos + node add/edit/list extensions.
-- **K5** (integracion): status/validate/trace extensions — reportes y queries.
-- **K6** (E2E): workflows completos hypothesis-driven.
-- **K7** (MCP): exposicion de los nuevos tools en ltp-mcp.
+- **K2** (CRUD): knowledge add/edit/rm/inspect/list — operaciones standalone. **[COMPLETADA]**
+- **K3** (linking): knowledge link/unlink + validate refs — conecta con el grafo. **[COMPLETADA]**
+- **K4** (epistemic): campo en nodos + node add/edit/list extensions. **[COMPLETADA]**
+- **K5** (integracion): status/validate/trace extensions — reportes y queries. **[COMPLETADA]**
+- **K6** (E2E): workflows completos hypothesis-driven. **[COMPLETADA]**
+- **K7** (MCP): exposicion de los nuevos tools en ltp-mcp. **[COMPLETADA]**
 
 ---
 
@@ -116,13 +116,13 @@ Categorias: 12 happy, 14 boundary, 8 interaction, 1 corrupt, 4 idempotent, 4 ord
 
 ---
 
-## Fase K3: Linking (Vinculos al Grafo)
+## Fase K3: Linking (Vinculos al Grafo) — COMPLETADA
 
 **Scope**: `knowledge link/unlink`, filtro `--target` en list, validacion de integridad referencial de targets.
 
 **Archivos**: `src/knowledge/commands.rs` (extension), resolucion de targets contra pool+trees
 
-**Peso**: 15% | **UATs**: 37
+**Peso**: 15% | **UATs**: 37 | **Estado**: COMPLETADA
 
 ### Diseno
 
@@ -157,13 +157,13 @@ Categorias: 6 happy, 6 boundary, 8 interaction, 1 idempotent, 9 referential.
 
 ---
 
-## Fase K4: Campo Epistemico en Nodos
+## Fase K4: Campo Epistemico en Nodos — COMPLETADA
 
 **Scope**: Anadir campo `epistemic` a struct Node, extender `node add/edit/list/inspect` con `--epistemic`.
 
 **Archivos**: `src/node/types.rs`, `src/node/commands.rs`, CLI dispatch
 
-**Peso**: 10% | **UATs**: 19
+**Peso**: 10% | **UATs**: 19 | **Estado**: COMPLETADA
 
 ### Diseno
 
@@ -195,13 +195,13 @@ Categorias: 5 happy, 5 boundary, 3 interaction, 3 corrupt, 1 idempotent.
 
 ---
 
-## Fase K5: Integracion con Comandos Existentes
+## Fase K5: Integracion con Comandos Existentes — COMPLETADA
 
 **Scope**: Extender `status`, `validate`, `trace`, `node rm`, `tree walk` con awareness de knowledge pool.
 
 **Archivos**: `src/workspace/status.rs` (o donde viva status), `src/validate/knowledge.rs`, `src/trace/mod.rs`, `src/node/commands.rs`, `src/tree/commands.rs`
 
-**Peso**: 20% | **UATs**: 51
+**Peso**: 20% | **UATs**: 51 | **Estado**: COMPLETADA
 
 ### Diseno
 
@@ -246,13 +246,13 @@ Categorias: 8 happy, 24 boundary, 4 interaction, 1 corrupt, 6 referential.
 
 ---
 
-## Fase K6: Tests End-to-End (Workflows)
+## Fase K6: Tests End-to-End (Workflows) — COMPLETADA
 
 **Scope**: Workflows completos que combinan multiples features y verifican coherencia end-to-end.
 
 **Archivos**: `tests/e2e_knowledge.rs`
 
-**Peso**: 12% | **UATs**: 28
+**Peso**: 12% | **UATs**: 31 | **Estado**: COMPLETADA
 
 ### Workflows Criticos
 
@@ -271,13 +271,13 @@ Categorias: 7 happy, 4 boundary, 17 interaction, 3 ordering.
 
 ---
 
-## Fase K7: MCP Server (Knowledge Tools)
+## Fase K7: MCP Server (Knowledge Tools) — COMPLETADA
 
 **Scope**: Exponer los 7 comandos knowledge como tools MCP + extensiones de tools existentes.
 
-**Archivos**: `src/mcp/tools.rs`, `src/mcp/dispatch.rs`
+**Archivos**: `src/mcp/tools.rs`, `src/mcp/dispatch.rs`, `tests/knowledge_k7.rs`
 
-**Peso**: 17% | **UATs**: 33
+**Peso**: 17% | **UATs**: 38 | **Estado**: COMPLETADA
 
 ### Tools Nuevos
 
