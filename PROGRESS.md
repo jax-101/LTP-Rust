@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 69% |
-| **Fase actual** | K6 — Tests E2E |
-| **Última fase completada** | K5 — Integración |
+| **Avance Knowledge Pool** | 81% |
+| **Fase actual** | K7 — MCP Server |
+| **Última fase completada** | K6 — Tests E2E |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 151/239 |
+| **UATs Knowledge Pool** | 182/239 |
 
 ---
 
@@ -25,9 +25,9 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
 | K4 | Campo epistémico en nodos | 10% | 10% | ✅ Completada | 19/19 | 19 integration tests |
 | K5 | Integración (status/validate/trace/node rm) | 20% | 20% | ✅ Completada | 38/51 | 38 integration tests |
-| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/31 | |
+| K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | ✅ Completada | 31/31 | 31 E2E tests |
 | K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/38 | |
-| | **TOTAL** | **100%** | **100%** | | **151/239** | |
+| | **TOTAL** | **100%** | **100%** | | **182/239** | |
 
 ---
 
@@ -54,6 +54,37 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [K6] — Tests End-to-End (Workflows)
+**Fecha**: 2026-08-18
+**Avance fase**: 31/31 UATs ✅
+**Avance Knowledge Pool**: 69% → 81%
+**Esfuerzo estimado**: 12% | **Esfuerzo real (percibido)**: 12%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `tests/e2e_knowledge.rs` — 31 tests E2E cubriendo workflows completos:
+  - Hypothesis-driven cycle (K6.1–K6.2): add → link → promote → validate
+  - Refutation cascade (K6.3–K6.4): support refutado deja nodo ungrounded, sin propagación
+  - Inbox management (K6.5): unlinked items como inbox que se vacía
+  - Contradiction detection (K6.6–K6.7): supports vs contradicts, solo aplica a facts
+  - Multi-target/multi-relation (K6.8–K6.9): un KN a múltiples targets
+  - Undo roundtrip (K6.10–K6.11): granularidad correcta de undo/redo
+  - Batch + undo (K6.12): atomicidad de batch con knowledge
+  - Node rm + dangling + undo (K6.13–K6.14): dangling refs se resuelven con undo
+  - Backwards compatibility (K6.15–K6.16): nodos sin epistemic = hypothesis
+  - Trace integration (K6.17–K6.18): --show-knowledge en cadenas, edge KN no aparece en nodo
+  - Cross-feature: invalidate (K6.19), collapse (K6.20), explode (K6.21), split (K6.22), tree rm (K6.23), group (K6.24), dissolve (K6.25), nbr rm (K6.26)
+  - Status coherence (K6.27–K6.28): siempre refleja estado actual
+  - Link disconnect (K6.29), batch con fallo parcial (K6.30), superseded contradiction (K6.31)
+
+#### Nota técnica
+- K6.29 (UAT original: `path replace` destruye LINK-IDs) adaptado a `link disconnect` — `path replace` mantiene edges interiores en el tree, no los destruye.
+
+#### Siguiente
+- K7: MCP Server (knowledge tools)
+
+---
 
 ### [K5] — Integración con Comandos Existentes
 **Fecha**: 2026-08-18
