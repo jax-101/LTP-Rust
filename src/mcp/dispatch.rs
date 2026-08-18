@@ -532,7 +532,8 @@ fn dispatch_tree_walk(
 ) -> Result<ToolCallResult, JsonRpcError> {
     let tree_id = get_str(args, "tree_id")?;
     let order = get_str_opt(args, "order").unwrap_or("topological");
-    let output = execute_tree_walk(storage, tree_id, order);
+    let show_knowledge = get_bool(args, "show_knowledge");
+    let output = execute_tree_walk(storage, tree_id, order, show_knowledge);
     to_result(&output)
 }
 
@@ -887,8 +888,18 @@ fn dispatch_trace(
     let depth = get_u64_opt(args, "depth").map(|d| d as usize);
     let no_feedback = get_bool(args, "no_feedback");
     let nbr = get_bool(args, "nbr");
+    let show_knowledge = get_bool(args, "show_knowledge");
 
-    let output = execute_trace(storage, node_id, tree, direction, depth, no_feedback, nbr);
+    let output = execute_trace(
+        storage,
+        node_id,
+        tree,
+        direction,
+        depth,
+        no_feedback,
+        nbr,
+        show_knowledge,
+    );
     to_result(&output)
 }
 

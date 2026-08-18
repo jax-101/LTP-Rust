@@ -147,6 +147,14 @@ pub struct TreeDiffData {
     pub edges_removed: Vec<DiffEntry>,
 }
 
+/// Knowledge counts per relation for a walked node.
+#[derive(Debug, Serialize)]
+pub struct WalkKnowledge {
+    pub supports: usize,
+    pub contradicts: usize,
+    pub contextualizes: usize,
+}
+
 /// A node in the walk result with its immediate context.
 #[derive(Debug, Serialize)]
 pub struct WalkNode {
@@ -154,6 +162,8 @@ pub struct WalkNode {
     pub role: Option<String>,
     pub incoming_edges: Vec<String>,
     pub outgoing_edges: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<WalkKnowledge>,
 }
 
 /// Data returned by `tree walk`.
@@ -949,6 +959,7 @@ pub fn execute_tree_walk(
     storage: &dyn Storage,
     tree_id: &str,
     order: &str,
+    show_knowledge: bool,
 ) -> CommandOutput<TreeWalkData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -1057,13 +1068,57 @@ pub fn execute_tree_walk(
         sorted.reverse();
     }
 
+    // Pre-load knowledge items if needed
+    let kn_items: Vec<crate::knowledge::KnowledgeItem> = if show_knowledge {
+        let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
+        kn_ids
+            .iter()
+            .filter_map(|id| storage.load_knowledge(id).ok())
+            .collect()
+    } else {
+        vec![]
+    };
+
     let walk_nodes: Vec<WalkNode> = sorted
         .iter()
-        .map(|&id| WalkNode {
-            id: id.to_string(),
-            role: roles.get(id).and_then(|r| r.map(String::from)),
-            incoming_edges: incoming.get(id).cloned().unwrap_or_default(),
-            outgoing_edges: outgoing.get(id).cloned().unwrap_or_default(),
+        .map(|&id| {
+            let knowledge = if show_knowledge {
+                let mut supports = 0usize;
+                let mut contradicts = 0usize;
+                let mut contextualizes = 0usize;
+
+                for item in &kn_items {
+                    for link in &item.links {
+                        if link.target == id {
+                            match link.relation {
+                                crate::knowledge::KnowledgeRelation::Supports => supports += 1,
+                                crate::knowledge::KnowledgeRelation::Contradicts => {
+                                    contradicts += 1
+                                }
+                                crate::knowledge::KnowledgeRelation::Contextualizes => {
+                                    contextualizes += 1
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Some(WalkKnowledge {
+                    supports,
+                    contradicts,
+                    contextualizes,
+                })
+            } else {
+                None
+            };
+
+            WalkNode {
+                id: id.to_string(),
+                role: roles.get(id).and_then(|r| r.map(String::from)),
+                incoming_edges: incoming.get(id).cloned().unwrap_or_default(),
+                outgoing_edges: outgoing.get(id).cloned().unwrap_or_default(),
+                knowledge,
+            }
         })
         .collect();
 

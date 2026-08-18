@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 49% |
-| **Fase actual** | K5 — Integración |
-| **Última fase completada** | K4 — Campo Epistémico |
+| **Avance Knowledge Pool** | 69% |
+| **Fase actual** | K6 — Tests E2E |
+| **Última fase completada** | K5 — Integración |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 113/239 |
+| **UATs Knowledge Pool** | 151/239 |
 
 ---
 
@@ -24,10 +24,10 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
 | K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
 | K4 | Campo epistémico en nodos | 10% | 10% | ✅ Completada | 19/19 | 19 integration tests |
-| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | [ ] Pendiente | 0/51 | |
+| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | ✅ Completada | 38/51 | 38 integration tests |
 | K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | [ ] Pendiente | 0/31 | |
 | K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/38 | |
-| | **TOTAL** | **100%** | **100%** | | **113/239** | |
+| | **TOTAL** | **100%** | **100%** | | **151/239** | |
 
 ---
 
@@ -54,6 +54,29 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [K5] — Integración con Comandos Existentes
+**Fecha**: 2026-08-18
+**Avance fase**: 38/51 UATs ✅
+**Avance Knowledge Pool**: 49% → 69%
+**Esfuerzo estimado**: 20% | **Esfuerzo real (percibido)**: 20%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- `status` extendido con `knowledge_health`: total, unlinked_items, contradictions, by_status, epistemic_coverage
+- `validate` con 4 nuevos warnings: DANGLING_KNOWLEDGE_REF, EPISTEMIC_UNGROUNDED, EPISTEMIC_CONTRADICTED, EPISTEMIC_UPGRADEABLE
+- `validate --tree T` filtra epistemic warnings solo para nodos del tree (D7)
+- `trace --show-knowledge` incluye knowledge items por nodo con id/relation/status/confidence
+- `node rm` emite warning KNOWLEDGE_ORPHANED con IDs de KN afectados
+- `tree walk --show-knowledge` muestra conteo por relation (supports/contradicts/contextualizes)
+- MCP tools `ltp/trace` y `ltp/tree_walk` extendidos con param `show_knowledge`
+- Módulo `src/validate/knowledge.rs` para validación del pool epistémico
+- 38 tests de integración CLI (UATs K5.1–K5.51 parcial)
+
+#### Siguiente
+- K6: Tests E2E (workflows hypothesis-driven)
+
+---
 
 ### [K4] — Campo Epistémico en Nodos
 **Fecha**: 2026-08-17

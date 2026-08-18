@@ -2,6 +2,7 @@ pub mod clr;
 pub mod dag;
 pub mod ec;
 pub mod integrity;
+pub mod knowledge;
 pub mod orphans;
 
 pub use dag::check_dag;
@@ -168,6 +169,39 @@ pub fn execute_validate<S: Storage>(
             tree_id: tree.id,
             errors: tree_errors,
             warnings: tree_warnings,
+        });
+    }
+
+    // Knowledge pool validation
+    let knowledge_node_filter: Option<HashSet<String>> = if tree_filter.is_some() {
+        // When validating a specific tree, only check nodes in that tree
+        let filter: HashSet<String> = details
+            .iter()
+            .flat_map(|d| {
+                storage
+                    .load_tree(&d.tree_id)
+                    .map(|t| {
+                        t.nodes
+                            .iter()
+                            .map(|n| n.node_ref.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        Some(filter)
+    } else {
+        None
+    };
+
+    let knowledge_warnings = knowledge::validate_knowledge(storage, knowledge_node_filter.as_ref());
+
+    // Add knowledge warnings to a synthetic "knowledge_pool" validation entry
+    if !knowledge_warnings.is_empty() {
+        details.push(TreeValidation {
+            tree_id: "_knowledge_pool".to_string(),
+            errors: vec![],
+            warnings: knowledge_warnings,
         });
     }
 

@@ -16,11 +16,22 @@ pub struct LinkSummary {
     pub operator: String,
 }
 
+/// Knowledge item summary attached to a traced node.
+#[derive(Debug, Clone, Serialize)]
+pub struct KnowledgeSummary {
+    pub id: String,
+    pub relation: String,
+    pub status: String,
+    pub confidence: Option<String>,
+}
+
 /// Single entry in the trace chain.
 #[derive(Debug, Clone, Serialize)]
 pub struct TraceEntry {
     pub node: String,
     pub link_to_next: Option<LinkSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<Vec<KnowledgeSummary>>,
 }
 
 /// Health summary of the traced chain.
@@ -174,6 +185,7 @@ fn empty_trace_error(
 // --- Execute functions ---
 
 /// Trace upstream or downstream from a node within a tree.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_trace(
     storage: &dyn Storage,
     node_id: &str,
@@ -182,6 +194,7 @@ pub fn execute_trace(
     depth: Option<usize>,
     no_feedback: bool,
     include_nbr: bool,
+    show_knowledge: bool,
 ) -> CommandOutput<TraceData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -253,6 +266,7 @@ pub fn execute_trace(
                     chain.push(TraceEntry {
                         node: current_node,
                         link_to_next: None,
+                        knowledge: None,
                     });
                     continue;
                 }
@@ -267,6 +281,7 @@ pub fn execute_trace(
                     chain.push(TraceEntry {
                         node: current_node,
                         link_to_next: None,
+                        knowledge: None,
                     });
                 } else {
                     for edge in &outgoing {
@@ -277,6 +292,7 @@ pub fn execute_trace(
                                 status: status_str(edge.status).to_string(),
                                 operator: operator_str(edge.operator).to_string(),
                             }),
+                            knowledge: None,
                         });
 
                         if !visited.contains(&edge.to) {
@@ -293,6 +309,7 @@ pub fn execute_trace(
                     chain.push(TraceEntry {
                         node: current_node,
                         link_to_next: None,
+                        knowledge: None,
                     });
                     continue;
                 }
@@ -304,6 +321,7 @@ pub fn execute_trace(
                     chain.push(TraceEntry {
                         node: current_node,
                         link_to_next: None,
+                        knowledge: None,
                     });
                 } else {
                     for edge in &incoming {
@@ -314,6 +332,7 @@ pub fn execute_trace(
                                 status: status_str(edge.status).to_string(),
                                 operator: operator_str(edge.operator).to_string(),
                             }),
+                            knowledge: None,
                         });
 
                         for from_node in &edge.from {
@@ -388,6 +407,33 @@ pub fn execute_trace(
         broken_links,
         superseded_links,
     };
+
+    // Attach knowledge summaries if requested
+    if show_knowledge {
+        let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
+        let kn_items: Vec<crate::knowledge::KnowledgeItem> = kn_ids
+            .iter()
+            .filter_map(|id| storage.load_knowledge(id).ok())
+            .collect();
+
+        for entry in &mut chain {
+            let node_knowledge: Vec<KnowledgeSummary> = kn_items
+                .iter()
+                .flat_map(|item| {
+                    item.links
+                        .iter()
+                        .filter(|l| l.target == entry.node)
+                        .map(move |l| KnowledgeSummary {
+                            id: item.id.clone(),
+                            relation: format!("{:?}", l.relation).to_lowercase(),
+                            status: format!("{:?}", item.status).to_lowercase(),
+                            confidence: item.confidence.map(|c| format!("{:?}", c).to_lowercase()),
+                        })
+                })
+                .collect();
+            entry.knowledge = Some(node_knowledge);
+        }
+    }
 
     CommandOutput::ok(
         "trace",

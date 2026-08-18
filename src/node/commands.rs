@@ -844,6 +844,46 @@ pub fn execute_node_rm(
         warnings.push(w);
     }
 
+    // KNOWLEDGE_ORPHANED: check if any knowledge items link to the removed nodes
+    let orphaned_kn_ids: Vec<String> = storage
+        .list_knowledge_ids()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|kn_id| {
+            let item = storage.load_knowledge(&kn_id).ok()?;
+            let links_to_removed = item
+                .links
+                .iter()
+                .any(|l| id_set.contains(l.target.as_str()));
+            if links_to_removed {
+                Some(kn_id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !orphaned_kn_ids.is_empty() {
+        warnings.push(
+            OutputWarning::new(
+                "KNOWLEDGE_ORPHANED",
+                format!(
+                    "Knowledge items with dangling references after node removal: {}",
+                    orphaned_kn_ids.join(", ")
+                ),
+            )
+            .with_context(
+                "knowledge_ids",
+                serde_json::Value::Array(
+                    orphaned_kn_ids
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.clone()))
+                        .collect(),
+                ),
+            ),
+        );
+    }
+
     CommandOutput {
         success: true,
         action: "node_rm".to_string(),
