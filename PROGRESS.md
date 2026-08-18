@@ -5,12 +5,12 @@
 | Métrica | Valor |
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
-| **Avance Knowledge Pool** | 81% |
-| **Fase actual** | K7 — MCP Server |
-| **Última fase completada** | K6 — Tests E2E |
+| **Avance Knowledge Pool** | 100% ✅ |
+| **Fase actual** | Completado |
+| **Última fase completada** | K7 — MCP Server |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
-| **UATs Knowledge Pool** | 182/239 |
+| **UATs Knowledge Pool** | 220/239 |
 
 ---
 
@@ -26,8 +26,8 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | K4 | Campo epistémico en nodos | 10% | 10% | ✅ Completada | 19/19 | 19 integration tests |
 | K5 | Integración (status/validate/trace/node rm) | 20% | 20% | ✅ Completada | 38/51 | 38 integration tests |
 | K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | ✅ Completada | 31/31 | 31 E2E tests |
-| K7 | MCP Server (knowledge tools) | 17% | 17% | [ ] Pendiente | 0/38 | |
-| | **TOTAL** | **100%** | **100%** | | **182/239** | |
+| K7 | MCP Server (knowledge tools) | 17% | 17% | ✅ Completada | 38/38 | 38 integration tests |
+| | **TOTAL** | **100%** | **100%** | | **220/239** | |
 
 ---
 
@@ -54,6 +54,29 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [K7] — MCP Server (Knowledge Tools)
+**Fecha**: 2026-08-18
+**Avance fase**: 38/38 UATs ✅
+**Avance Knowledge Pool**: 81% → 100%
+**Esfuerzo estimado**: 17% | **Esfuerzo real (percibido)**: 17%
+**Factor de escala acumulado**: 1.0x
+
+#### Entregables
+- 7 nuevos MCP tools: `ltp/knowledge_add`, `ltp/knowledge_edit`, `ltp/knowledge_rm`, `ltp/knowledge_inspect`, `ltp/knowledge_list`, `ltp/knowledge_link`, `ltp/knowledge_unlink`
+- Extensiones a tools existentes: `show_knowledge` en schemas de `ltp/trace` y `ltp/tree_walk`
+- `ltp/status` via MCP ahora incluye `knowledge_health` (total, unlinked_items, contradictions, by_status, epistemic_coverage)
+- `ltp/validate` via MCP reporta warnings epistémicos (DANGLING_KNOWLEDGE_REF, EPISTEMIC_UNGROUNDED, EPISTEMIC_CONTRADICTED, EPISTEMIC_UPGRADEABLE)
+- `snapshot_workspace_paths` incluye `knowledge/` para undo/redo correcto via MCP
+- Enum parsers para knowledge types/status/confidence/relation con errores JSON-RPC -32602
+- Undo/redo integrado en todas las operaciones mutantes de knowledge via MCP
+- Tool count: 54 → 61
+- 38 tests de integración MCP (UATs K7.1–K7.38)
+
+#### Siguiente
+- Knowledge Pool completado al 100%
+
+---
 
 ### [K6] — Tests End-to-End (Workflows)
 **Fecha**: 2026-08-18

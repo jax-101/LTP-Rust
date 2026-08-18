@@ -4,7 +4,7 @@ use crate::mcp::types::ToolDefinition;
 
 /// Generate the complete list of MCP tool definitions with JSON Schema inputs.
 pub fn all_tools() -> Vec<ToolDefinition> {
-    let mut tools = Vec::with_capacity(54);
+    let mut tools = Vec::with_capacity(61);
 
     // --- Workspace ---
     tools.push(tool(
@@ -204,7 +204,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "tree_id": { "type": "string", "description": "Tree ID" },
                 "order": { "type": "string", "description": "Walk order: topological or reverse" },
                 "show_origin": { "type": "boolean", "description": "Show node origin info" },
-                "expand_nbr": { "type": "boolean", "description": "Expand NBR branches" }
+                "expand_nbr": { "type": "boolean", "description": "Expand NBR branches" },
+                "show_knowledge": { "type": "boolean", "description": "Include knowledge summary per node (supports/contradicts/contextualizes counts)" }
             },
             "required": ["tree_id"]
         }),
@@ -506,7 +507,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "direction": { "type": "string", "description": "Direction: upstream or downstream" },
                 "depth": { "type": "integer", "description": "Max traversal depth" },
                 "no_feedback": { "type": "boolean", "description": "Exclude feedback edges" },
-                "nbr": { "type": "boolean", "description": "Include NBR edges" }
+                "nbr": { "type": "boolean", "description": "Include NBR edges" },
+                "show_knowledge": { "type": "boolean", "description": "Include knowledge items linked to each node" }
             },
             "required": ["node_id", "tree", "direction"]
         }),
@@ -602,6 +604,106 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "tree": { "type": "string", "description": "Tree ID" }
             },
             "required": ["nbr_id", "tree"]
+        }),
+    ));
+
+    // --- Knowledge ---
+    tools.push(tool(
+        "ltp/knowledge_add",
+        "Add a knowledge item to the pool",
+        json!({
+            "type": "object",
+            "properties": {
+                "label": { "type": "string", "description": "Knowledge item label" },
+                "type": { "type": "string", "enum": ["measurement", "testimony", "hypothesis", "document", "observation", "derived"], "description": "Knowledge type" },
+                "source_uri": { "type": "string", "description": "Source URI" },
+                "source_excerpt": { "type": "string", "description": "Source excerpt text" },
+                "status": { "type": "string", "enum": ["unverified", "verified", "refuted", "superseded"], "description": "Knowledge status (default: unverified)" },
+                "confidence": { "type": "string", "enum": ["high", "medium", "low"], "description": "Confidence level (default: medium)" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional tags" }
+            },
+            "required": ["label", "type"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_edit",
+        "Edit an existing knowledge item",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Knowledge item ID (e.g. KN-001)" },
+                "label": { "type": "string", "description": "New label" },
+                "status": { "type": "string", "enum": ["unverified", "verified", "refuted", "superseded"], "description": "New status" },
+                "confidence": { "type": "string", "enum": ["high", "medium", "low"], "description": "New confidence" },
+                "source_uri": { "type": "string", "description": "New source URI" },
+                "source_excerpt": { "type": "string", "description": "New source excerpt" },
+                "add_tags": { "type": "array", "items": { "type": "string" }, "description": "Tags to add" },
+                "rm_tags": { "type": "array", "items": { "type": "string" }, "description": "Tags to remove" }
+            },
+            "required": ["id"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_rm",
+        "Remove knowledge items from the pool",
+        json!({
+            "type": "object",
+            "properties": {
+                "ids": { "type": "string", "description": "Comma-separated knowledge item IDs to remove" }
+            },
+            "required": ["ids"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_inspect",
+        "Inspect a knowledge item's full details",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Knowledge item ID" }
+            },
+            "required": ["id"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_list",
+        "List knowledge items with optional filters",
+        json!({
+            "type": "object",
+            "properties": {
+                "type": { "type": "string", "enum": ["measurement", "testimony", "hypothesis", "document", "observation", "derived"], "description": "Filter by type" },
+                "status": { "type": "string", "enum": ["unverified", "verified", "refuted", "superseded"], "description": "Filter by status" },
+                "confidence": { "type": "string", "enum": ["high", "medium", "low"], "description": "Filter by confidence" },
+                "unlinked": { "type": "boolean", "description": "Only items with no links" },
+                "target": { "type": "string", "description": "Filter by link target ID" },
+                "relation": { "type": "string", "enum": ["supports", "contradicts", "contextualizes"], "description": "Filter by link relation" },
+                "tag": { "type": "string", "description": "Filter by tag" }
+            }
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_link",
+        "Link a knowledge item to a node, edge, or assumption",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Knowledge item ID" },
+                "target": { "type": "string", "description": "Target entity ID (node, LINK-*, ASM-*, FB-*)" },
+                "relation": { "type": "string", "enum": ["supports", "contradicts", "contextualizes"], "description": "Relation type" }
+            },
+            "required": ["id", "target", "relation"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/knowledge_unlink",
+        "Remove all links from a knowledge item to a target",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Knowledge item ID" },
+                "target": { "type": "string", "description": "Target entity ID to unlink from" }
+            },
+            "required": ["id", "target"]
         }),
     ));
 

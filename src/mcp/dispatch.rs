@@ -13,6 +13,11 @@ use crate::history::{
     execute_history_end_batch, execute_history_invalidate, execute_history_list, execute_redo,
     execute_undo, CaptureContext, HistoryManager,
 };
+use crate::knowledge::commands::{
+    execute_knowledge_add, execute_knowledge_edit, execute_knowledge_inspect,
+    execute_knowledge_link, execute_knowledge_list, execute_knowledge_rm, execute_knowledge_unlink,
+};
+use crate::knowledge::types::{Confidence, KnowledgeRelation, KnowledgeStatus, KnowledgeType};
 use crate::link::advanced::{
     execute_link_add_cause, execute_link_dissolve, execute_link_group, execute_link_insert_between,
     execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
@@ -109,6 +114,13 @@ pub fn dispatch_tool(
         "ltp/history_begin_batch" => dispatch_history_begin_batch(args, storage),
         "ltp/history_end_batch" => dispatch_history_end_batch(storage),
         "ltp/history_clear" => dispatch_history_clear(storage),
+        "ltp/knowledge_add" => dispatch_knowledge_add(args, storage),
+        "ltp/knowledge_edit" => dispatch_knowledge_edit(args, storage),
+        "ltp/knowledge_rm" => dispatch_knowledge_rm(args, storage),
+        "ltp/knowledge_inspect" => dispatch_knowledge_inspect(args, storage),
+        "ltp/knowledge_list" => dispatch_knowledge_list(args, storage),
+        "ltp/knowledge_link" => dispatch_knowledge_link(args, storage),
+        "ltp/knowledge_unlink" => dispatch_knowledge_unlink(args, storage),
         _ => Err(JsonRpcError::method_not_found(name)),
     }
 }
@@ -201,22 +213,19 @@ fn history_commit(capture: Option<(HistoryManager, CaptureContext)>, action: &st
 
 fn snapshot_workspace_paths(root: &std::path::Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    let nodes_dir = root.join("nodes");
-    let trees_dir = root.join("trees");
+    let dirs = [
+        root.join("nodes"),
+        root.join("trees"),
+        root.join("knowledge"),
+    ];
 
-    if let Ok(entries) = std::fs::read_dir(&nodes_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                paths.push(path);
-            }
-        }
-    }
-    if let Ok(entries) = std::fs::read_dir(&trees_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                paths.push(path);
+    for dir in &dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    paths.push(path);
+                }
             }
         }
     }
@@ -268,6 +277,8 @@ fn dispatch_init(
 }
 
 fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> {
+    use crate::knowledge::types::{KnowledgeRelation as KR, KnowledgeStatus as KS};
+    use crate::node::types::EpistemicStatus;
     use crate::tree::Tree;
     use crate::validate::check_dag;
 
@@ -312,6 +323,68 @@ fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> 
         .filter(|id| !referenced_nodes.contains(*id))
         .count();
 
+    // Compute knowledge_health
+    let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
+    let kn_items: Vec<_> = kn_ids
+        .iter()
+        .filter_map(|id| storage.load_knowledge(id).ok())
+        .collect();
+
+    let kn_total = kn_items.len();
+    let unlinked_items = kn_items.iter().filter(|i| i.links.is_empty()).count();
+
+    let mut contradictions = 0usize;
+    for item in &kn_items {
+        if item.status == KS::Verified {
+            for link in &item.links {
+                if link.relation == KR::Contradicts {
+                    if let Ok(node) = storage.load_node(&link.target) {
+                        if node.epistemic == EpistemicStatus::Fact {
+                            contradictions += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let by_status = serde_json::json!({
+        "unverified": kn_items.iter().filter(|i| i.status == KS::Unverified).count(),
+        "verified": kn_items.iter().filter(|i| i.status == KS::Verified).count(),
+        "refuted": kn_items.iter().filter(|i| i.status == KS::Refuted).count(),
+        "superseded": kn_items.iter().filter(|i| i.status == KS::Superseded).count(),
+    });
+
+    let mut fact_count = 0usize;
+    let mut hypothesis_count = 0usize;
+    let mut assumption_count = 0usize;
+    let mut derived_count = 0usize;
+    for node_id in &node_ids {
+        if let Ok(node) = storage.load_node(node_id) {
+            match node.epistemic {
+                EpistemicStatus::Fact => fact_count += 1,
+                EpistemicStatus::Hypothesis => hypothesis_count += 1,
+                EpistemicStatus::Assumption => assumption_count += 1,
+                EpistemicStatus::Derived => derived_count += 1,
+            }
+        }
+    }
+
+    let epistemic_coverage = serde_json::json!({
+        "fact": fact_count,
+        "hypothesis": hypothesis_count,
+        "assumption": assumption_count,
+        "derived": derived_count,
+    });
+
+    let knowledge_health = serde_json::json!({
+        "total": kn_total,
+        "unlinked_items": unlinked_items,
+        "contradictions": contradictions,
+        "by_status": by_status,
+        "epistemic_coverage": epistemic_coverage,
+    });
+
     let mut output = CommandOutput::ok(
         "status",
         &ws_name,
@@ -319,6 +392,7 @@ fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> 
             "node_count": node_ids.len(),
             "tree_count": tree_ids.len(),
             "trees": trees_health,
+            "knowledge_health": knowledge_health,
         }),
     );
     output.graph_health = crate::output::GraphHealth {
@@ -1067,4 +1141,225 @@ fn dispatch_history_end_batch(storage: &FsStorage) -> Result<ToolCallResult, Jso
 fn dispatch_history_clear(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> {
     let output = execute_history_clear(storage);
     to_result(&output)
+}
+
+// --- Knowledge ---
+
+fn dispatch_knowledge_add(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let label = get_str(args, "label")?;
+    let type_str = get_str(args, "type")?;
+    let source_uri = get_str_opt(args, "source_uri");
+    let source_excerpt = get_str_opt(args, "source_excerpt");
+    let status_str = get_str_opt(args, "status");
+    let confidence_str = get_str_opt(args, "confidence");
+    let tags = get_str_array_opt(args, "tags");
+
+    let knowledge_type = parse_knowledge_type(type_str)?;
+    let status = status_str.map(parse_knowledge_status).transpose()?;
+    let confidence = confidence_str.map(parse_confidence).transpose()?;
+
+    let capture = history_begin(storage);
+    let output = execute_knowledge_add(
+        storage,
+        label,
+        knowledge_type,
+        source_uri,
+        source_excerpt,
+        status,
+        confidence,
+        tags,
+    );
+    if output.success {
+        history_commit(
+            capture,
+            "knowledge_add",
+            &format!("mcp:ltp/knowledge_add {label}"),
+        );
+    }
+    to_result(&output)
+}
+
+fn dispatch_knowledge_edit(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let id = get_str(args, "id")?;
+    let label = get_str_opt(args, "label");
+    let status_str = get_str_opt(args, "status");
+    let confidence_str = get_str_opt(args, "confidence");
+    let source_uri = get_str_opt(args, "source_uri");
+    let source_excerpt = get_str_opt(args, "source_excerpt");
+    let add_tags = get_str_array_opt(args, "add_tags");
+    let rm_tags = get_str_array_opt(args, "rm_tags");
+
+    let status = status_str.map(parse_knowledge_status).transpose()?;
+    let confidence = confidence_str.map(parse_confidence).transpose()?;
+
+    let capture = history_begin(storage);
+    let output = execute_knowledge_edit(
+        storage,
+        id,
+        label,
+        status,
+        confidence,
+        source_uri,
+        source_excerpt,
+        add_tags,
+        rm_tags,
+    );
+    if output.success {
+        history_commit(
+            capture,
+            "knowledge_edit",
+            &format!("mcp:ltp/knowledge_edit {id}"),
+        );
+    }
+    to_result(&output)
+}
+
+fn dispatch_knowledge_rm(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let ids_str = get_str(args, "ids")?;
+    let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
+
+    let capture = history_begin(storage);
+    let output = execute_knowledge_rm(storage, &ids);
+    if output.success {
+        history_commit(capture, "knowledge_rm", "mcp:ltp/knowledge_rm");
+    }
+    to_result(&output)
+}
+
+fn dispatch_knowledge_inspect(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let id = get_str(args, "id")?;
+    let output = execute_knowledge_inspect(storage, id);
+    to_result(&output)
+}
+
+fn dispatch_knowledge_list(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let type_str = get_str_opt(args, "type");
+    let status_str = get_str_opt(args, "status");
+    let confidence_str = get_str_opt(args, "confidence");
+    let unlinked = get_bool(args, "unlinked");
+    let tag = get_str_opt(args, "tag");
+    let target = get_str_opt(args, "target");
+    let relation_str = get_str_opt(args, "relation");
+
+    let type_filter = type_str.map(parse_knowledge_type).transpose()?;
+    let status_filter = status_str.map(parse_knowledge_status).transpose()?;
+    let confidence_filter = confidence_str.map(parse_confidence).transpose()?;
+    let relation_filter = relation_str.map(parse_knowledge_relation).transpose()?;
+
+    let output = execute_knowledge_list(
+        storage,
+        type_filter,
+        status_filter,
+        confidence_filter,
+        unlinked,
+        tag,
+        target,
+        relation_filter,
+    );
+    to_result(&output)
+}
+
+fn dispatch_knowledge_link(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let id = get_str(args, "id")?;
+    let target = get_str(args, "target")?;
+    let relation_str = get_str(args, "relation")?;
+    let relation = parse_knowledge_relation(relation_str)?;
+
+    let capture = history_begin(storage);
+    let output = execute_knowledge_link(storage, id, target, relation);
+    if output.success {
+        history_commit(
+            capture,
+            "knowledge_link",
+            &format!("mcp:ltp/knowledge_link {id} -> {target}"),
+        );
+    }
+    to_result(&output)
+}
+
+fn dispatch_knowledge_unlink(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let id = get_str(args, "id")?;
+    let target = get_str(args, "target")?;
+
+    let capture = history_begin(storage);
+    let output = execute_knowledge_unlink(storage, id, target);
+    if output.success {
+        history_commit(
+            capture,
+            "knowledge_unlink",
+            &format!("mcp:ltp/knowledge_unlink {id} -x- {target}"),
+        );
+    }
+    to_result(&output)
+}
+
+// --- Knowledge enum parsers ---
+
+fn parse_knowledge_type(s: &str) -> Result<KnowledgeType, JsonRpcError> {
+    match s.to_lowercase().as_str() {
+        "measurement" => Ok(KnowledgeType::Measurement),
+        "testimony" => Ok(KnowledgeType::Testimony),
+        "hypothesis" => Ok(KnowledgeType::Hypothesis),
+        "document" => Ok(KnowledgeType::Document),
+        "observation" => Ok(KnowledgeType::Observation),
+        "derived" => Ok(KnowledgeType::Derived),
+        _ => Err(JsonRpcError::invalid_params(&format!(
+            "invalid knowledge type: '{s}'. Expected: measurement, testimony, hypothesis, document, observation, derived"
+        ))),
+    }
+}
+
+fn parse_knowledge_status(s: &str) -> Result<KnowledgeStatus, JsonRpcError> {
+    match s.to_lowercase().as_str() {
+        "unverified" => Ok(KnowledgeStatus::Unverified),
+        "verified" => Ok(KnowledgeStatus::Verified),
+        "refuted" => Ok(KnowledgeStatus::Refuted),
+        "superseded" => Ok(KnowledgeStatus::Superseded),
+        _ => Err(JsonRpcError::invalid_params(&format!(
+            "invalid knowledge status: '{s}'. Expected: unverified, verified, refuted, superseded"
+        ))),
+    }
+}
+
+fn parse_confidence(s: &str) -> Result<Confidence, JsonRpcError> {
+    match s.to_lowercase().as_str() {
+        "high" => Ok(Confidence::High),
+        "medium" => Ok(Confidence::Medium),
+        "low" => Ok(Confidence::Low),
+        _ => Err(JsonRpcError::invalid_params(&format!(
+            "invalid confidence: '{s}'. Expected: high, medium, low"
+        ))),
+    }
+}
+
+fn parse_knowledge_relation(s: &str) -> Result<KnowledgeRelation, JsonRpcError> {
+    match s.to_lowercase().as_str() {
+        "supports" => Ok(KnowledgeRelation::Supports),
+        "contradicts" => Ok(KnowledgeRelation::Contradicts),
+        "contextualizes" => Ok(KnowledgeRelation::Contextualizes),
+        _ => Err(JsonRpcError::invalid_params(&format!(
+            "invalid relation: '{s}'. Expected: supports, contradicts, contextualizes"
+        ))),
+    }
 }

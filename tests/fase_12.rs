@@ -333,7 +333,7 @@ fn test_tools_list_complete() {
 
     assert!(resp["error"].is_null());
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 54);
+    assert_eq!(tools.len(), 61);
 
     // Verify key tools exist
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -512,5 +512,5 @@ fn test_tools_list_standalone() {
     assert!(resp["error"].is_null());
     assert_eq!(resp["id"], 42);
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 54);
+    assert_eq!(tools.len(), 61);
 }
