@@ -317,6 +317,153 @@ pub fn execute_node_add(
     }
 }
 
+/// Check for epistemic cascade issues when a node's epistemic status changes.
+///
+/// - Promote to fact/derived: warns if upstream causes are hypothesis/assumption.
+/// - Degrade from fact/derived: warns that downstream effects should be reviewed.
+fn check_epistemic_cascade(
+    storage: &dyn Storage,
+    node_id: &str,
+    old_status: EpistemicStatus,
+    new_status: EpistemicStatus,
+) -> Vec<OutputWarning> {
+    let mut warnings = Vec::new();
+
+    let is_promotion = matches!(
+        (old_status, new_status),
+        (
+            EpistemicStatus::Hypothesis | EpistemicStatus::Assumption,
+            EpistemicStatus::Fact
+        ) | (
+            EpistemicStatus::Hypothesis | EpistemicStatus::Assumption,
+            EpistemicStatus::Derived,
+        )
+    );
+
+    let is_degradation = matches!(
+        (old_status, new_status),
+        (
+            EpistemicStatus::Fact | EpistemicStatus::Derived,
+            EpistemicStatus::Hypothesis
+        ) | (
+            EpistemicStatus::Fact | EpistemicStatus::Derived,
+            EpistemicStatus::Assumption,
+        )
+    );
+
+    if !is_promotion && !is_degradation {
+        return warnings;
+    }
+
+    let tree_ids = match storage.list_tree_ids() {
+        Ok(ids) => ids,
+        Err(_) => return warnings,
+    };
+
+    for tree_id in &tree_ids {
+        let tree = match storage.load_tree(tree_id) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        let node_in_tree = tree.nodes.iter().any(|nr| nr.node_ref == node_id);
+        if !node_in_tree {
+            continue;
+        }
+
+        if is_promotion {
+            // Check upstream causes: edges where `to == node_id`
+            for edge in &tree.edges {
+                if edge.to != node_id {
+                    continue;
+                }
+                for from_id in &edge.from {
+                    if let Ok(upstream_node) = storage.load_node(from_id) {
+                        if matches!(
+                            upstream_node.epistemic,
+                            EpistemicStatus::Hypothesis | EpistemicStatus::Assumption
+                        ) {
+                            warnings.push(
+                                OutputWarning::new(
+                                    "EPISTEMIC_UNBOUNDED_FACT",
+                                    format!(
+                                        "Node '{}' promoted to {:?} but upstream cause '{}' is {:?}",
+                                        node_id, new_status, from_id, upstream_node.epistemic
+                                    ),
+                                )
+                                .with_context(
+                                    "node_id",
+                                    serde_json::Value::String(node_id.to_string()),
+                                )
+                                .with_context(
+                                    "upstream_node",
+                                    serde_json::Value::String(from_id.clone()),
+                                )
+                                .with_context(
+                                    "upstream_epistemic",
+                                    serde_json::Value::String(format!(
+                                        "{:?}",
+                                        upstream_node.epistemic
+                                    )),
+                                )
+                                .with_context(
+                                    "tree_id",
+                                    serde_json::Value::String(tree_id.clone()),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_degradation {
+            // Check downstream effects: edges where `from` contains node_id
+            let downstream_edges: Vec<&str> = tree
+                .edges
+                .iter()
+                .filter(|e| e.from.iter().any(|f| f == node_id))
+                .map(|e| e.to.as_str())
+                .collect();
+
+            if !downstream_edges.is_empty() {
+                warnings.push(
+                    OutputWarning::new(
+                        "EPISTEMIC_CASCADE_REVIEW",
+                        format!(
+                            "Node '{}' degraded to {:?}; {} downstream effect(s) in tree '{}' should be reviewed: {}",
+                            node_id,
+                            new_status,
+                            downstream_edges.len(),
+                            tree_id,
+                            downstream_edges.join(", ")
+                        ),
+                    )
+                    .with_context(
+                        "node_id",
+                        serde_json::Value::String(node_id.to_string()),
+                    )
+                    .with_context(
+                        "downstream_nodes",
+                        serde_json::Value::Array(
+                            downstream_edges
+                                .iter()
+                                .map(|n| serde_json::Value::String(n.to_string()))
+                                .collect(),
+                        ),
+                    )
+                    .with_context(
+                        "tree_id",
+                        serde_json::Value::String(tree_id.clone()),
+                    ),
+                );
+            }
+        }
+    }
+
+    warnings
+}
+
 /// Execute `node edit` command.
 pub fn execute_node_edit(
     storage: &dyn Storage,
@@ -430,6 +577,7 @@ pub fn execute_node_edit(
         node.observable = obs;
     }
 
+    let old_epistemic = node.epistemic;
     if let Some(ep) = epistemic_status {
         node.epistemic = ep;
     }
@@ -467,6 +615,16 @@ pub fn execute_node_edit(
 
     if let Some(w) = stale_lock_warning(&lock_outcome) {
         warnings.insert(0, w);
+    }
+
+    // Epistemic cascade warnings when status changes
+    if epistemic_status.is_some() && old_epistemic != node.epistemic {
+        warnings.extend(check_epistemic_cascade(
+            storage,
+            id,
+            old_epistemic,
+            node.epistemic,
+        ));
     }
 
     CommandOutput {

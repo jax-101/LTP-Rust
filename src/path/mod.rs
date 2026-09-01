@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-use crate::output::{CommandOutput, GraphHealth, OutputError};
+use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
 use crate::tree::types::{MacroEdge, NodeRef};
 
@@ -244,6 +244,41 @@ pub fn execute_path_collapse(
         .filter(|n| *n != from && *n != to)
         .cloned()
         .collect();
+
+    // Warn if interior nodes include execution-critical types (OBS, IO, PRE)
+    let execution_types = [NodeType::Obs, NodeType::Io, NodeType::Pre];
+    let hidden_execution_nodes: Vec<String> = interior_nodes
+        .iter()
+        .filter(|nid| {
+            storage
+                .load_node(nid)
+                .map(|n| execution_types.contains(&n.node_type))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+
+    if !hidden_execution_nodes.is_empty() {
+        warnings.push(
+            OutputWarning::new(
+                "COLLAPSE_HIDES_EXECUTION_NODES",
+                format!(
+                    "Collapse hides {} execution-critical node(s) (OBS/IO/PRE): {}",
+                    hidden_execution_nodes.len(),
+                    hidden_execution_nodes.join(", ")
+                ),
+            )
+            .with_context(
+                "hidden_nodes",
+                serde_json::Value::Array(
+                    hidden_execution_nodes
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.clone()))
+                        .collect(),
+                ),
+            ),
+        );
+    }
 
     // Interior links = edges whose from[] nodes AND to are all within the subgraph
     let interior_links: Vec<String> = tree

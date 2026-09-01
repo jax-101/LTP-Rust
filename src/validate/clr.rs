@@ -4,6 +4,102 @@ use crate::link::{Edge, Operator};
 use crate::node::{Node, NodeType};
 use crate::output::OutputWarning;
 
+/// CLR#5: MAG edges targeting the same node should have weights summing to ~1.0.
+pub fn lint_clr5_mag_weights(edges: &[Edge]) -> Vec<OutputWarning> {
+    let mut warnings = Vec::new();
+
+    // Group MAG edges by destination node
+    let mut mag_groups: HashMap<&str, Vec<&Edge>> = HashMap::new();
+    for edge in edges {
+        if edge.operator == Operator::Mag {
+            mag_groups.entry(edge.to.as_str()).or_default().push(edge);
+        }
+    }
+
+    for (to_node, group) in &mag_groups {
+        // Single MAG edge with multiple from[] — weight is the whole group's contribution
+        if group.len() == 1 {
+            let edge = group[0];
+            if edge.weight.is_none() {
+                warnings.push(
+                    OutputWarning::new(
+                        "CLR5_MAG_WEIGHT_UNDEFINED",
+                        format!(
+                            "MAG edge '{}' targeting '{}' has no weight defined",
+                            edge.id, to_node
+                        ),
+                    )
+                    .with_context("edge_id", serde_json::Value::String(edge.id.clone()))
+                    .with_context("to_node", serde_json::Value::String(to_node.to_string())),
+                );
+            }
+            continue;
+        }
+
+        // Multiple MAG edges to the same destination — weights should sum to ~1.0
+        let mut has_undefined = false;
+        let mut weight_sum = 0.0_f64;
+        let mut undefined_edges: Vec<String> = Vec::new();
+
+        for edge in group {
+            match edge.weight {
+                Some(w) => weight_sum += w,
+                None => {
+                    has_undefined = true;
+                    undefined_edges.push(edge.id.clone());
+                }
+            }
+        }
+
+        if has_undefined {
+            warnings.push(
+                OutputWarning::new(
+                    "CLR5_MAG_WEIGHT_UNDEFINED",
+                    format!(
+                        "MAG group targeting '{}' has {} edge(s) without weight: {}",
+                        to_node,
+                        undefined_edges.len(),
+                        undefined_edges.join(", ")
+                    ),
+                )
+                .with_context("to_node", serde_json::Value::String(to_node.to_string()))
+                .with_context(
+                    "undefined_edges",
+                    serde_json::Value::Array(
+                        undefined_edges
+                            .iter()
+                            .map(|id| serde_json::Value::String(id.clone()))
+                            .collect(),
+                    ),
+                ),
+            );
+        }
+
+        if !has_undefined && (weight_sum - 1.0).abs() > 0.01 {
+            warnings.push(
+                OutputWarning::new(
+                    "CLR5_MAG_WEIGHTS_NOT_NORMALIZED",
+                    format!(
+                        "MAG group targeting '{}' has weights summing to {:.3} (expected ~1.0)",
+                        to_node, weight_sum
+                    ),
+                )
+                .with_context("to_node", serde_json::Value::String(to_node.to_string()))
+                .with_context(
+                    "weight_sum",
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(weight_sum)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    ),
+                )
+                .with_context("edge_count", serde_json::Value::Number(group.len().into())),
+            );
+        }
+    }
+
+    warnings
+}
+
 /// CLR#2: Detect causal conjunctions in node labels.
 pub fn lint_clr2(nodes: &[Node]) -> Vec<OutputWarning> {
     let conjunctions = &["porque", "in order to", "because", " para ", " y "];
@@ -323,6 +419,69 @@ mod tests {
             make_edge_op("L2", vec!["RC-001"], "UDE-002", Operator::Single),
         ];
         let warnings = lint_clr7_intangible(&edges, &node_map);
+        assert!(warnings.is_empty());
+    }
+
+    fn make_mag_edge(id: &str, from: Vec<&str>, to: &str, weight: Option<f64>) -> Edge {
+        Edge {
+            id: id.to_string(),
+            from: from.into_iter().map(String::from).collect(),
+            to: to.to_string(),
+            operator: Operator::Mag,
+            weight,
+            status: EdgeStatus::Active,
+            logic: Logic::Sufficiency,
+            assumptions: vec![],
+        }
+    }
+
+    #[test]
+    fn clr5_mag_weights_normalized() {
+        let edges = vec![
+            make_mag_edge("L1", vec!["A"], "C", Some(0.6)),
+            make_mag_edge("L2", vec!["B"], "C", Some(0.4)),
+        ];
+        let warnings = lint_clr5_mag_weights(&edges);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn clr5_mag_weights_not_normalized() {
+        let edges = vec![
+            make_mag_edge("L1", vec!["A"], "C", Some(0.8)),
+            make_mag_edge("L2", vec!["B"], "C", Some(0.7)),
+        ];
+        let warnings = lint_clr5_mag_weights(&edges);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "CLR5_MAG_WEIGHTS_NOT_NORMALIZED");
+    }
+
+    #[test]
+    fn clr5_mag_weight_undefined_in_group() {
+        let edges = vec![
+            make_mag_edge("L1", vec!["A"], "C", Some(0.6)),
+            make_mag_edge("L2", vec!["B"], "C", None),
+        ];
+        let warnings = lint_clr5_mag_weights(&edges);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "CLR5_MAG_WEIGHT_UNDEFINED");
+    }
+
+    #[test]
+    fn clr5_single_mag_no_weight() {
+        let edges = vec![make_mag_edge("L1", vec!["A", "B"], "C", None)];
+        let warnings = lint_clr5_mag_weights(&edges);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "CLR5_MAG_WEIGHT_UNDEFINED");
+    }
+
+    #[test]
+    fn clr5_non_mag_edges_ignored() {
+        let edges = vec![
+            make_edge_op("L1", vec!["A"], "C", Operator::Single),
+            make_edge_op("L2", vec!["B"], "C", Operator::Or),
+        ];
+        let warnings = lint_clr5_mag_weights(&edges);
         assert!(warnings.is_empty());
     }
 }

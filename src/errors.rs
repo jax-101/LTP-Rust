@@ -14,8 +14,11 @@ pub enum LtpError {
     #[error("assumption not found: {0}")]
     AssumptionNotFound(String),
 
-    #[error("circular dependency detected in tree {tree_id}")]
-    CircularDependencyDetected { tree_id: String },
+    #[error("circular dependency detected in tree {tree_id}: {}", cycle_path.join(" -> "))]
+    CircularDependencyDetected {
+        tree_id: String,
+        cycle_path: Vec<String>,
+    },
 
     #[error("referential integrity violation: node {node_id} referenced in edge but not in pool")]
     ReferentialIntegrityViolation { node_id: String },

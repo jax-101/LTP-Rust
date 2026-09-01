@@ -330,8 +330,16 @@ pub fn execute_link_connect(
         if let Err(e) = check_dag(&nbr_edges, &format!("{}:{}", tree_id, nid)) {
             let _ = storage.release_lock();
             let err = match &e {
-                LtpError::CircularDependencyDetected { .. } => {
-                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
+                LtpError::CircularDependencyDetected { cycle_path, .. } => {
+                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string()).with_context(
+                        "cycle_path",
+                        serde_json::Value::Array(
+                            cycle_path
+                                .iter()
+                                .map(|n| serde_json::Value::String(n.clone()))
+                                .collect(),
+                        ),
+                    )
                 }
                 _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
             };
@@ -361,8 +369,16 @@ pub fn execute_link_connect(
         if let Err(e) = check_dag(&all_edges, tree_id) {
             let _ = storage.release_lock();
             let err = match &e {
-                LtpError::CircularDependencyDetected { .. } => {
-                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string())
+                LtpError::CircularDependencyDetected { cycle_path, .. } => {
+                    OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string()).with_context(
+                        "cycle_path",
+                        serde_json::Value::Array(
+                            cycle_path
+                                .iter()
+                                .map(|n| serde_json::Value::String(n.clone()))
+                                .collect(),
+                        ),
+                    )
                 }
                 _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
             };

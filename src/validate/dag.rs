@@ -26,39 +26,53 @@ pub fn check_dag(edges: &[Edge], tree_id: &str) -> Result<()> {
     }
 
     let mut colors: HashMap<&str, Color> = all_nodes.iter().map(|&n| (n, Color::White)).collect();
+    let mut path: Vec<&str> = Vec::new();
 
     for &node in &all_nodes {
-        if colors[node] == Color::White && has_cycle(node, &adjacency, &mut colors) {
-            return Err(LtpError::CircularDependencyDetected {
-                tree_id: tree_id.to_string(),
-            });
+        if colors[node] == Color::White {
+            if let Some(cycle) = find_cycle(node, &adjacency, &mut colors, &mut path) {
+                return Err(LtpError::CircularDependencyDetected {
+                    tree_id: tree_id.to_string(),
+                    cycle_path: cycle,
+                });
+            }
         }
     }
 
     Ok(())
 }
 
-fn has_cycle<'a>(
+/// DFS that returns the cycle path when a back-edge is found.
+fn find_cycle<'a>(
     node: &'a str,
     adjacency: &HashMap<&'a str, Vec<&'a str>>,
     colors: &mut HashMap<&'a str, Color>,
-) -> bool {
+    path: &mut Vec<&'a str>,
+) -> Option<Vec<String>> {
     colors.insert(node, Color::Gray);
+    path.push(node);
 
     if let Some(neighbors) = adjacency.get(node) {
         for &neighbor in neighbors {
             let color = colors.get(neighbor).copied().unwrap_or(Color::Black);
             if color == Color::Gray {
-                return true;
+                let cycle_start = path.iter().position(|&n| n == neighbor).unwrap_or(0);
+                let mut cycle: Vec<String> =
+                    path[cycle_start..].iter().map(|s| s.to_string()).collect();
+                cycle.push(neighbor.to_string());
+                return Some(cycle);
             }
-            if color == Color::White && has_cycle(neighbor, adjacency, colors) {
-                return true;
+            if color == Color::White {
+                if let Some(cycle) = find_cycle(neighbor, adjacency, colors, path) {
+                    return Some(cycle);
+                }
             }
         }
     }
 
+    path.pop();
     colors.insert(node, Color::Black);
-    false
+    None
 }
 
 #[cfg(test)]
@@ -89,16 +103,43 @@ mod tests {
     }
 
     #[test]
-    fn cycle_detected() {
+    fn cycle_detected_with_path() {
         let edges = vec![
             make_edge("L1", vec!["A"], "B"),
             make_edge("L2", vec!["B"], "C"),
             make_edge("L3", vec!["C"], "A"),
         ];
-        assert!(matches!(
-            check_dag(&edges, "test-tree"),
-            Err(LtpError::CircularDependencyDetected { .. })
-        ));
+        let err = check_dag(&edges, "test-tree").unwrap_err();
+        match err {
+            LtpError::CircularDependencyDetected {
+                tree_id,
+                cycle_path,
+            } => {
+                assert_eq!(tree_id, "test-tree");
+                assert!(cycle_path.len() >= 3);
+                assert_eq!(cycle_path.first(), cycle_path.last());
+            }
+            _ => panic!("Expected CircularDependencyDetected"),
+        }
+    }
+
+    #[test]
+    fn cycle_in_subgraph_reports_correct_nodes() {
+        let edges = vec![
+            make_edge("L1", vec!["X"], "A"),
+            make_edge("L2", vec!["A"], "B"),
+            make_edge("L3", vec!["B"], "C"),
+            make_edge("L4", vec!["C"], "B"),
+        ];
+        let err = check_dag(&edges, "test-tree").unwrap_err();
+        match err {
+            LtpError::CircularDependencyDetected { cycle_path, .. } => {
+                assert!(cycle_path.contains(&"B".to_string()));
+                assert!(cycle_path.contains(&"C".to_string()));
+                assert!(!cycle_path.contains(&"X".to_string()));
+            }
+            _ => panic!("Expected CircularDependencyDetected"),
+        }
     }
 
     #[test]

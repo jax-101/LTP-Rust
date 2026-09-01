@@ -68,6 +68,10 @@ pub struct TraceData {
 pub struct NodeLabel {
     pub id: String,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epistemic: Option<String>,
 }
 
 /// Assumption detail for link inspect.
@@ -86,6 +90,10 @@ pub struct LinkInspectData {
     pub from_labels: Vec<NodeLabel>,
     pub to: String,
     pub to_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_epistemic: Option<String>,
     pub operator: String,
     pub weight: Option<f64>,
     pub status: String,
@@ -471,6 +479,8 @@ pub fn execute_link_inspect(
                     from_labels: vec![],
                     to: String::new(),
                     to_label: String::new(),
+                    to_type: None,
+                    to_epistemic: None,
                     operator: String::new(),
                     weight: None,
                     status: String::new(),
@@ -511,6 +521,8 @@ pub fn execute_link_inspect(
                     from_labels: vec![],
                     to: String::new(),
                     to_label: String::new(),
+                    to_type: None,
+                    to_epistemic: None,
                     operator: String::new(),
                     weight: None,
                     status: String::new(),
@@ -530,23 +542,32 @@ pub fn execute_link_inspect(
         }
     };
 
-    // Resolve labels
+    // Resolve labels with type and epistemic enrichment
     let from_labels: Vec<NodeLabel> = edge
         .from
         .iter()
         .map(|nid| {
-            let label = storage.load_node(nid).map(|n| n.label).unwrap_or_default();
+            let node = storage.load_node(nid).ok();
             NodeLabel {
                 id: nid.clone(),
-                label,
+                label: node.as_ref().map(|n| n.label.clone()).unwrap_or_default(),
+                node_type: node.as_ref().map(|n| format!("{:?}", n.node_type)),
+                epistemic: node
+                    .as_ref()
+                    .map(|n| format!("{:?}", n.epistemic).to_lowercase()),
             }
         })
         .collect();
 
-    let to_label = storage
-        .load_node(&edge.to)
-        .map(|n| n.label)
+    let to_node = storage.load_node(&edge.to).ok();
+    let to_label = to_node
+        .as_ref()
+        .map(|n| n.label.clone())
         .unwrap_or_default();
+    let to_type = to_node.as_ref().map(|n| format!("{:?}", n.node_type));
+    let to_epistemic = to_node
+        .as_ref()
+        .map(|n| format!("{:?}", n.epistemic).to_lowercase());
 
     let assumptions: Vec<AssumptionDetail> = edge
         .assumptions
@@ -567,6 +588,8 @@ pub fn execute_link_inspect(
             from_labels,
             to: edge.to.clone(),
             to_label,
+            to_type,
+            to_epistemic,
             operator: operator_str(edge.operator).to_string(),
             weight: edge.weight,
             status: status_str(edge.status).to_string(),

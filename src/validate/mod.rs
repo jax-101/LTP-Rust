@@ -97,28 +97,59 @@ pub fn execute_validate<S: Storage>(
         let mut tree_warnings: Vec<OutputWarning> = Vec::new();
 
         // DAG check on main edges
-        if check_dag(&tree.edges, &tree.id).is_err() {
+        if let Err(crate::errors::LtpError::CircularDependencyDetected { cycle_path, .. }) =
+            check_dag(&tree.edges, &tree.id)
+        {
             all_valid_dag = false;
             tree_errors.push(
                 OutputError::new(
                     "CIRCULAR_DEPENDENCY_DETECTED",
-                    format!("Cycle detected in tree '{}'", tree.id),
+                    format!(
+                        "Cycle detected in tree '{}': {}",
+                        tree.id,
+                        cycle_path.join(" -> ")
+                    ),
                 )
-                .with_context("tree_id", serde_json::Value::String(tree.id.clone())),
+                .with_context("tree_id", serde_json::Value::String(tree.id.clone()))
+                .with_context(
+                    "cycle_path",
+                    serde_json::Value::Array(
+                        cycle_path
+                            .iter()
+                            .map(|n| serde_json::Value::String(n.clone()))
+                            .collect(),
+                    ),
+                ),
             );
         }
 
         // DAG check on each NBR branch
         for nbr in &tree.nbr_branches {
-            if check_dag(&nbr.edges, &tree.id).is_err() {
+            if let Err(crate::errors::LtpError::CircularDependencyDetected { cycle_path, .. }) =
+                check_dag(&nbr.edges, &tree.id)
+            {
                 all_valid_dag = false;
                 tree_errors.push(
                     OutputError::new(
                         "CIRCULAR_DEPENDENCY_DETECTED",
-                        format!("Cycle detected in NBR '{}' of tree '{}'", nbr.id, tree.id),
+                        format!(
+                            "Cycle detected in NBR '{}' of tree '{}': {}",
+                            nbr.id,
+                            tree.id,
+                            cycle_path.join(" -> ")
+                        ),
                     )
                     .with_context("tree_id", serde_json::Value::String(tree.id.clone()))
-                    .with_context("nbr_id", serde_json::Value::String(nbr.id.clone())),
+                    .with_context("nbr_id", serde_json::Value::String(nbr.id.clone()))
+                    .with_context(
+                        "cycle_path",
+                        serde_json::Value::Array(
+                            cycle_path
+                                .iter()
+                                .map(|n| serde_json::Value::String(n.clone()))
+                                .collect(),
+                        ),
+                    ),
                 );
             }
         }
@@ -159,6 +190,9 @@ pub fn execute_validate<S: Storage>(
 
         // CLR#7: Intangible without predicted effect
         tree_warnings.extend(clr::lint_clr7_intangible(&tree.edges, &node_map));
+
+        // CLR#5: MAG weights normalization
+        tree_warnings.extend(clr::lint_clr5_mag_weights(&tree.edges));
 
         // Orphan nodes in tree
         let orphan_warnings = orphans::check_orphans(&tree.nodes, &tree.edges, &tree.id);
