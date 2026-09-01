@@ -44,7 +44,8 @@ El motor `ltp-engine` NO intenta adivinar flujos de trabajo ni empaquetar comand
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   WORKSPACE CANÓNICO EN DISCO                           │
-│  • /nodes/<ID>.json  • /trees/<ID>.json  • ltp.config.json             │
+│  • /nodes/<ID>.json  • /trees/<ID>.json  • /knowledge/<ID>.json         │
+│  • ltp.config.json                                                     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -78,7 +79,11 @@ Tipos: `UDE | RC | INJ | NC | GOAL | OBJ | WANT | OBS | IO | INT | DE | REQ | PR
 
 "Con Dientes": ejecuta un linter sintáctico suave. Advierte si el texto contiene conjunciones causales prohibidas por CLR #2 (`because`, `in order to`, `para`), sugiriendo dividir la idea.
 
-#### `ltp node edit <ID> [--label "<texto>"] [--add-tag <tag>] [--rm-tag <tag>] [--observable true|false]`
+#### `ltp node edit <ID> [--label "<texto>"] [--add-tag <tag>] [--rm-tag <tag>] [--observable true|false] [--epistemic <fact|hypothesis|assumption|derived>]`
+
+Cuando se modifica `--epistemic`, el motor emite warnings de cascada epistémica:
+- `EPISTEMIC_UNBOUNDED_FACT`: al promover a `fact` o `derived`, si alguna causa upstream (en cualquier tree donde participe) tiene status `hypothesis` o `assumption`.
+- `EPISTEMIC_CASCADE_REVIEW`: al degradar de `fact`/`derived` a `hypothesis`/`assumption`, lista los efectos downstream que deberían revisarse.
 
 #### `ltp node rm <ID>[,<ID2>,<ID3>] [--force]`
 
@@ -163,7 +168,7 @@ Crea una arista de retroalimentación (feedback loop) en el pool `feedback_edges
 
 #### `ltp link inspect <LINK_ID> --tree <TREE_ID>`
 
-Muestra el detalle completo de un edge: from (con labels), to (con label), operator, weight, status, logic, y la lista completa de assumptions con su status.
+Muestra el detalle completo de un edge: from (con labels, `node_type`, `epistemic`), to (con label, `to_type`, `to_epistemic`), operator, weight, status, logic, y la lista completa de assumptions con su status. Los campos `node_type`/`epistemic` y `to_type`/`to_epistemic` se omiten del JSON si son `null` (nodo no encontrado).
 
 #### `ltp link find --tree <TREE_ID> --from <NODE_ID> --to <NODE_ID>`
 
@@ -273,6 +278,8 @@ Motor de exploración del grafo:
 
 Calcula la ruta entre los dos nodos, identifica todos los nodos y links interiores, y genera una entrada `macro_edge` en la vista ejecutiva sin alterar los nodos tácticos en disco. El macro_edge incluye `interior_nodes` e `interior_links` para que un renderer pueda detectar edges periféricos (aquellos cuyo from o to toca un nodo interior desde fuera del bloque colapsado).
 
+Warning `COLLAPSE_HIDES_EXECUTION_NODES`: si algún nodo interior es de tipo `OBS`, `IO` o `PRE` (nodos de ejecución crítica), el motor advierte que el colapso los oculta. El warning incluye `hidden_nodes` (array de IDs afectados) en el contexto.
+
 #### `ltp path explode --tree <ID> --link <LINK_ID> --asm <ASM_ID> --label "<texto_nuevo_nodo>"`
 
 Desglosa un supuesto convirtiéndolo en un nodo intermedio explícito (INT) dentro de la cadena causa-efecto.
@@ -306,8 +313,8 @@ Muestra la cadena causal completa de una NBR: edges, nodos involucrados y trim i
 Ejecuta validaciones en dos niveles:
 
 **Bloqueantes (errors):**
-- DFS de 3 colores sobre `edges` (excluye `feedback_edges`): verifica que los árboles de suficiencia (CRT, FRT, TT) sean DAGs puros. Retorna `CIRCULAR_DEPENDENCY_DETECTED` si hay ciclos.
-- Valida edges dentro de cada `nbr_branches[]` como DAGs independientes.
+- DFS de 3 colores sobre `edges` (excluye `feedback_edges`): verifica que los árboles de suficiencia (CRT, FRT, TT) sean DAGs puros. Retorna `CIRCULAR_DEPENDENCY_DETECTED` si hay ciclos. El error incluye `cycle_path` (array de IDs de nodos formando el ciclo exacto).
+- Valida edges dentro de cada `nbr_branches[]` como DAGs independientes (con `cycle_path` en caso de ciclo).
 - Integridad referencial: todo nodo referenciado en edges existe en `/nodes/`.
 - EC: exactamente 1 nodo con role `"objective"`, al menos 2 con role `"requirement"` vinculados al objective, al menos 1 `"prerequisite"` por cada requirement, al menos 1 conector XOR entre prerrequisitos incompatibles. Soporta N ramas. Los nodos referenciados pueden ser de cualquier tipo del pool global — el role es contextual a la vista.
 
@@ -317,6 +324,7 @@ Ejecuta validaciones en dos niveles:
 - Elipses AND con >4 entradas: posible mezcla de causas independientes (CLR #4/#5).
 - Nodos con `observable: false` y <2 edges salientes: candidatos a CLR #7 (causa intangible sin efecto predicho).
 - Inversión de tipos sospechosa (CLR #6): nodo de nivel alto (UDE, DE) en posición `from` apuntando a nodo de nivel bajo (RC, INT).
+- CLR #5 (MAG weights): `CLR5_MAG_WEIGHTS_NOT_NORMALIZED` si las weights de edges MAG al mismo nodo no suman ~1.0 (tolerancia ±0.01). `CLR5_MAG_WEIGHT_UNDEFINED` si un edge MAG no tiene weight definido.
 - Nodos huérfanos dentro del tree (attached pero sin edges).
 
 ---
@@ -419,6 +427,9 @@ mi-proyecto-ltp/
 ├── trees/                   # Vistas topológicas
 │   ├── tree-crt-logistica.json
 │   └── ...
+├── knowledge/               # Pool de knowledge items (ADR-012)
+│   ├── KN-001.json
+│   └── ...
 └── .ltp/                    # Estado interno del motor (en .gitignore)
     ├── lock                 # Lock file de concurrencia
     ├── undo/                # Stack de undo
@@ -483,11 +494,14 @@ Mismo formato que undo, con campo adicional:
   "label": "El tiempo de entrega al cliente supera los 15 días laborables",
   "tags": ["logistica", "critico"],
   "observable": true,
+  "epistemic": "fact",
   "metadata": {
     "status": "active"
   }
 }
 ```
+
+Campo `epistemic` (opcional): `fact | hypothesis | assumption | derived`. Default: `hypothesis`. Declarativo del usuario — el motor persiste y valida consistencia, nunca promueve/degrada automáticamente. Ver KNOWLEDGE_SPEC.md §3 para detalle.
 
 Vocabulario de `status`: `active | draft | invalidated | superseded`
 

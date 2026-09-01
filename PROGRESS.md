@@ -6,11 +6,14 @@
 |---------|-------|
 | **Avance global (motor base)** | 100% ✅ |
 | **Avance Knowledge Pool** | 100% ✅ |
+| **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | K7 — MCP Server |
+| **Última fase completada** | F13 — Validation Enrichments |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
+| **Tests F13** | 7/7 |
+| **Tests totales** | 427 |
 
 ---
 
@@ -49,11 +52,36 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F11 | Historial (undo/redo) | 6% | ✅ | 22/22 |
 | E2E | Tests end-to-end | 4% | ✅ | 19/19 |
 | F12 | MCP Server | 7% | ✅ | 16/16 |
-| | **TOTAL** | **100%** | **✅** | **191/191** |
+| F13 | Validation Enrichments | — | ✅ | 7/7 |
+| | **TOTAL** | **100%** | **✅** | **198/198** |
 
 ---
 
 ## Historial de Avance
+
+### [F13] — Validation Enrichments
+**Fecha**: 2026-09-01
+**Avance fase**: 7/7 tests ✅
+**Tests totales**: 420 → 427
+**Origen**: Revisión Six Hats de propuestas externas (Gemini analysis PDF)
+
+#### Entregables
+- **Cycle path en errores DAG**: `CIRCULAR_DEPENDENCY_DETECTED` ahora incluye `cycle_path` (array de IDs formando el ciclo exacto) en trunk y NBR branches. `find_cycle()` reemplaza a `has_cycle()` con DFS que traza el camino.
+- **CLR#5 MAG weight normalization**: `lint_clr5_mag_weights()` valida que edges MAG al mismo destino tengan weights sumando ~1.0 (±0.01). Warnings: `CLR5_MAG_WEIGHTS_NOT_NORMALIZED`, `CLR5_MAG_WEIGHT_UNDEFINED`.
+- **Epistemic cascade warnings**: `node edit --epistemic` emite `EPISTEMIC_UNBOUNDED_FACT` (promoción con causas upstream débiles) y `EPISTEMIC_CASCADE_REVIEW` (degradación con efectos downstream). Chequeo cross-tree.
+- **Link inspect enrichment**: `from_labels` incluye `node_type` y `epistemic` por nodo. Respuesta incluye `to_type` y `to_epistemic` para el nodo destino.
+- **Collapse execution node warning**: `path collapse` emite `COLLAPSE_HIDES_EXECUTION_NODES` cuando nodos interiores son OBS/IO/PRE, con `hidden_nodes` en contexto.
+- 5 tests CLR#5 (unit) + 2 tests DAG cycle path (unit) = 7 tests nuevos
+- +503/-34 líneas en 8 ficheros
+
+#### Decisiones
+- 8 operaciones propuestas del PDF rechazadas (violaban ADR-001 o eran composición de primitivas existentes): `obstacle add`, `intermediate-objective add`, `action add`, `node promote`, `node degrade`, `link balance`, `predicted-effect add`, `node sanitize`.
+- Todo F13 son warnings/enrichments — no se añadieron nuevos comandos CLI.
+
+#### Siguiente
+- Fase completada. Sin tareas pendientes.
+
+---
 
 ### [K7] — MCP Server (Knowledge Tools)
 **Fecha**: 2026-08-18

@@ -1,6 +1,6 @@
 # Especificación del Knowledge Pool (KNOWLEDGE_SPEC.md)
 
-**Estado**: Diseño Aprobado (pendiente de implementación)
+**Estado**: Implementado (K1–K7 completado, 61 MCP tools)
 **ADR**: ADR-012
 
 ## 1. Principio de Diseño
@@ -143,7 +143,8 @@ Nuevo campo opcional en nodos existentes (`nodes/*.json`):
 **Reglas:**
 - Default: `hypothesis` si no se especifica.
 - El motor persiste y filtra. Nunca promueve ni degrada automáticamente.
-- `validate` emite warnings de consistencia (ver sección 7).
+- `validate` emite warnings de consistencia epistémica (ver sección 6.2).
+- `node edit --epistemic` emite warnings de cascada: `EPISTEMIC_UNBOUNDED_FACT` (promoción con upstream débil) y `EPISTEMIC_CASCADE_REVIEW` (degradación con downstream afectado).
 
 ## 4. Estructura en Disco
 
@@ -342,6 +343,13 @@ Nuevos warnings (no bloqueantes):
 | `EPISTEMIC_UNGROUNDED` | Nodo con `epistemic: "fact"` y 0 knowledge items `supports` | "UDE-003 declared as fact but has no supporting knowledge" |
 | `EPISTEMIC_CONTRADICTED` | Nodo con `epistemic: "fact"` y ≥1 knowledge `contradicts` con status `verified` | "UDE-003 declared as fact but contradicted by KN-007 (verified)" |
 | `EPISTEMIC_UPGRADEABLE` | Nodo con `epistemic: "hypothesis"` y ≥2 knowledge `supports` con status `verified` | "RC-001 has 2+ verified supports — consider promoting to fact" |
+
+Adicionalmente, `node edit --epistemic` emite warnings de cascada epistémica (fuera de `validate`, en la respuesta del propio `edit`):
+
+| Código | Condición | Mensaje |
+|--------|-----------|---------|
+| `EPISTEMIC_UNBOUNDED_FACT` | Promover a `fact`/`derived` cuando una causa upstream es `hypothesis`/`assumption` | "Node 'X' promoted to Fact but upstream cause 'Y' is Hypothesis" |
+| `EPISTEMIC_CASCADE_REVIEW` | Degradar de `fact`/`derived` a `hypothesis`/`assumption` con efectos downstream | "Node 'X' degraded to Hypothesis; N downstream effect(s) in tree 'T' should be reviewed" |
 
 ### 6.3. `ltp node rm`
 
