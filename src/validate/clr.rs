@@ -163,6 +163,52 @@ pub fn lint_clr4_insufficiency(edges: &[Edge]) -> Vec<OutputWarning> {
     warnings
 }
 
+/// CLR#4/#5: Multiple SINGLE edges to the same node = implicit OR (each independently sufficient).
+/// Advisory: confirm each cause alone produces the effect, or group with AND/MAG if co-dependent.
+pub fn lint_clr4_5_implicit_or(edges: &[Edge]) -> Vec<OutputWarning> {
+    let mut incoming: HashMap<&str, Vec<&Edge>> = HashMap::new();
+
+    for edge in edges {
+        if edge.operator == Operator::Single {
+            incoming.entry(edge.to.as_str()).or_default().push(edge);
+        }
+    }
+
+    let mut warnings = Vec::new();
+
+    for (node_id, singles) in &incoming {
+        if singles.len() >= 2 {
+            let edge_ids: Vec<String> = singles.iter().map(|e| e.id.clone()).collect();
+            warnings.push(
+                OutputWarning::new(
+                    "CLR4_5_IMPLICIT_OR_REVIEW",
+                    format!(
+                        "Node '{}' has {} independent causes (implicit OR) — confirm each alone produces the effect, or group with AND/MAG if co-dependent (CLR#4/#5)",
+                        node_id,
+                        singles.len()
+                    ),
+                )
+                .with_context("node_id", serde_json::Value::String(node_id.to_string()))
+                .with_context(
+                    "edge_ids",
+                    serde_json::Value::Array(
+                        edge_ids
+                            .iter()
+                            .map(|id| serde_json::Value::String(id.clone()))
+                            .collect(),
+                    ),
+                )
+                .with_context(
+                    "cause_count",
+                    serde_json::Value::Number(singles.len().into()),
+                ),
+            );
+        }
+    }
+
+    warnings
+}
+
 /// CLR#4/#5: AND edges with >4 inputs may mix independent causes.
 pub fn lint_clr4_5_excessive_and(edges: &[Edge]) -> Vec<OutputWarning> {
     let mut warnings = Vec::new();
@@ -419,6 +465,46 @@ mod tests {
             make_edge_op("L2", vec!["RC-001"], "UDE-002", Operator::Single),
         ];
         let warnings = lint_clr7_intangible(&edges, &node_map);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn clr4_5_implicit_or_two_singles() {
+        let edges = vec![
+            make_edge_op("L1", vec!["A"], "C", Operator::Single),
+            make_edge_op("L2", vec!["B"], "C", Operator::Single),
+        ];
+        let warnings = lint_clr4_5_implicit_or(&edges);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "CLR4_5_IMPLICIT_OR_REVIEW");
+    }
+
+    #[test]
+    fn clr4_5_implicit_or_three_singles() {
+        let edges = vec![
+            make_edge_op("L1", vec!["A"], "C", Operator::Single),
+            make_edge_op("L2", vec!["B"], "C", Operator::Single),
+            make_edge_op("L3", vec!["D"], "C", Operator::Single),
+        ];
+        let warnings = lint_clr4_5_implicit_or(&edges);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "CLR4_5_IMPLICIT_OR_REVIEW");
+    }
+
+    #[test]
+    fn clr4_5_implicit_or_single_edge_no_warning() {
+        let edges = vec![make_edge_op("L1", vec!["A"], "C", Operator::Single)];
+        let warnings = lint_clr4_5_implicit_or(&edges);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn clr4_5_implicit_or_ignores_grouped_operators() {
+        let edges = vec![
+            make_edge_op("L1", vec!["A"], "C", Operator::Single),
+            make_edge_op("L2", vec!["B", "D"], "C", Operator::Or),
+        ];
+        let warnings = lint_clr4_5_implicit_or(&edges);
         assert!(warnings.is_empty());
     }
 

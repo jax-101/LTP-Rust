@@ -12,8 +12,8 @@
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
-| **Tests F13** | 7/7 |
-| **Tests totales** | 427 |
+| **Tests F13** | 11/11 |
+| **Tests totales** | 431 |
 
 ---
 
@@ -52,31 +52,32 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F11 | Historial (undo/redo) | 6% | ✅ | 22/22 |
 | E2E | Tests end-to-end | 4% | ✅ | 19/19 |
 | F12 | MCP Server | 7% | ✅ | 16/16 |
-| F13 | Validation Enrichments | — | ✅ | 7/7 |
-| | **TOTAL** | **100%** | **✅** | **198/198** |
+| F13 | Validation Enrichments | — | ✅ | 11/11 |
+| | **TOTAL** | **100%** | **✅** | **202/202** |
 
 ---
 
 ## Historial de Avance
 
 ### [F13] — Validation Enrichments
-**Fecha**: 2026-09-01
-**Avance fase**: 7/7 tests ✅
-**Tests totales**: 420 → 427
-**Origen**: Revisión Six Hats de propuestas externas (Gemini analysis PDF)
+**Fecha**: 2026-09-01 (actualizado 2026-09-05)
+**Avance fase**: 11/11 tests ✅
+**Tests totales**: 420 → 431
+**Origen**: Revisión Six Hats de propuestas externas (Gemini analysis PDF) + análisis SINGLE vs OR
 
 #### Entregables
 - **Cycle path en errores DAG**: `CIRCULAR_DEPENDENCY_DETECTED` ahora incluye `cycle_path` (array de IDs formando el ciclo exacto) en trunk y NBR branches. `find_cycle()` reemplaza a `has_cycle()` con DFS que traza el camino.
 - **CLR#5 MAG weight normalization**: `lint_clr5_mag_weights()` valida que edges MAG al mismo destino tengan weights sumando ~1.0 (±0.01). Warnings: `CLR5_MAG_WEIGHTS_NOT_NORMALIZED`, `CLR5_MAG_WEIGHT_UNDEFINED`.
+- **CLR#4/#5 Implicit OR review**: `lint_clr4_5_implicit_or()` detecta ≥2 edges SINGLE al mismo nodo destino (OR implícito). Warning `CLR4_5_IMPLICIT_OR_REVIEW` advierte que se confirme que cada causa basta sola o se agrupe con AND/MAG. Surgió del análisis Six Hats sobre la distinción SINGLE vs OR: bajo suficiencia son semánticamente equivalentes; SINGLE es el estado por defecto, no un operador lógico distinto.
 - **Epistemic cascade warnings**: `node edit --epistemic` emite `EPISTEMIC_UNBOUNDED_FACT` (promoción con causas upstream débiles) y `EPISTEMIC_CASCADE_REVIEW` (degradación con efectos downstream). Chequeo cross-tree.
 - **Link inspect enrichment**: `from_labels` incluye `node_type` y `epistemic` por nodo. Respuesta incluye `to_type` y `to_epistemic` para el nodo destino.
 - **Collapse execution node warning**: `path collapse` emite `COLLAPSE_HIDES_EXECUTION_NODES` cuando nodos interiores son OBS/IO/PRE, con `hidden_nodes` en contexto.
-- 5 tests CLR#5 (unit) + 2 tests DAG cycle path (unit) = 7 tests nuevos
-- +503/-34 líneas en 8 ficheros
+- 5 tests CLR#5 (unit) + 2 tests DAG cycle path (unit) + 4 tests implicit OR (unit) = 11 tests nuevos
 
 #### Decisiones
 - 8 operaciones propuestas del PDF rechazadas (violaban ADR-001 o eran composición de primitivas existentes): `obstacle add`, `intermediate-objective add`, `action add`, `node promote`, `node degrade`, `link balance`, `predicted-effect add`, `node sanitize`.
 - Todo F13 son warnings/enrichments — no se añadieron nuevos comandos CLI.
+- SINGLE vs OR: bajo suficiencia, múltiples SINGLE = OR implícito. SINGLE existe como estado por defecto (neutro en ambas lógicas), no como operador semántico distinto de OR. El lint `CLR4_5_IMPLICIT_OR_REVIEW` cierra el gap de auditoría.
 
 #### Siguiente
 - Fase completada. Sin tareas pendientes.
@@ -306,6 +307,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 - EC validation: objective (=1), requirements (>=2), prerequisite por requirement
 - CLR#2 lint: conjunciones causales en labels de nodos del tree
 - CLR#4: nodo con 1 sola entrada SINGLE (candidato a insuficiencia)
+- CLR#4/#5: ≥2 SINGLE al mismo nodo sin operador declarado (OR implícito — confirmar o agrupar)
 - CLR#4/#5: AND con >4 entradas (mezcla de causas independientes)
 - CLR#6: inversión de tipos (UDE/DE → RC/INT)
 - CLR#7: nodo intangible con <2 salientes (falta efecto predicho)

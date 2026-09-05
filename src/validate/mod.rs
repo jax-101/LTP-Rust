@@ -182,6 +182,9 @@ pub fn execute_validate<S: Storage>(
         // CLR#4: Insufficiency
         tree_warnings.extend(clr::lint_clr4_insufficiency(&tree.edges));
 
+        // CLR#4/#5: Implicit OR (multiple ungrouped SINGLE edges to same node)
+        tree_warnings.extend(clr::lint_clr4_5_implicit_or(&tree.edges));
+
         // CLR#4/#5: Excessive AND inputs
         tree_warnings.extend(clr::lint_clr4_5_excessive_and(&tree.edges));
 

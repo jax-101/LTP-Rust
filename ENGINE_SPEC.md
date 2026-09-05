@@ -321,6 +321,7 @@ Ejecuta validaciones en dos niveles:
 **Advertencias (warnings):**
 - Linter CLR #2: conjunciones causales prohibidas en labels (`because`, `in order to`, `para`, `y` como causal). Se ejecuta sobre todos los nodos del tree, no solo al crearlos.
 - Nodos con solo 1 entrada SINGLE: candidatos a insuficiencia (CLR #4).
+- Nodos con ≥2 entradas SINGLE sin operador declarado: OR implícito (CLR #4/#5). `CLR4_5_IMPLICIT_OR_REVIEW` advierte que se confirme que cada causa basta sola, o que se agrupe con AND/MAG si son co-dependientes.
 - Elipses AND con >4 entradas: posible mezcla de causas independientes (CLR #4/#5).
 - Nodos con `observable: false` y <2 edges salientes: candidatos a CLR #7 (causa intangible sin efecto predicho).
 - Inversión de tipos sospechosa (CLR #6): nodo de nivel alto (UDE, DE) en posición `from` apuntando a nodo de nivel bajo (RC, INT).
