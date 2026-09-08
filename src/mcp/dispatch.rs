@@ -23,7 +23,10 @@ use crate::link::advanced::{
     execute_link_move, execute_link_reoperator, execute_link_reverse, execute_link_rm_cause,
     execute_link_split,
 };
-use crate::link::commands::{execute_link_connect, execute_link_disconnect, execute_link_feedback};
+use crate::link::commands::{
+    execute_link_connect, execute_link_disconnect, execute_link_feedback,
+    execute_link_feedback_list, execute_link_feedback_rm,
+};
 use crate::mcp::types::{JsonRpcError, ToolCallResult};
 use crate::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use crate::node::commands::{
@@ -80,6 +83,8 @@ pub fn dispatch_tool(
         "ltp/link_connect" => dispatch_link_connect(args, storage),
         "ltp/link_disconnect" => dispatch_link_disconnect(args, storage),
         "ltp/link_feedback" => dispatch_link_feedback(args, storage),
+        "ltp/link_feedback_list" => dispatch_link_feedback_list(args, storage),
+        "ltp/link_feedback_rm" => dispatch_link_feedback_rm(args, storage),
         "ltp/link_inspect" => dispatch_link_inspect(args, storage),
         "ltp/link_find" => dispatch_link_find(args, storage),
         "ltp/link_reverse" => dispatch_link_reverse(args, storage),
@@ -661,6 +666,30 @@ fn dispatch_link_feedback(
     let output = execute_link_feedback(storage, tree, from, to, fb_type, label);
     if output.success {
         history_commit(capture, "link_feedback", "mcp:ltp/link_feedback");
+    }
+    to_result(&output)
+}
+
+fn dispatch_link_feedback_list(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let output = execute_link_feedback_list(storage, tree);
+    to_result(&output)
+}
+
+fn dispatch_link_feedback_rm(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let feedback = get_str(args, "feedback")?;
+
+    let capture = history_begin(storage);
+    let output = execute_link_feedback_rm(storage, tree, feedback);
+    if output.success {
+        history_commit(capture, "link_feedback_rm", "mcp:ltp/link_feedback_rm");
     }
     to_result(&output)
 }

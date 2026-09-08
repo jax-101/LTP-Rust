@@ -256,6 +256,29 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         }),
     ));
     tools.push(tool(
+        "ltp/link_feedback_list",
+        "List all feedback edges in a tree",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" }
+            },
+            "required": ["tree"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/link_feedback_rm",
+        "Remove a feedback edge by ID",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "feedback": { "type": "string", "description": "Feedback edge ID (e.g. FB-001)" }
+            },
+            "required": ["tree", "feedback"]
+        }),
+    ));
+    tools.push(tool(
         "ltp/link_inspect",
         "Inspect a link's full details",
         json!({

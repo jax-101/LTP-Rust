@@ -63,6 +63,20 @@ pub struct LinkFeedbackData {
     pub loop_type: FeedbackLoopType,
 }
 
+/// Data returned by `link feedback-list`.
+#[derive(Debug, Serialize)]
+pub struct LinkFeedbackListData {
+    pub tree_id: String,
+    pub feedback_edges: Vec<FeedbackEdge>,
+}
+
+/// Data returned by `link feedback-rm`.
+#[derive(Debug, Serialize)]
+pub struct LinkFeedbackRmData {
+    pub removed_id: String,
+    pub tree_id: String,
+}
+
 // --- Command implementations ---
 
 /// Execute `link connect`.
@@ -705,6 +719,172 @@ pub fn execute_link_feedback(
             from: from.to_string(),
             to: to.to_string(),
             loop_type,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Execute `link feedback-list`.
+pub fn execute_link_feedback_list(
+    storage: &dyn Storage,
+    tree_id: &str,
+) -> CommandOutput<LinkFeedbackListData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "link_feedback_list".to_string(),
+                workspace: ws_name,
+                data: LinkFeedbackListData {
+                    tree_id: tree_id.to_string(),
+                    feedback_edges: vec![],
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    CommandOutput {
+        success: true,
+        action: "link_feedback_list".to_string(),
+        workspace: ws_name,
+        data: LinkFeedbackListData {
+            tree_id: tree_id.to_string(),
+            feedback_edges: tree.feedback_edges,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings: vec![],
+    }
+}
+
+/// Execute `link feedback-rm`.
+pub fn execute_link_feedback_rm(
+    storage: &dyn Storage,
+    tree_id: &str,
+    feedback_id: &str,
+) -> CommandOutput<LinkFeedbackRmData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let lock_outcome = match storage.acquire_lock("link feedback-rm") {
+        Ok(o) => o,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "link_feedback_rm".to_string(),
+                workspace: ws_name,
+                data: LinkFeedbackRmData {
+                    removed_id: String::new(),
+                    tree_id: tree_id.to_string(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "link_feedback_rm".to_string(),
+                workspace: ws_name,
+                data: LinkFeedbackRmData {
+                    removed_id: String::new(),
+                    tree_id: tree_id.to_string(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    if !tree.feedback_edges.iter().any(|fe| fe.id == feedback_id) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "link_feedback_rm".to_string(),
+            workspace: ws_name,
+            data: LinkFeedbackRmData {
+                removed_id: String::new(),
+                tree_id: tree_id.to_string(),
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "FEEDBACK_EDGE_NOT_FOUND",
+                format!(
+                    "Feedback edge '{}' not found in tree '{}'",
+                    feedback_id, tree_id
+                ),
+            )],
+            warnings: vec![],
+        };
+    }
+
+    tree.feedback_edges.retain(|fe| fe.id != feedback_id);
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "link_feedback_rm".to_string(),
+            workspace: ws_name,
+            data: LinkFeedbackRmData {
+                removed_id: String::new(),
+                tree_id: tree_id.to_string(),
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "link_feedback_rm".to_string(),
+        workspace: ws_name,
+        data: LinkFeedbackRmData {
+            removed_id: feedback_id.to_string(),
+            tree_id: tree_id.to_string(),
         },
         graph_health: GraphHealth {
             valid_dag: true,

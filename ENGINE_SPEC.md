@@ -34,7 +34,7 @@ El motor `ltp-engine` NO intenta adivinar flujos de trabajo ni empaquetar comand
 │    Supuestos:   assume add/edit/rm/list/move, invalidate               │
 │    Abstracción: path collapse/explode/replace                          │
 │    NBR:         nbr add/list/inspect                                   │
-│    Feedback:    link feedback                                          │
+│    Feedback:    link feedback/feedback-list/feedback-rm                 │
 │                                                                        │
 │  CAPA DE ANÁLISIS SEMÁNTICO (LLM / Humano — fuera del motor)          │
 │    El motor NUNCA juzga causalidad, claridad ni suficiencia.           │
@@ -161,6 +161,14 @@ Elimina uno o más edges. Batch: acepta lista separada por comas.
 #### `ltp link feedback --tree <TREE_ID> --from <ID1> --to <ID2> --type <positive|negative> [--label "<texto>"]`
 
 Crea una arista de retroalimentación (feedback loop) en el pool `feedback_edges` del tree. No participa en la validación DAG. Disponible en árboles de suficiencia (CRT, FRT, TT).
+
+#### `ltp link feedback-list --tree <TREE_ID>`
+
+Lista todas las feedback edges del tree. Solo lectura, sin historial. Acción: `link_feedback_list`. Data: `{ "tree_id", "feedback_edges": [{ "id", "from", "to", "loop_type", "label" }] }`. Si el tree no existe: error `TREE_NOT_FOUND`.
+
+#### `ltp link feedback-rm --tree <TREE_ID> --feedback <FB_ID>`
+
+Elimina una feedback edge por ID. Genera entrada de historial (undo la restaura). Acción: `link_feedback_rm`. Data: `{ "removed_id", "tree_id" }`. Si la feedback edge no existe: error `FEEDBACK_EDGE_NOT_FOUND`.
 
 ---
 

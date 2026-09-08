@@ -8,12 +8,13 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | F13 — Validation Enrichments |
+| **Última fase completada** | F14 — Feedback Edge Primitives |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
 | **Tests F13** | 11/11 |
-| **Tests totales** | 431 |
+| **Tests F14** | 6/6 |
+| **Tests totales** | 437 |
 
 ---
 
@@ -41,7 +42,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | ✅ | 6/6 |
 | F2a | Nodos standalone (add/edit/list/search) | 4% | ✅ | 9/9 |
 | F3 | Vistas (trees) | 8% | ✅ | 11/11 |
-| F4 | Enlaces básicos (connect/disconnect/feedback) | 9% | ✅ | 11/11 |
+| F4 | Enlaces básicos (connect/disconnect/feedback/feedback-list/feedback-rm) | 9% | ✅ | 17/17 |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | ✅ | 7/7 |
 | F5 | Validación completa | 8% | ✅ | 14/14 |
 | F6 | Enlaces avanzados | 14% | ✅ | 17/17 |
@@ -53,11 +54,33 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | E2E | Tests end-to-end | 4% | ✅ | 19/19 |
 | F12 | MCP Server | 7% | ✅ | 16/16 |
 | F13 | Validation Enrichments | — | ✅ | 11/11 |
-| | **TOTAL** | **100%** | **✅** | **202/202** |
+| F14 | Feedback Edge Primitives | — | ✅ | 6/6 |
+| | **TOTAL** | **100%** | **✅** | **208/208** |
 
 ---
 
 ## Historial de Avance
+
+### [F14] — Feedback Edge Primitives
+**Fecha**: 2026-09-08
+**Avance fase**: 6/6 tests ✅
+**Tests totales**: 431 → 437
+**Origen**: Completar CRUD de feedback edges (faltaban list y rm)
+
+#### Entregables
+- **`link feedback-list --tree <ID>`**: lista todas las feedback edges del tree. Solo lectura, sin historial. Reutiliza `FeedbackEdge` directamente en la respuesta (sin struct intermedio).
+- **`link feedback-rm --tree <ID> --feedback <FB-ID>`**: elimina feedback edge por ID con historial (undo la restaura). Error `FEEDBACK_EDGE_NOT_FOUND` si no existe.
+- **MCP tools**: `ltp/link_feedback_list` y `ltp/link_feedback_rm` (63 tools totales).
+- 6 tests de integración CLI (UATs 4.12–4.17): list normal, list vacío, list tree not found, rm normal, rm not found, rm + undo roundtrip.
+
+#### Decisiones
+- Six Hats aprobó propuesta sin cambios. Dangling knowledge refs a FB-* eliminados ya cubiertos por `validate` (`DANGLING_KNOWLEDGE_REF`), sin duplicar lógica en feedback-rm.
+- Sin batch rm: se compone con `history begin-batch` + N llamadas.
+
+#### Siguiente
+- Fase completada. Sin tareas pendientes.
+
+---
 
 ### [F13] — Validation Enrichments
 **Fecha**: 2026-09-01 (actualizado 2026-09-05)

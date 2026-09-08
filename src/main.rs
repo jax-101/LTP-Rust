@@ -26,6 +26,7 @@ use ltp_engine::link::advanced::{
 };
 use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
+    execute_link_feedback_list, execute_link_feedback_rm,
 };
 use ltp_engine::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use ltp_engine::node::commands::{
@@ -332,6 +333,16 @@ enum LinkAction {
         r#type: String,
         #[arg(long)]
         label: Option<String>,
+    },
+    FeedbackList {
+        #[arg(long)]
+        tree: String,
+    },
+    FeedbackRm {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        feedback: String,
     },
     Inspect {
         link_id: String,
@@ -1342,6 +1353,24 @@ fn main() {
                     execute_link_feedback(&storage, &tree, &from, &to, &r#type, label.as_deref());
                 if output.success {
                     history_commit(capture, "link_feedback", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::FeedbackList { tree } => {
+                let output = execute_link_feedback_list(&storage, &tree);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            LinkAction::FeedbackRm { tree, feedback } => {
+                let capture = history_begin(&storage);
+                let output = execute_link_feedback_rm(&storage, &tree, &feedback);
+                if output.success {
+                    history_commit(capture, "link_feedback_rm", &full_command);
                 }
                 render_output(&output, cli.human);
                 if !output.success {

@@ -507,3 +507,242 @@ fn uat_4_11_status_reports_feedback() {
     assert_eq!(trees.len(), 1);
     assert_eq!(trees[0]["feedback_edge_count"], 1);
 }
+
+/// UAT 4.12: feedback-list returns all feedback edges with correct fields.
+#[test]
+fn uat_4_12_feedback_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let node_a = add_node(dir, "Effect A", "ude");
+    let node_b = add_node(dir, "Root Cause B", "rc");
+    let tree_id = create_tree(dir, "crt", "TestTree");
+    attach_node(dir, &tree_id, &node_a);
+    attach_node(dir, &tree_id, &node_b);
+
+    run_ltp(
+        dir,
+        &[
+            "link", "connect", "--tree", &tree_id, "--from", &node_b, "--to", &node_a,
+        ],
+    );
+
+    run_ltp(
+        dir,
+        &[
+            "link",
+            "feedback",
+            "--tree",
+            &tree_id,
+            "--from",
+            &node_a,
+            "--to",
+            &node_b,
+            "--type",
+            "positive",
+            "--label",
+            "Reinforcing",
+        ],
+    );
+    run_ltp(
+        dir,
+        &[
+            "link", "feedback", "--tree", &tree_id, "--from", &node_b, "--to", &node_a, "--type",
+            "negative",
+        ],
+    );
+
+    let (json, code) = run_ltp(dir, &["link", "feedback-list", "--tree", &tree_id]);
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["action"], "link_feedback_list");
+    let edges = json["data"]["feedback_edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    assert_eq!(edges[0]["id"], "FB-001");
+    assert_eq!(edges[0]["loop_type"], "positive");
+    assert_eq!(edges[0]["label"], "Reinforcing");
+    assert_eq!(edges[1]["id"], "FB-002");
+    assert_eq!(edges[1]["loop_type"], "negative");
+    assert!(edges[1]["label"].is_null());
+}
+
+/// UAT 4.13: feedback-list on tree with no feedback returns empty array.
+#[test]
+fn uat_4_13_feedback_list_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let tree_id = create_tree(dir, "crt", "EmptyTree");
+
+    let (json, code) = run_ltp(dir, &["link", "feedback-list", "--tree", &tree_id]);
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    let edges = json["data"]["feedback_edges"].as_array().unwrap();
+    assert!(edges.is_empty());
+}
+
+/// UAT 4.14: feedback-list on non-existent tree returns TREE_NOT_FOUND.
+#[test]
+fn uat_4_14_feedback_list_tree_not_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let (json, code) = run_ltp(dir, &["link", "feedback-list", "--tree", "tree-ghost"]);
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "TREE_NOT_FOUND");
+}
+
+/// UAT 4.15: feedback-rm removes feedback edge by ID.
+#[test]
+fn uat_4_15_feedback_rm() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let node_a = add_node(dir, "Effect A", "ude");
+    let node_b = add_node(dir, "Root Cause B", "rc");
+    let tree_id = create_tree(dir, "crt", "TestTree");
+    attach_node(dir, &tree_id, &node_a);
+    attach_node(dir, &tree_id, &node_b);
+
+    run_ltp(
+        dir,
+        &[
+            "link", "connect", "--tree", &tree_id, "--from", &node_b, "--to", &node_a,
+        ],
+    );
+    run_ltp(
+        dir,
+        &[
+            "link", "feedback", "--tree", &tree_id, "--from", &node_a, "--to", &node_b, "--type",
+            "positive",
+        ],
+    );
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "feedback-rm",
+            "--tree",
+            &tree_id,
+            "--feedback",
+            "FB-001",
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["action"], "link_feedback_rm");
+    assert_eq!(json["data"]["removed_id"], "FB-001");
+    assert_eq!(json["data"]["tree_id"], tree_id);
+
+    // Verify feedback-list is now empty
+    let (json2, _) = run_ltp(dir, &["link", "feedback-list", "--tree", &tree_id]);
+    let edges = json2["data"]["feedback_edges"].as_array().unwrap();
+    assert!(edges.is_empty());
+}
+
+/// UAT 4.16: feedback-rm with non-existent ID returns FEEDBACK_EDGE_NOT_FOUND.
+#[test]
+fn uat_4_16_feedback_rm_not_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let tree_id = create_tree(dir, "crt", "TestTree");
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "feedback-rm",
+            "--tree",
+            &tree_id,
+            "--feedback",
+            "FB-999",
+        ],
+    );
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "FEEDBACK_EDGE_NOT_FOUND");
+}
+
+/// UAT 4.17: feedback-rm + undo restores the feedback edge.
+#[test]
+fn uat_4_17_feedback_rm_undo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let node_a = add_node(dir, "Effect A", "ude");
+    let node_b = add_node(dir, "Root Cause B", "rc");
+    let tree_id = create_tree(dir, "crt", "TestTree");
+    attach_node(dir, &tree_id, &node_a);
+    attach_node(dir, &tree_id, &node_b);
+
+    run_ltp(
+        dir,
+        &[
+            "link", "connect", "--tree", &tree_id, "--from", &node_b, "--to", &node_a,
+        ],
+    );
+    run_ltp(
+        dir,
+        &[
+            "link",
+            "feedback",
+            "--tree",
+            &tree_id,
+            "--from",
+            &node_a,
+            "--to",
+            &node_b,
+            "--type",
+            "positive",
+            "--label",
+            "Loop to restore",
+        ],
+    );
+
+    // Remove feedback edge
+    let (_, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "feedback-rm",
+            "--tree",
+            &tree_id,
+            "--feedback",
+            "FB-001",
+        ],
+    );
+    assert_eq!(code, 0);
+
+    // Verify it's gone
+    let (json, _) = run_ltp(dir, &["link", "feedback-list", "--tree", &tree_id]);
+    assert!(json["data"]["feedback_edges"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // Undo
+    let (undo_json, code) = run_ltp(dir, &["undo"]);
+    assert_eq!(code, 0);
+    assert_eq!(undo_json["success"], true);
+
+    // Verify feedback edge is back
+    let (json2, _) = run_ltp(dir, &["link", "feedback-list", "--tree", &tree_id]);
+    let edges = json2["data"]["feedback_edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0]["id"], "FB-001");
+    assert_eq!(edges[0]["label"], "Loop to restore");
+}
