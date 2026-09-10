@@ -668,6 +668,16 @@ pub fn execute_link_insert_between(
 
     let edge = tree.edges[edge_idx].clone();
 
+    let inherited_assumptions: Vec<Assumption> = edge
+        .assumptions
+        .iter()
+        .cloned()
+        .map(|mut a| {
+            a.status = AssumptionStatus::NeedsReview;
+            a
+        })
+        .collect();
+
     // Compute the edge list the tree would have *after* the mutation, plus
     // the created/removed link IDs to report. Nothing touches `tree.edges`
     // until the DAG check below passes.
@@ -712,7 +722,16 @@ pub fn execute_link_insert_between(
                 }
             };
 
-            let edge1 = single_edge(new1_id.clone(), a, node_id.to_string());
+            let edge1 = Edge {
+                id: new1_id.clone(),
+                from: vec![a],
+                to: node_id.to_string(),
+                operator: Operator::Single,
+                weight: None,
+                status: EdgeStatus::Active,
+                logic: Logic::Sufficiency,
+                assumptions: inherited_assumptions.clone(),
+            };
             let edge2 = single_edge(new2_id.clone(), node_id.to_string(), b);
 
             let mut edges: Vec<Edge> = tree
@@ -796,7 +815,7 @@ pub fn execute_link_insert_between(
                 weight: edge.weight,
                 status: EdgeStatus::Active,
                 logic: edge.logic,
-                assumptions: vec![],
+                assumptions: inherited_assumptions.clone(),
             };
             let edge2 = single_edge(new2_id.clone(), node_id.to_string(), edge.to);
 
@@ -858,6 +877,19 @@ pub fn execute_link_insert_between(
     let mut warnings = vec![];
     if let Some(w) = stale_lock_warning(&lock_outcome) {
         warnings.push(w);
+    }
+    if !inherited_assumptions.is_empty() {
+        let asm_ids: Vec<&str> = inherited_assumptions
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        warnings.push(OutputWarning::new(
+            "ASSUMPTIONS_MOVED_NEED_REVIEW",
+            format!(
+                "Assumptions [{}] moved to edge preserving original causes; status set to needs_review",
+                asm_ids.join(", ")
+            ),
+        ));
     }
 
     CommandOutput {

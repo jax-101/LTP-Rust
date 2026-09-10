@@ -199,8 +199,10 @@ Redirige un edge existente a otro nodo origen y/o destino.
 Inserta un nodo intermedio en un edge existente. Para edges SINGLE: A→B se convierte en A→C→B (dos edges nuevos, se elimina el original).
 
 Para edges AND:
-- `--insert-after-cause <ID>`: extrae esa causa del grupo, crea CauseX→Nodo, y Nodo se añade al grupo original en su lugar.
+- `--insert-after-cause <ID>`: extrae esa causa del grupo, crea CauseX→Nodo, y Nodo se añade al grupo original en su lugar. El edge original se modifica in-place; assumptions se conservan intactas.
 - `--insert-before-effect`: `[A, B] --AND--> C` se convierte en `[A, B] --AND--> Nodo` + `Nodo → C`.
+
+**Assumptions**: en los casos SINGLE e `--insert-before-effect`, los assumptions del edge original se copian al edge que preserva las causas originales (edge1) con `status: "needs_review"`. El edge hacia el destino original (edge2) no hereda assumptions. Se emite warning `ASSUMPTIONS_MOVED_NEED_REVIEW` si había assumptions. En `--insert-after-cause`, el edge original sobrevive modificado y sus assumptions se conservan sin cambios.
 
 ---
 

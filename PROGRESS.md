@@ -9,12 +9,13 @@
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
 | **Última fase completada** | F14 — Feedback Edge Primitives |
+| **Último bugfix** | insert-between assumptions preservation |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
 | **Tests F13** | 11/11 |
 | **Tests F14** | 6/6 |
-| **Tests totales** | 437 |
+| **Tests totales** | 440 |
 
 ---
 
@@ -45,7 +46,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F4 | Enlaces básicos (connect/disconnect/feedback/feedback-list/feedback-rm) | 9% | ✅ | 17/17 |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | ✅ | 7/7 |
 | F5 | Validación completa | 8% | ✅ | 14/14 |
-| F6 | Enlaces avanzados | 14% | ✅ | 17/17 |
+| F6 | Enlaces avanzados | 14% | ✅ | 20/20 |
 | F7 | Supuestos (assumptions) | 6% | ✅ | 15/15 |
 | F8 | Navegación (trace) | 6% | ✅ | 15/15 |
 | F9 | Abstracción (path) | 8% | ✅ | 12/12 |
@@ -55,11 +56,33 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F12 | MCP Server | 7% | ✅ | 16/16 |
 | F13 | Validation Enrichments | — | ✅ | 11/11 |
 | F14 | Feedback Edge Primitives | — | ✅ | 6/6 |
-| | **TOTAL** | **100%** | **✅** | **208/208** |
+| | **TOTAL** | **100%** | **✅** | **211/211** |
 
 ---
 
 ## Historial de Avance
+
+### [Bugfix] — insert-between pierde assumptions
+**Fecha**: 2026-09-10
+**Tests**: 437 → 440 (+3 UATs en F6: 6.18, 6.19, 6.20)
+
+#### Problema
+`link insert-between` creaba edges nuevos con `single_edge()` que inicializa `assumptions: vec![]`. Los assumptions del edge original se descartaban al filtrar el edge en los casos SINGLE e `--insert-before-effect`. El caso `--insert-after-cause` ya estaba OK (edge modificado in-place).
+
+#### Fix
+Análisis Six Thinking Hats → regla: "el edge que conserva las causas originales hereda assumptions con `needs_review`". Consistente con `link dissolve`, `link reverse --force`, y `link group`.
+
+- **SINGLE** (A→B → A→C + C→B): assumptions → edge1 (A→C), status `needs_review`
+- **insert-before-effect** (AND(A,B)→D → AND(A,B)→C + C→D): assumptions → edge1 (AND(A,B)→C), status `needs_review`
+- **insert-after-cause**: sin cambios (ya correcto)
+- Warning `ASSUMPTIONS_MOVED_NEED_REVIEW` emitido cuando hay assumptions transferidos
+
+#### Archivos modificados
+- `src/link/advanced.rs`: `inherited_assumptions` con `NeedsReview`, aplicadas a edge1 en ambos casos, warning condicional
+- `tests/fase_06.rs`: 3 tests nuevos (SINGLE con assumptions, after-cause preserva intactos, before-effect con assumptions)
+- `ENGINE_SPEC.md`: documentado comportamiento de assumptions en insert-between
+
+---
 
 ### [F14] — Feedback Edge Primitives
 **Fecha**: 2026-09-08

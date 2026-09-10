@@ -1025,3 +1025,256 @@ fn uat_6_17_rm_cause_reduces_to_single() {
     assert_eq!(json["data"]["removed_node"], a);
     assert_eq!(json["data"]["new_operator"], "SINGLE");
 }
+
+/// UAT 6.18: insert-between SINGLE preserves assumptions on edge1 (A→X)
+/// with status needs_review + emits ASSUMPTIONS_MOVED_NEED_REVIEW warning.
+#[test]
+fn uat_6_18_insert_between_single_preserves_assumptions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Effect B", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "AsmSingle");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &x);
+    let link = connect(dir, &tree, &a, &b);
+
+    inject_assumption(dir, &tree, &link, "ASM-001", "Budget is approved");
+    inject_assumption(dir, &tree, &link, "ASM-002", "Team is available");
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+
+    let warnings = json["warnings"].as_array().unwrap();
+    let moved_warn = warnings
+        .iter()
+        .find(|w| w["code"] == "ASSUMPTIONS_MOVED_NEED_REVIEW");
+    assert!(
+        moved_warn.is_some(),
+        "Missing ASSUMPTIONS_MOVED_NEED_REVIEW warning"
+    );
+
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+
+    let edge1 = edges
+        .iter()
+        .find(|e| e["from"][0] == a)
+        .expect("edge A->X missing");
+    assert_eq!(edge1["to"], x);
+    let asms = edge1["assumptions"].as_array().unwrap();
+    assert_eq!(asms.len(), 2);
+    assert_eq!(asms[0]["id"], "ASM-001");
+    assert_eq!(asms[0]["status"], "needs_review");
+    assert_eq!(asms[1]["id"], "ASM-002");
+    assert_eq!(asms[1]["status"], "needs_review");
+
+    let edge2 = edges
+        .iter()
+        .find(|e| e["from"][0] == x)
+        .expect("edge X->B missing");
+    assert_eq!(edge2["to"], b);
+    let asms2 = edge2["assumptions"].as_array().unwrap();
+    assert_eq!(asms2.len(), 0);
+}
+
+/// UAT 6.19: insert-between AND + --insert-after-cause preserves assumptions
+/// on the original group edge (modified in-place). No warning emitted because
+/// the original edge survives — assumptions stay with their original context.
+#[test]
+fn uat_6_19_insert_between_after_cause_preserves_assumptions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "AsmAfterCause");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &x);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_eq!(code, 0);
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    inject_assumption(dir, &tree, &link, "ASM-010", "Both teams aligned");
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+            "--insert-after-cause",
+            &a,
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+
+    let group_edge = edges
+        .iter()
+        .find(|e| e["id"] == link)
+        .expect("original grouped edge missing");
+    let asms = group_edge["assumptions"].as_array().unwrap();
+    assert_eq!(asms.len(), 1);
+    assert_eq!(asms[0]["id"], "ASM-010");
+    assert_eq!(
+        asms[0]["status"], "valid",
+        "in-place edge keeps original status"
+    );
+}
+
+/// UAT 6.20: insert-between AND + --insert-before-effect preserves
+/// assumptions on edge1 (the new grouped edge that keeps from[]/operator)
+/// with status needs_review + warning.
+#[test]
+fn uat_6_20_insert_between_before_effect_preserves_assumptions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let a = add_node(dir, "Cause A", "rc");
+    let b = add_node(dir, "Cause B", "rc");
+    let c = add_node(dir, "Effect C", "ude");
+    let x = add_node(dir, "Intermediate X", "int");
+    let tree = create_tree(dir, "crt", "AsmBeforeEffect");
+    attach_node(dir, &tree, &a);
+    attach_node(dir, &tree, &b);
+    attach_node(dir, &tree, &c);
+    attach_node(dir, &tree, &x);
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &format!("{},{}", a, b),
+            "--to",
+            &c,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_eq!(code, 0);
+    let link = json["data"]["created_links"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    inject_assumption(dir, &tree, &link, "ASM-020", "Resources guaranteed");
+
+    let (json, code) = run_ltp(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--node",
+            &x,
+            "--insert-before-effect",
+        ],
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+
+    let warnings = json["warnings"].as_array().unwrap();
+    let moved_warn = warnings
+        .iter()
+        .find(|w| w["code"] == "ASSUMPTIONS_MOVED_NEED_REVIEW");
+    assert!(
+        moved_warn.is_some(),
+        "Missing ASSUMPTIONS_MOVED_NEED_REVIEW warning"
+    );
+
+    let tree_file = dir.join("trees").join(format!("{}.json", tree));
+    let tree_content: Value =
+        serde_json::from_str(&std::fs::read_to_string(&tree_file).unwrap()).unwrap();
+    let edges = tree_content["edges"].as_array().unwrap();
+
+    let edge1 = edges
+        .iter()
+        .find(|e| e["operator"] == "AND")
+        .expect("grouped edge [A,B]->X missing");
+    assert_eq!(edge1["to"], x);
+    let from: Vec<&str> = edge1["from"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(from.contains(&a.as_str()));
+    assert!(from.contains(&b.as_str()));
+    let asms = edge1["assumptions"].as_array().unwrap();
+    assert_eq!(asms.len(), 1);
+    assert_eq!(asms[0]["id"], "ASM-020");
+    assert_eq!(asms[0]["status"], "needs_review");
+
+    let edge2 = edges
+        .iter()
+        .find(|e| e["operator"] == "SINGLE")
+        .expect("SINGLE edge X->C missing");
+    assert_eq!(edge2["from"][0], x);
+    assert_eq!(edge2["to"], c);
+    let asms2 = edge2["assumptions"].as_array().unwrap();
+    assert_eq!(asms2.len(), 0);
+}
