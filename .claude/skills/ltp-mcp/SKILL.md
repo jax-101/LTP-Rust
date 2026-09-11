@@ -171,6 +171,40 @@ La Evaporating Cloud requiere un protocolo de auditoria riguroso (5 checks) y un
 | Vistas | `path_collapse` -> `tree_walk` |
 | Control | `history_begin_batch` -> [ops] -> `history_end_batch` -> `undo` si necesario |
 
+## 8. Knowledge Capture Protocol
+
+Durante la construccion de arboles, capturar proactivamente knowledge items (datos, testimonios, hipotesis) que el usuario mencione.
+
+### Flujo
+
+1. **Detectar**: mientras se construye, identificar menciones de datos cuantitativos, testimonios, hipotesis, documentos u observaciones.
+2. **Acumular**: no interrumpir el flujo causal. Mantener lista interna de candidatos.
+3. **Ofrecer en lotes**: en pausas naturales o cuando el usuario pregunte, presentar candidatos en formato compacto:
+   - Label, type, target propuesto, relation propuesta.
+4. **Capturar aprobados**: los que el usuario confirme entran al pool con el status/confidence que corresponda, sin tag especial.
+5. **Safety net**: al cerrar bloque de trabajo sin confirmacion explicita, capturar pendientes con:
+   - `status: "unverified"`
+   - `confidence: "low"`
+   - `tags: ["_candidate"]`
+
+### Consulta de candidatos
+
+El usuario puede pedir ver los candidatos pendientes en cualquier momento. Responder con la lista acumulada.
+
+### Triaje posterior
+
+- Inbox: `ltp/knowledge list --tag _candidate`
+- Promover: `ltp/knowledge edit --rm-tag _candidate --confidence high`
+- Eliminar: `ltp/knowledge rm`
+
+### Convencion
+
+| Campo | Valor para candidatos no confirmados |
+|-------|--------------------------------------|
+| status | `unverified` |
+| confidence | `low` |
+| tags | `["_candidate"]` |
+
 ## Common Mistakes
 
 | Error | Consecuencia | Correccion |
