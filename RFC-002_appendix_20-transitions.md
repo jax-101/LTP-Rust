@@ -1,18 +1,21 @@
-# RFC-002 Apendice: Auditoria Sistematica de las 20 Transiciones entre Arboles LTP
+# RFC-002 Apendice: Auditoria Sistematica de las 36 Transiciones entre Arboles LTP
 
 | Campo       | Valor                              |
 |-------------|------------------------------------|
 | Status      | **EXPLORING**                      |
 | Author      | Javier Asensio                     |
 | Created     | 2026-09-11                         |
+| Updated     | 2026-09-12                         |
 | Parent      | RFC-002 (Meta-Grafo)               |
-| Scope       | Grafo dirigido completo 5×4 = 20 transiciones entre GT, CRT, EC, FRT, PRT/TT |
+| Scope       | Grafo dirigido completo 6×6 = 36 transiciones entre GT, CRT, EC, FRT, NBR, PRT/TT (20 inter-arbol + 10 con NBR + 6 auto-transiciones) |
 
 ---
 
 ## 1. Contexto
 
-El LTP de Dettmer/Fedurko se ensena como secuencia lineal: GT → CRT → EC → FRT → PRT → TT. Pero en la practica avanzada los arboles funcionan como un **ecosistema modular**. Hay retroalimentaciones, saltos, iteraciones. Este apendice audita exhaustivamente las 20 transiciones directas posibles (5 tipos de arbol × 4 destinos cada uno) para servir como guia tecnica de referencia y como input para los `relation_type` del meta-grafo (RFC-002 seccion 3.2).
+El LTP de Dettmer/Fedurko se ensena como secuencia lineal: GT → CRT → EC → FRT → PRT → TT. Pero en la practica avanzada los arboles funcionan como un **ecosistema modular**. Hay retroalimentaciones, saltos, iteraciones. Este apendice audita exhaustivamente las 36 transiciones posibles en una matriz 6×6 (GT, CRT, EC, FRT, NBR, PRT/TT): 20 transiciones inter-arbol originales + 10 transiciones con NBR como 6.ª herramienta + 6 auto-transiciones (diagonal). Sirve como guia tecnica de referencia y como input para los `relation_type` del meta-grafo (RFC-002 seccion 3.2).
+
+> **Nota sobre NBR**: el NBR (Negative Branch Reservation) es un proceso analitico distinto del FRT. Aunque se aplica *sobre* el FRT, genera sus propios artefactos (UDEs colaterales, trimming INJs) y retroalimenta multiples arboles. Tratarlo como herramienta independiente captura transiciones que de otro modo quedan implicitas.
 
 ### Logica de cada arbol
 
@@ -22,38 +25,42 @@ El LTP de Dettmer/Fedurko se ensena como secuencia lineal: GT → CRT → EC →
 | CRT | Suficiencia | "Si A, entonces B" | Bottom-up |
 | EC | Necesidad | "Para A, necesito B; para B, debo D" + XOR | Top-down |
 | FRT | Suficiencia | "Si INJ, entonces DE" | Bottom-up |
+| NBR | Suficiencia | "Si INJ, Y SI [condicion], entonces [efecto negativo]" | Bottom-up |
 | PRT/TT | Necesidad (PRT) / Suficiencia (TT) | PRT: "Para INJ, debo superar OBS via IO" / TT: "Si accion, entonces nueva realidad" | PRT top-down, TT bottom-up |
 
 > **Nota sobre PRT/TT**: se tratan como unidad por su acoplamiento funcional (IOs del PRT alimentan directamente el TT). Cuando la distincion importa se explicita.
 
+> **Nota sobre NBR**: el NBR opera con logica de suficiencia — extiende cadenas causales del FRT anadiendo condiciones negativas ("Y SI...") para explorar ramas de riesgo. Los efectos negativos que identifica son **UDEs colaterales**: misma tipologia que las UDEs del CRT, distinto origen (nacen de la INJ, no de la realidad actual).
+
 ---
 
-## 2. Matriz Resumen 5×5
+## 2. Matriz Resumen 6×6
 
-Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalimentacion/Ajuste, **(c)** Patron Avanzado/No Convencional.
+Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalimentacion/Ajuste, **(c)** Patron Avanzado/No Convencional. La diagonal (auto-transiciones) se marca con **(d)**.
 
-| Origen ↓ \ Destino → | GT | CRT | EC | FRT | PRT/TT |
-|---|---|---|---|---|---|
-| **GT** | — | **(a)** gap_analysis | **(c)** validacion directa | **(c)** benchmark futuro | **(c)** roadmap estrategico |
-| **CRT** | **(b)** feedback norma | — | **(a)** core_conflict | **(c)** salto directo | **(c)** accion de emergencia |
-| **EC** | **(b)** redefinicion meta | **(b)** revision causal | — | **(a)** injection | **(c)** implementacion directa |
-| **FRT** | **(c)** revision meta | **(b)** revision | **(b)** challenges | — | **(a)** prerequisite/tactical |
-| **PRT/TT** | **(b)** revision meta | **(b)** realidad cambiada | **(c)** nuevo conflicto | **(b)** feedback futuro | — |
+| Origen ↓ \ Destino → | GT | CRT | EC | FRT | NBR | PRT/TT |
+|---|---|---|---|---|---|---|
+| **GT** | **(d)** T31 self_revision | **(a)** T01 gap_analysis | **(c)** T02 validacion directa | **(c)** T03 benchmark futuro | **(c)** T26 risk proactivo | **(c)** T04 roadmap estrategico |
+| **CRT** | **(b)** T05 feedback norma | **(d)** T32 extends | **(a)** T06 core_conflict | **(c)** T07 salto directo | **(c)** T27 anticipacion riesgo | **(c)** T08 accion emergencia |
+| **EC** | **(b)** T09 redefinicion meta | **(b)** T10 revision causal | **(d)** T33 self_revision | **(a)** T11 injection | **(c)** T28 risk pre-FRT | **(c)** T12 implementacion directa |
+| **FRT** | **(c)** T13 revision meta | **(b)** T14 revision | **(b)** T15 challenges | **(d)** T34 extends | **(a)** T29 risk_check | **(a)** T16 prerequisite/tactical |
+| **NBR** | **(c)** T21 revision meta riesgo | **(b)** T22 realidad oculta | **(b)** T23 nuevo conflicto | **(a)** T24 trimming | **(d)** T35 extends | **(b)** T25 obstaculos riesgo |
+| **PRT/TT** | **(b)** T17 revision meta | **(b)** T18 realidad cambiada | **(c)** T19 nuevo conflicto | **(b)** T20 feedback futuro | **(b)** T30 riesgos impl. | **(d)** T36 self_revision |
 
 ### Leyenda de colores logicos
 
 | Transicion logica | Pares |
 |-------------------|-------|
-| nec → suf | GT→CRT, EC→FRT, PRT→TT |
-| suf → nec | CRT→EC, FRT→PRT, CRT→GT, FRT→EC, TT→PRT |
-| nec → nec | GT→EC, EC→GT, GT→PRT/TT, EC→PRT/TT, PRT→GT |
-| suf → suf | CRT→FRT, FRT→CRT, CRT→PRT/TT*, TT→CRT, TT→FRT |
+| nec → suf | GT→CRT, EC→FRT, PRT→TT, GT→NBR, EC→NBR |
+| suf → nec | CRT→EC, FRT→PRT, CRT→GT, FRT→EC, TT→PRT, NBR→GT, NBR→EC |
+| nec → nec | GT→EC, EC→GT, GT→PRT/TT, EC→PRT/TT, PRT→GT, GT→GT, EC→EC, PRT→PRT |
+| suf → suf | CRT→FRT, FRT→CRT, CRT→PRT/TT*, TT→CRT, TT→FRT, FRT→NBR, NBR→FRT, NBR→CRT, NBR→PRT/TT, CRT→NBR, CRT→CRT, FRT→FRT, NBR→NBR, TT→NBR |
 
 *PRT es necesidad; TT es suficiencia. Se indica en cada transicion.
 
 ---
 
-## 3. Las 20 Transiciones — Analisis Detallado
+## 3. Las 36 Transiciones — Analisis Detallado
 
 ---
 
@@ -469,87 +476,458 @@ Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalim
 
 ---
 
+### GRUPO F: Transiciones desde/hacia el NBR (Negative Branch Reservation)
+
+> **Premisa**: el NBR es el 6.º proceso analitico del LTP. Opera con logica de suficiencia extendiendo cadenas causales del FRT con condiciones adversas ("Y SI..."). Sus hallazgos — UDEs colaterales — retroalimentan multiples arboles. Tratar el NBR como herramienta independiente captura 10 transiciones que de otro modo quedan implicitas dentro de "el FRT tiene NBRs".
+
+---
+
+#### T21. NBR → GT — Revision de la Meta por Riesgo Sistemico
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(c) Patron Avanzado** — Raro. Solo cuando los riesgos cuestionan la meta misma |
+| **Logic transition** | suf → nec |
+| **relation_type** | `revision` |
+
+**Por que (Desencadenante):** El NBR revela que incluso con la mejor INJ disponible, los efectos colaterales son tan graves y sistémicos que la meta misma se vuelve cuestionable. No es un problema de la INJ — es que *cualquier* intervencion hacia esa meta genera riesgos inaceptables. El trigger es: "la meta produce riesgos inherentes que ninguna inyeccion puede mitigar".
+
+**Para que (Proposito):**
+1. **Cuestionar la meta antes de optimizar la solucion**: si el destino es toxico, mejorar la ruta no ayuda.
+2. **Incorporar dimensiones de riesgo al GT**: anadir CSFs de resiliencia, sostenibilidad o seguridad que la meta original no contemplaba.
+3. **Evitar la trampa de la escalada**: sin esta transicion, el analista busca INJ tras INJ para una meta que deberia reformularse.
+
+**Escenario de negocio:** El GT de una empresa logistica tiene Goal="Automatizacion total del almacen". La INJ elegida ("sistema robotizado de picking") genera un NBR: "Si automatizacion total, Y SI hay fallo de software, entonces paralizacion completa del almacen (0 capacidad manual residual)". Otro NBR: "Si automatizacion total, entonces despido masivo de personal local (riesgo reputacional y regulatorio)". Estos NBRs no se resuelven con trimming — son inherentes a la meta. Se vuelve al GT para reformular: "Automatizacion selectiva con capacidad manual residual del 30%".
+
+---
+
+#### T22. NBR → CRT — Descubrimiento de Realidad Oculta
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(b) Retroalimentacion/Ajuste** — Relativamente frecuente |
+| **Logic transition** | suf → suf |
+| **relation_type** | `revision` |
+
+**Por que (Desencadenante):** Los NBRs del FRT revelan cadenas causales de la realidad actual que el CRT no capturo. Al modelar "que pasaria si..." con la INJ, emergen condiciones del sistema actual que no eran visibles en el diagnostico original. El trigger es: "el analisis de riesgo revelo aspectos de la realidad que no habiamos diagnosticado".
+
+**Para que (Proposito):**
+1. **Completar el diagnostico con informacion emergente**: el CRT gana cadenas causales que solo se manifiestan cuando se intenta perturbar el sistema.
+2. **Entender por que los NBRs son posibles**: si el NBR dice "los conductores ignoraran las rutas", eso revela una realidad (cultura de autonomia) que el CRT deberia capturar.
+3. **Informar futuras iteraciones**: un CRT mas completo produce ECs mas precisas y FRTs mas robustos.
+
+**Escenario de negocio:** El FRT propone INJ "Optimizacion dinamica de rutas". El NBR identifica: "Si optimizacion dinamica, Y SI los conductores no confian en el algoritmo, entonces los conductores ignoran las rutas sugeridas y la eficiencia cae". Esto revela que el CRT no capturaba UDE-012: "Existe una cultura de autonomia entre los conductores que rechaza sistemas automatizados de decision". Se vuelve al CRT para incorporar esta cadena causal, lo que puede cambiar la CRC o ampliar el scope del conflicto.
+
+---
+
+#### T23. NBR → EC — Nuevo Conflicto por Efecto Colateral
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(b) Retroalimentacion/Ajuste** — El caso recursivo documentado en RFC-002 S14 |
+| **Logic transition** | suf → nec |
+| **relation_type** | `challenges` |
+
+**Por que (Desencadenante):** Un NBR grave que no se puede recortar con una trimming INJ genera un conflicto genuino. La UDE colateral es tan severa que requiere su propia EC para resolverla: hay dos necesidades incompatibles — la necesidad de implementar la INJ original y la necesidad de evitar el efecto colateral. El trigger es: "la solucion genera un problema que es un conflicto en si mismo".
+
+**Para que (Proposito):**
+1. **Resolver el efecto colateral con rigor**: una EC formal estructura el conflicto del NBR con supuestos invalidables, no con parches ad hoc.
+2. **Activar la recursion LTP controlada**: EC hija → INJ de trimming fundamentada → FRT actualizado. Cada nivel de recursion es visible en el meta-grafo.
+3. **Evitar la escalada de trimming**: sin EC, las trimming INJs se acumulan sin fundamento logico. Con EC, cada trimming tiene un supuesto invalidado que la justifica.
+
+**Escenario de negocio:** El FRT de "Optimizacion de rutas" tiene un NBR critico: "Si dependemos de un unico proveedor de software, Y SI el proveedor quiebra o sube precios, entonces lock-in tecnologico catastrofico". La trimming obvia ("tener plan B") es vaga. Se construye una EC: A="Implementar optimizacion de rutas exitosamente", B="Coste predecible a largo plazo" (→ D: "Contrato exclusivo con proveedor"), C="Flexibilidad tecnologica" (→ D': "Arquitectura multi-vendor"). Los supuestos revelan: "Asumimos que optimizacion avanzada requiere solucion propietaria". INJ de trimming fundamentada: "Implementar capa de abstraccion con API estandar (OSRM) que permita cambiar de proveedor sin reescritura".
+
+**Nota RFC-002 S14:** Esta transicion genera una EC hija que es **especifica del escenario** que produjo el NBR. No es compartida con otros escenarios. El meta-grafo debe capturar esta relacion de parentesco.
+
+---
+
+#### T24. NBR → FRT — Trimming (Recorte de Ramas Negativas)
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(a) Estandar/Secuencial** — El paso estandar post-NBR |
+| **Logic transition** | suf → suf |
+| **relation_type** | `trimming` (nuevo) |
+
+**Por que (Desencadenante):** El NBR ha identificado una UDE colateral que *puede* mitigarse con una trimming INJ — una intervencion adicional que elimina o reduce la rama negativa sin invalidar la INJ principal. El trigger es: "el riesgo es manejable con una intervencion adicional".
+
+**Para que (Proposito):**
+1. **Inmunizar el FRT**: cada trimming INJ anula una rama negativa, convirtiendo un FRT vulnerable en uno robusto.
+2. **Enriquecer la solucion**: las trimming INJs son parte integral de la solucion final — no son parches sino refinamientos.
+3. **Documentar la mitigacion**: el FRT actualizado muestra exactamente como cada riesgo se mitigo, con trazabilidad al NBR que lo origino.
+
+**Escenario de negocio:** El NBR del FRT de logistica identifica: "Si optimizacion dinamica, Y SI el algoritmo falla durante temporada alta, entonces todas las entregas se paralizan". Trimming INJ: "Implementar modo de fallback con rutas estaticas pre-calculadas que se activan automaticamente si el optimizador no responde en 30 segundos". El FRT se actualiza: la cadena "algoritmo falla → paralizacion" se corta con un nuevo DE: "Si fallo detectado, entonces fallback automatico → entregas continuan con eficiencia reducida (-15%) pero sin paralizacion".
+
+**Relacion con T23:** Si el NBR no se puede recortar con trimming (el riesgo es demasiado grave o la trimming es inviable), se escala a T23 (NBR→EC). La decision entre T24 y T23 es un juicio del analista sobre la severidad.
+
+---
+
+#### T25. NBR → PRT/TT — Obstaculos Derivados de Riesgos
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(b) Retroalimentacion/Ajuste** — Para NBRs menores que son riesgos operativos |
+| **Logic transition** | suf → nec (NBR→PRT) o suf → suf (NBR→TT) |
+| **relation_type** | `prerequisite` (atipico) |
+
+**Por que (Desencadenante):** El NBR identifica UDEs colaterales menores que no requieren trimming INJ (no son lo suficientemente graves para cambiar el FRT) pero si requieren gestion operativa durante la implementacion. Se convierten en obstaculos del PRT o en pasos preventivos del TT. El trigger es: "el riesgo es menor pero hay que gestionarlo durante la implementacion".
+
+**Para que (Proposito):**
+1. **No perder riesgos menores**: sin esta transicion, los NBRs que no escalan a trimming se olvidan. Con ella, se convierten en tareas explicitas del plan.
+2. **Enriquecer el PRT con mitigaciones**: los obstaculos derivados de NBRs son cualitativamente diferentes de los obstaculos de implementacion normales — son riesgos anticipados, no barreras presentes.
+3. **Priorizar la implementacion por riesgo**: los pasos del TT que mitigan NBRs pueden requerir secuenciacion especifica (mitigar antes de arriesgar).
+
+**Escenario de negocio:** El NBR del FRT identifica un riesgo menor: "Si optimizacion dinamica, Y SI los conductores no reciben formacion, entonces curva de adaptacion de 3 meses con eficiencia reducida". No es catastrofico (T24) ni genera conflicto (T23), pero requiere gestion. Se convierte en OBS del PRT: "Los conductores no estan formados en el nuevo sistema". IO: "Programa de formacion pre-lanzamiento". Paso del TT: "Semana -4: taller de 8h con conductores piloto; Semana -2: periodo de sombra con sistema en paralelo".
+
+---
+
+#### T26. GT → NBR — Evaluacion de Riesgos de la Norma
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(c) Patron Avanzado** — Muy raro. Evaluacion proactiva |
+| **Logic transition** | nec → suf |
+| **relation_type** | `risk_check` (atipico) |
+
+**Por que (Desencadenante):** Antes de diagnosticar la realidad actual (CRT), el analista quiere evaluar que riesgos inherentes tiene la propia norma del GT. Es un analisis proactivo: "si lograramos la meta tal como esta definida, que podria salir mal?" El trigger es: "queremos validar que la meta no tiene efectos secundarios antes de invertir en diagnostico y solucion".
+
+**Para que (Proposito):**
+1. **Deteccion temprana de metas toxicas**: si la meta misma genera riesgos inaceptables, mejor saberlo antes de meses de analisis.
+2. **Informar el diseno de la meta**: los NBRs proactivos sobre el GT pueden revelar CSFs que faltan (seguridad, sostenibilidad, etica).
+3. **Ahorro de esfuerzo**: si el GT necesita reformulacion por riesgos inherentes, evita un ciclo completo CRT→EC→FRT→NBR para descubrirlo.
+
+**Escenario de negocio:** Una empresa define su GT con Goal="Maximizar throughput del almacen a 10.000 pedidos/dia". Antes de diagnosticar por que hoy solo hacen 3.000, un NBR proactivo evalua: "Si 10.000 pedidos/dia, Y SI la infraestructura electrica actual es insuficiente, entonces riesgo de sobrecarga"; "Si 10.000 pedidos/dia, Y SI la normativa de seguridad limita el trafico interno de carretillas, entonces incumplimiento legal". Estos NBRs revelan que el Goal necesita CSFs adicionales: "Dentro de limites de infraestructura" y "Cumplimiento normativo de seguridad".
+
+**Advertencia metodologica:** Este patron es util como sanity check rapido, no como sustituto del flujo completo. Los NBRs sobre el GT son necesariamente abstractos (no hay INJ concreta que evaluar). Su valor es de filtro, no de diseno.
+
+---
+
+#### T27. CRT → NBR — Anticipacion de Riesgos Pre-Solucion
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(c) Patron Avanzado** — Raro. Evaluacion hipotetica |
+| **Logic transition** | suf → suf |
+| **relation_type** | `risk_check` (atipico) |
+
+**Por que (Desencadenante):** Al analizar la CRC del CRT, el analista anticipa que *cualquier* intervencion sobre esa causa raiz generara cierto tipo de riesgos, independientemente de la INJ especifica que se elija. Es un "pre-NBR" que evalua la zona de intervencion antes de tener una solucion concreta. El trigger es: "sabemos DONDE vamos a intervenir — evaluemos los riesgos de tocar esa zona".
+
+**Para que (Proposito):**
+1. **Guiar la EC**: saber que riesgos genera intervenir en la CRC ayuda a elegir supuestos que, al invalidarse, minimicen esos riesgos.
+2. **Filtrar INJs de alto riesgo**: si un tipo de intervencion esta pre-descartado por riesgos, la EC puede enfocarse en supuestos que generen INJs de otro tipo.
+3. **Preparar al equipo**: los stakeholders saben de antemano que tipo de riesgos acompanaran la solucion, sea cual sea.
+
+**Escenario de negocio:** El CRT identifica CRC: "El sistema de gestion de inventario es manual". El analista sabe que cualquier solucion implicara digitalizacion. Un NBR anticipatorio evalua: "Si digitalizamos el inventario (cualquier forma), Y SI los operarios no son digitalmente competentes, entonces periodo de caos operativo". Este riesgo es independiente de la INJ especifica (software A vs B). Saberlo de antemano guia la EC: buscar supuestos cuya invalidacion produzca INJs con curva de adopcion baja.
+
+**Advertencia metodologica:** Sin INJ concreta, los NBRs son genericos y de baja precision. Util como orientacion, no como evaluacion definitiva.
+
+---
+
+#### T28. EC → NBR — Evaluacion Rapida de Riesgo Pre-FRT
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(c) Patron Avanzado** — Para filtrar INJs antes de invertir en FRTs completos |
+| **Logic transition** | nec → suf |
+| **relation_type** | `risk_check` |
+
+**Por que (Desencadenante):** La EC ha producido multiples INJs (de invalidar supuestos distintos). Antes de construir un FRT completo para cada una, el analista aplica un NBR rapido a cada INJ para descartar las de riesgo inaceptable. El trigger es: "tenemos 3-5 INJs candidatas — filtremos por riesgo antes de invertir en simulacion completa".
+
+**Para que (Proposito):**
+1. **Eficiencia del proceso**: un FRT completo requiere esfuerzo significativo. Un NBR rapido por INJ es una evaluacion de 30 minutos vs dias de trabajo.
+2. **Descarte temprano**: si una INJ tiene un NBR catastrofico obvio (seguridad, legalidad), no merece FRT.
+3. **Priorizacion informada**: las INJs que sobrevivan al filtro de NBR rapido se priorizan por menor riesgo residual.
+
+**Escenario de negocio:** La EC de logistica produce 3 INJs: INJ-A "Optimizacion dinamica centralizada", INJ-B "Heuristicas locales por zona", INJ-C "Subcontratar toda la logistica". Un NBR rapido evalua: INJ-A tiene riesgo de single point of failure (medio), INJ-B tiene riesgo de sub-optimizacion global (bajo), INJ-C tiene riesgo de perdida de core competency (alto). Se descarta INJ-C, se priorizan INJ-B y INJ-A para FRT completo.
+
+**Relacion con escenarios (RFC-002 S14):** Esta transicion es el mecanismo natural del proceso scout en el modelo de escenarios: evaluar alternativas rapidamente antes de comprometerse.
+
+---
+
+#### T29. FRT → NBR — Verificacion de Ramas Negativas (Estandar)
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(a) Estandar/Secuencial** — Paso canonico post-FRT |
+| **Logic transition** | suf → suf |
+| **relation_type** | `risk_check` |
+
+**Por que (Desencadenante):** El FRT esta construido con la INJ principal y sus DEs. Antes de pasar a implementacion, hay que verificar sistematicamente si alguna cadena causal del FRT tiene ramas negativas: efectos no deseados que emergen de las mismas condiciones que producen los DEs. El trigger es: "tenemos el futuro deseado — ahora verifiquemos que no estamos creando problemas nuevos".
+
+**Para que (Proposito):**
+1. **Inmunizar la solucion**: el NBR es el stress test de la INJ. Sin el, la solucion tiene puntos ciegos.
+2. **Identificar UDEs colaterales**: cada "Y SI..." que produce un efecto negativo es una UDE colateral que necesita gestion (trimming T24, escalada T23, o absorcion operativa T25).
+3. **Completar el modelo del futuro**: un FRT sin NBR es un FRT optimista. Con NBR, el modelo del futuro es realista.
+
+**Escenario de negocio:** El FRT de "Optimizacion dinamica de rutas" muestra DE-001: "Entregas on-time >95%", DE-002: "Coste por envio -15%", DE-003: "Visibilidad en tiempo real". El NBR sistematico evalua cada cadena: "Si optimizacion dinamica, Y SI el volumen de datos excede la capacidad del servidor, entonces latencia > 10s → conductores ven rutas desactualizadas → accidentes de trafico". Tambien: "Si optimizacion dinamica, Y SI hay zona sin cobertura movil, entonces conductores sin ruta asignada → entregas improvisadas". Cada NBR se clasifica por severidad y se decide su tratamiento (T24, T23 o T25).
+
+---
+
+#### T30. PRT/TT → NBR — Riesgos de Implementacion
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(b) Retroalimentacion/Ajuste** — La implementacion revela riesgos no anticipados |
+| **Logic transition** | nec → suf (PRT→NBR) o suf → suf (TT→NBR) |
+| **relation_type** | `risk_check` |
+
+**Por que (Desencadenante):** Durante la planificacion de prerequisitos (PRT) o la ejecucion tactica (TT), se descubren riesgos que el NBR original no anticipó porque solo son visibles con el detalle de implementacion. La granularidad del PRT/TT revela condiciones que el FRT abstracto no modelaba. El trigger es: "al planificar/ejecutar, hemos descubierto riesgos que no vimos en el analisis".
+
+**Para que (Proposito):**
+1. **Capturar riesgos emergentes de implementacion**: los riesgos de "como hacerlo" son diferentes de los riesgos de "que pasa si funciona".
+2. **Retroalimentar el FRT si es necesario**: si el NBR de implementacion revela un riesgo grave, puede escalar a T24 (trimming) o T23 (nueva EC).
+3. **Ajustar el plan**: los riesgos de implementacion pueden cambiar la secuencia del TT o anadir pasos de mitigacion.
+
+**Escenario de negocio:** El TT tiene paso 3: "Migrar datos historicos de pedidos al nuevo sistema de optimizacion". Un NBR de implementacion evalua: "Si migramos en produccion, Y SI hay incompatibilidades de formato entre sistemas, entonces perdida de datos historicos → imposibilidad de entrenar el algoritmo con datos reales". Este riesgo no era visible en el FRT (que solo decia "los datos fluyen al optimizador"). Se necesita una trimming operativa: "Migracion en entorno de staging primero, con validacion cruzada antes de produccion".
+
+---
+
+### GRUPO G: Auto-Transiciones (Diagonal)
+
+> **Premisa**: las auto-transiciones capturan procesos de refinamiento interno donde un arbol se revisa, extiende o reestructura *sin input de otro arbol*. No son transiciones triviales — representan momentos de reflexion critica donde el analista mejora la calidad de un arbol por meritos propios (consistencia interna, completitud, precision).
+
+---
+
+#### T31. GT → GT — Revision Interna de la Norma
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Frecuente en las fases tempranas |
+| **Logic transition** | nec → nec |
+| **relation_type** | `self_revision` (nuevo) |
+
+**Por que (Desencadenante):** El analista revisa el GT y detecta problemas de estructura interna: NCs que son realmente CSFs disfrazadas, CSFs redundantes, relaciones de necesidad mal formuladas, o el Goal mismo es ambiguo. No hay input de otro arbol — es una revision critica del propio GT contra las CLRs de necesidad. El trigger es: "revisando el GT, algo no encaja internamente".
+
+**Para que (Proposito):**
+1. **Garantizar solidez de la norma antes de usarla**: un GT con NCs mal categorizadas produce un CRT con UDEs mal ancladas.
+2. **Aplicar CLRs de necesidad rigurosamente**: cada relacion "para X necesito Y" debe pasar las pruebas de necesidad (CLR #1: claridad, CLR #4: suficiencia grupal).
+3. **Iteracion natural del pensamiento**: el primer GT rara vez es definitivo. La auto-revision es parte del proceso normal.
+
+**Escenario de negocio:** Al revisar el GT de logistica, el analista nota que NC-003 "Sistema de tracking GPS" no es una NC — es una *solucion* disfrazada de necesidad. La verdadera NC es "Visibilidad en tiempo real de la ubicacion del envio". GPS es una forma de conseguirlo, pero no la unica. Se reestructura el GT sin input de CRT ni EC — es correccion interna de calidad.
+
+---
+
+#### T32. CRT → CRT — Profundizacion del Diagnostico
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Comun durante la construccion iterativa |
+| **Logic transition** | suf → suf |
+| **relation_type** | `extends` |
+
+**Por que (Desencadenante):** El CRT se extiende por descubrimiento interno: al revisar las cadenas causales, el analista identifica UDEs adicionales que habia pasado por alto, INTs intermedios que faltan, o cadenas que se pueden profundizar hasta causas mas fundamentales. No es feedback de otro arbol — es rigor analitico sobre el propio diagnostico. El trigger es: "revisando el CRT, veo huecos en las cadenas causales".
+
+**Para que (Proposito):**
+1. **Completar cadenas causales**: un CRT con saltos logicos produce ECs sobre causas superficiales.
+2. **Descubrir UDEs ocultas**: al profundizar cadenas, emergen efectos que el analista no habia verbalizado pero que el sistema sufre.
+3. **Identificar la verdadera CRC**: profundizar puede revelar que la CRC aparente es en realidad un efecto intermedio de una causa mas profunda.
+
+**Escenario de negocio:** El CRT de logistica tiene la cadena: "Rutas no optimizadas → Entregas tardias". Al profundizar, el analista pregunta: "Por que las rutas no estan optimizadas?" y descubre INT-015: "El planificador de rutas usa un mapa estatico de 2019" → INT-016: "Nadie actualiza el mapa porque no hay proceso definido" → RC-007: "Falta de gobernanza de datos maestros". La CRC real no era "rutas no optimizadas" sino "falta de gobernanza de datos". Este descubrimiento es interno al CRT.
+
+---
+
+#### T33. EC → EC — Reformulacion del Conflicto
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Frecuente durante la generacion de supuestos |
+| **Logic transition** | nec → nec |
+| **relation_type** | `self_revision` |
+
+**Por que (Desencadenante):** Al generar supuestos para los edges de la EC, el analista se da cuenta de que los nodos (A, B, C, D, D') no capturan bien el conflicto real. Las posiciones en tension (D, D') son sintomaticas, no fundamentales. O el objetivo comun (A) esta mal definido. No hay nuevo input del CRT ni del GT — es una reformulacion del propio conflicto por reflexion critica. El trigger es: "los supuestos no son interesantes porque el conflicto esta mal formulado".
+
+**Para que (Proposito):**
+1. **Conseguir supuestos invalidables**: una EC bien formulada produce supuestos fragiles. Si los supuestos son todos triviales o todos irrompibles, el conflicto necesita reformulacion.
+2. **Capturar el conflicto real**: D y D' deben representar los verdaderos estados mutuamente excluyentes, no proxy de estados mas profundos.
+3. **Iterar hasta precision**: Fedurko recomienda multiples iteraciones de la EC hasta que "se siente" que el conflicto esta bien capturado (Sombrero Rojo).
+
+**Escenario de negocio:** La EC tiene D="Agrupar envios" vs D'="Rutas dedicadas". Al generar supuestos para D→B, el analista nota que todos son variaciones de "agrupar es mas barato" — triviales e irrompibles. El conflicto real no es *como* se hacen las rutas, sino *quien decide*: D="Planificacion centralizada por algoritmo" vs D'="Decision descentralizada por conductor experto". Al reformular, los supuestos se vuelven ricos e invalidables: "Asumimos que el conocimiento local del conductor es inferior al modelo estadistico".
+
+---
+
+#### T34. FRT → FRT — Iteracion sobre el Futuro
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Comun durante el refinamiento |
+| **Logic transition** | suf → suf |
+| **relation_type** | `extends` |
+
+**Por que (Desencadenante):** El FRT se refina internamente: DEs se ajustan para ser mas precisos, cadenas causales se extienden para capturar efectos de segundo orden de la INJ, o se incorporan INJs secundarias que complementan la principal. No es feedback de NBR, PRT ni CRT — es profundizacion del propio modelo del futuro. El trigger es: "el FRT es correcto pero incompleto — hay efectos de la INJ que no hemos modelado".
+
+**Para que (Proposito):**
+1. **Modelar efectos de segundo orden**: la INJ no solo elimina UDEs directamente — sus efectos se propagan. Un FRT maduro captura estas cascadas.
+2. **Incorporar DEs no obvios**: a veces el efecto mas valioso de una INJ no es el directo sino uno emergente que no era el objetivo.
+3. **Preparar para NBR mas preciso**: un FRT mas detallado produce un NBR mas completo porque hay mas cadenas que estresar.
+
+**Escenario de negocio:** El FRT de "Optimizacion dinamica de rutas" tiene DE-001: "Entregas on-time >95%". Al iterar, el analista modela efectos de segundo orden: "Si entregas on-time >95%, entonces satisfaccion de cliente sube → recompra aumenta 20% → volumen de pedidos sube 15% → necesidad de mas conductores O mas eficiencia del optimizador". Este efecto cascada no era visible en la primera version del FRT y puede cambiar el analisis de viabilidad.
+
+---
+
+#### T35. NBR → NBR — Recursion de Trimming
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Ocurre cuando la trimming INJ tiene sus propios riesgos |
+| **Logic transition** | suf → suf |
+| **relation_type** | `extends` |
+
+**Por que (Desencadenante):** Una trimming INJ anadida al FRT para recortar un NBR genera ella misma una nueva rama negativa. La mitigacion tiene sus propios riesgos. El trigger es: "la solucion al riesgo genera un nuevo riesgo".
+
+**Para que (Proposito):**
+1. **Evaluar la mitigacion misma**: toda intervencion (incluidas las de mitigacion) puede tener efectos no deseados.
+2. **Detectar cadenas de riesgo**: si cada trimming genera un nuevo NBR que necesita otra trimming, hay un problema estructural — la INJ principal es demasiado fragil.
+3. **Criterio de parada**: si la severidad de los NBR sucesivos decrece en cada iteracion, la solucion converge. Si no decrece, escalar a T23 (NBR→EC) o T21 (NBR→GT).
+
+**Escenario de negocio:** NBR-001: "Si optimizacion centralizada, entonces single point of failure". Trimming INJ: "Servidor redundante en otro datacenter". NBR-002 (sobre la trimming): "Si servidor redundante, Y SI la sincronizacion entre datacenters falla, entonces rutas divergentes por zona → conflictos de asignacion". Trimming INJ-2: "Protocolo de consenso con fallback a ultimo estado sincronizado valido". NBR-003 (sobre trimming-2): "Si consenso, Y SI latencia de red > 5s, entonces fallback demasiado frecuente → eficiencia reducida". La severidad decrece: NBR-001 (catastrofico) → NBR-002 (alto) → NBR-003 (bajo). La cadena converge — se acepta el riesgo residual de NBR-003.
+
+**Regla practica:** Si despues de 2 niveles de recursion (NBR → trimming → NBR → trimming) la severidad no ha bajado al menos un nivel, tratar como señal de que la INJ principal o incluso la meta necesitan revision (T23 o T21).
+
+---
+
+#### T36. PRT/TT → PRT/TT — Revision del Plan
+
+| Dimension | Detalle |
+|-----------|---------|
+| **Viabilidad** | **(d) Auto-transicion** — Frecuente durante la ejecucion |
+| **Logic transition** | nec → nec (PRT→PRT) o suf → suf (TT→TT) |
+| **relation_type** | `self_revision` |
+
+**Por que (Desencadenante):** El PRT/TT se revisa internamente: obstaculos se reordenan al descubrir dependencias no previstas, IOs se refinan por mejor comprension de las soluciones intermedias, o acciones del TT se replanifican porque la secuencia original era suboptima. No es feedback de otro arbol — es aprendizaje durante la propia planificacion/ejecucion. El trigger es: "el plan necesita ajuste por lo que aprendemos al planificar/ejecutar".
+
+**Para que (Proposito):**
+1. **Optimizar la secuencia**: el primer PRT rara vez tiene la secuencia optima. Al detallar el TT, se descubren dependencias que obligan a reordenar.
+2. **Incorporar aprendizaje tactico**: la ejecucion de los primeros pasos del TT genera informacion que mejora los pasos siguientes.
+3. **Mantener la coherencia interna**: si un IO cambia, los pasos del TT que dependen de el deben ajustarse.
+
+**Escenario de negocio:** El PRT tiene OBS-1→IO-1: "Evaluar proveedores" y OBS-2→IO-2: "Formar conductores". Originalmente eran paralelos. Al detallar el TT, se descubre que la formacion de conductores depende del proveedor elegido (cada sistema tiene interfaz diferente). Se reordena: IO-1 debe completarse antes de IO-2. El TT se reestructura: pasos 1-3 son evaluacion de proveedores, paso 4 es decision, pasos 5-8 son formacion con el sistema elegido. Este ajuste es interno al PRT/TT.
+
+---
+
 ## 4. Sintesis: Patrones Emergentes
 
 ### 4.1. Clusters de transiciones por funcion
 
 | Cluster | Transiciones | Funcion |
 |---------|-------------|---------|
-| **Flujo canonico** | T01, T06, T11, T16 | Progresion lineal GT→CRT→EC→FRT→PRT/TT |
-| **Loops correctivos** | T05, T09, T10, T14 | Retroalimentacion que mejora arboles anteriores |
-| **Challenges** | T15, T19 | Conflictos que obligan a buscar alternativas |
-| **Revision post-implementacion** | T17, T18, T20 | La implementacion cambia la comprension |
-| **Saltos acelerados** | T07, T08, T12 | Atajos para situaciones con poco conflicto/riesgo |
-| **Patrones estrategicos** | T02, T03, T04, T13 | Uso avanzado en greenfield, benchmark o evolucion de meta |
+| **Flujo canonico** | T01, T06, T11, T29, T24, T16 | Progresion lineal GT→CRT→EC→FRT→NBR→trimming→PRT/TT |
+| **Loops correctivos** | T05, T09, T10, T14, T22 | Retroalimentacion que mejora arboles anteriores |
+| **Challenges** | T15, T19, T23 | Conflictos que obligan a buscar alternativas (incluyendo recursion NBR→EC) |
+| **Revision post-implementacion** | T17, T18, T20, T30 | La implementacion cambia la comprension (incluyendo riesgos emergentes) |
+| **Saltos acelerados** | T07, T08, T12, T28 | Atajos para situaciones con poco conflicto/riesgo (incluyendo filtro pre-FRT) |
+| **Patrones estrategicos** | T02, T03, T04, T13, T21, T26, T27 | Uso avanzado: greenfield, benchmark, evolucion de meta, risk proactivo |
+| **Absorcion operativa** | T25 | NBRs menores que se convierten en obstaculos de implementacion |
+| **Auto-revision** | T31, T32, T33, T34, T35, T36 | Refinamiento interno sin cambio de herramienta |
 
-### 4.2. Las 20 transiciones por utilidad practica
+### 4.2. Las 36 transiciones por utilidad practica
 
 | Tier | Transiciones | Descripcion |
 |------|-------------|-------------|
-| **Tier 1 — Esenciales** | T01, T06, T11, T16 | Flujo canonico. Todo analisis LTP las usa. |
-| **Tier 2 — Frecuentes** | T05, T10, T14, T15, T18, T20 | Loops correctivos y challenges. Analisis serios las usan regularmente. |
-| **Tier 3 — Situacionales** | T07, T09, T12, T13, T17, T19 | Patrones que se activan en contextos especificos. No en todo analisis. |
-| **Tier 4 — Excepcionales** | T02, T03, T04, T08 | Patrones avanzados para casos atipicos (greenfield, emergencias, conflictos estructurales). |
+| **Tier 1 — Esenciales** | T01, T06, T11, T16, T29, T24 | Flujo canonico incluyendo NBR + trimming. Todo analisis LTP las usa. |
+| **Tier 2 — Frecuentes** | T05, T10, T14, T15, T18, T20, T22, T23, T25, T31-T36 | Loops correctivos, challenges, auto-revision. Analisis serios las usan regularmente. |
+| **Tier 3 — Situacionales** | T07, T09, T12, T13, T17, T19, T28, T30 | Patrones que se activan en contextos especificos. No en todo analisis. |
+| **Tier 4 — Excepcionales** | T02, T03, T04, T08, T21, T26, T27 | Patrones avanzados: greenfield, emergencias, conflictos estructurales, risk proactivo sobre norma. |
 
 ### 4.3. Alternancia de logica en las transiciones
 
 | Patron | Cantidad | Transiciones |
 |--------|----------|-------------|
-| suf → nec | 6 | T06, T13, T15, T05*, T17*, T19* |
-| nec → suf | 4 | T01, T10, T11, T16* |
-| suf → suf | 5 | T07, T14, T18*, T20*, T08* |
-| nec → nec | 5 | T02, T03*, T04*, T09, T12*, T17* |
+| suf → nec | 9 | T06, T13, T15, T21, T23, T05*, T17*, T19*, T25* |
+| nec → suf | 6 | T01, T10, T11, T26, T28, T16* |
+| suf → suf | 12 | T07, T14, T22, T24, T27, T29, T30*, T32, T34, T35, T18*, T20*, T08* |
+| nec → nec | 9 | T02, T09, T31, T33, T36*, T03*, T04*, T12*, T17* |
 
 *Depende de si el destino es PRT (nec) o TT (suf).
 
-**Hallazgo**: las transiciones canonicas (Tier 1) alternan sistematicamente entre logicas. Los loops correctivos tienden a ser same-logic (suf→suf para CRT/FRT, nec→nec para GT/EC/PRT). Esto tiene sentido: la retroalimentacion se queda "en el mismo modo de pensar", mientras que la progresion fuerza el cambio de perspectiva.
+**Hallazgo**: las transiciones canonicas (Tier 1) alternan sistematicamente entre logicas. Los loops correctivos tienden a ser same-logic (suf→suf para CRT/FRT/NBR, nec→nec para GT/EC/PRT). Las auto-transiciones siempre preservan la logica (nec→nec o suf→suf), lo cual es logico: el refinamiento interno no cambia la perspectiva. Las transiciones NBR tienden a ser suf→suf (por su naturaleza de suficiencia), excepto cuando escalan a GT o EC (cambio a necesidad).
 
 ### 4.4. El meta-grafo como registro de navegacion
 
-Las 20 transiciones demuestran que un analisis LTP real no es lineal — es un **grafo de navegacion** donde el analista va y viene entre arboles segun lo que descubre. El meta-grafo (RFC-002) captura esta navegacion como entidad persistente:
+Las 36 transiciones demuestran que un analisis LTP real no es lineal — es un **grafo de navegacion** donde el analista va y viene entre arboles segun lo que descubre. El meta-grafo (RFC-002) captura esta navegacion como entidad persistente:
 
 - Cada transicion es una **tree_relation** con `relation_type`, `handoff_nodes`, y `logic_transition` calculado.
 - Los loops correctivos crean multiples tree_relations entre el mismo par de arboles (CRT↔FRT puede tener una relacion `injection` y dos `revision`).
-- Los escenarios emergen naturalmente de las transiciones T15 (challenges que generan INJs alternativas) y T03/T13 (benchmarks que comparan futuros).
+- Los escenarios emergen naturalmente de las transiciones T15/T23 (challenges que generan INJs alternativas) y T03/T13 (benchmarks que comparan futuros).
+- El NBR como herramienta independiente anade 10 transiciones que hacen explicito un flujo que antes estaba subsumido en "el FRT tiene NBRs".
+- Las auto-transiciones (T31-T36) capturan el proceso iterativo de calidad que todo analista practica pero que rara vez se formaliza.
+
+### 4.5. El NBR como amplificador de transiciones
+
+El NBR es la herramienta con mayor densidad de retroalimentacion:
+
+| Desde/hacia NBR | Tipo | Frecuencia |
+|-----------------|------|------------|
+| FRT → NBR (T29) | Estandar | Siempre. Todo FRT tiene NBR. |
+| NBR → FRT (T24) | Trimming | Muy frecuente. La mayoria de NBRs se recortan. |
+| NBR → EC (T23) | Challenge | Frecuente en analisis serios (~20% de NBRs escalan). |
+| NBR → CRT (T22) | Revision | Moderado. Algunos NBRs revelan realidad oculta. |
+| NBR → NBR (T35) | Recursion | Moderado. Trimmings con sus propios riesgos. |
+| NBR → PRT/TT (T25) | Absorcion | Frecuente. NBRs menores se gestionan operativamente. |
+| NBR → GT (T21) | Revision meta | Raro. Solo cuando los riesgos cuestionan la meta. |
+| EC → NBR (T28) | Filtro | Situacional. Util con multiples INJs candidatas. |
+| CRT → NBR (T27) | Anticipacion | Raro. Pre-evaluacion hipotetica. |
+| GT → NBR (T26) | Proactivo | Muy raro. Sanity check de la norma. |
+| PRT/TT → NBR (T30) | Emergente | Moderado. La implementacion revela riesgos nuevos. |
+
+**Hallazgo**: el NBR actua como **amplificador de feedback**. Un FRT que parece completo revela, tras NBR, multiples lineas de retroalimentacion a CRT, EC, GT y PRT. Sin modelo explicito de NBR como herramienta, estas retroalimentaciones quedan implicitas y no trazables.
+
+### 4.6. Auto-transiciones como indicador de madurez
+
+| Auto-transicion | Señal de | Cuando preocuparse |
+|-----------------|----------|-------------------|
+| GT → GT (T31) | Rigor en la definicion de la norma | Si ocurre >3 veces sin convergencia: la meta puede ser inestable |
+| CRT → CRT (T32) | Profundidad del diagnostico | Si la CRC cambia >2 veces: el scope puede estar mal definido |
+| EC → EC (T33) | Precision del conflicto | Si D/D' cambian >2 veces: volver al CRT (T10) |
+| FRT → FRT (T34) | Completitud del modelo futuro | Normal. Multiples iteraciones son senal de rigor |
+| NBR → NBR (T35) | Robustez de la mitigacion | Si la severidad no decrece: escalar a T23 o T21 |
+| PRT/TT → PRT/TT (T36) | Aprendizaje durante la ejecucion | Normal. El plan siempre se refina al ejecutar |
+
+**Hallazgo**: las auto-transiciones son saludables si convergen (cada iteracion produce cambios menores). Si no convergen, son señal de un problema mas profundo que requiere cambiar de herramienta (transicion inter-arbol).
 
 ---
 
 ## 5. Mapping a los `relation_type` del RFC-002
 
-### Cobertura actual
+### Cobertura actual (actualizada con 36 transiciones)
 
 | relation_type (RFC-002 S3.2) | Transiciones cubiertas | Tier |
 |------------------------------|----------------------|------|
 | `gap_analysis` | T01 (GT→CRT) | 1 |
 | `core_conflict` | T06 (CRT→EC), T02 (GT→EC, atipico) | 1, 4 |
 | `injection` | T11 (EC→FRT), T07 (CRT→FRT, atipico) | 1, 3 |
-| `risk_check` | (FRT→NBR, no es transicion inter-arbol principal) | 1 |
-| `prerequisite` | T16 (FRT→PRT) | 1 |
+| `risk_check` | T29 (FRT→NBR), T26 (GT→NBR), T27 (CRT→NBR), T28 (EC→NBR), T30 (PRT/TT→NBR) | 1, 3, 4 |
+| `prerequisite` | T16 (FRT→PRT), T25 (NBR→PRT/TT, atipico) | 1, 2 |
 | `tactical` | T16 (PRT→TT), T12 (EC→PRT/TT), T08 (CRT→PRT/TT) | 1, 3, 4 |
-| `alternative` | (derivado de T15 cuando hay INJ alternativa) | 2 |
-| `revision` | T05, T09, T10, T13, T14, T17, T18, T20 | 2, 3 |
-| `challenges` | T15 (FRT→EC), T19 (PRT/TT→EC) | 2, 3 |
-| `extends` | (sub-arboles del mismo tipo) | — |
+| `alternative` | (derivado de T15/T23 cuando hay INJ alternativa) | 2 |
+| `revision` | T05, T09, T10, T13, T14, T17, T18, T20, T21, T22 | 2, 3 |
+| `challenges` | T15 (FRT→EC), T19 (PRT/TT→EC), T23 (NBR→EC) | 2, 3 |
+| `extends` | T32 (CRT→CRT), T34 (FRT→FRT), T35 (NBR→NBR) | 2 |
 
-### Transiciones sin `relation_type` explicito
+### Transiciones que requieren `relation_type` nuevos
 
 | Transicion | relation_type propuesto | Notas |
 |-----------|------------------------|-------|
-| T03 (GT→FRT) | `benchmark` | Nuevo. Evaluacion proactiva sin pasar por diagnostico. |
-| T04 (GT→PRT/TT) | `strategic_roadmap` | Nuevo. Greenfield donde NCs→obstaculos directamente. |
-| T08 (CRT→PRT/TT) | `emergency_action` | Nuevo. Accion de contencion urgente. Marcar como temporal. |
+| T03 (GT→FRT) | `benchmark` | Evaluacion proactiva sin pasar por diagnostico. |
+| T04 (GT→PRT/TT) | `strategic_roadmap` | Greenfield donde NCs→obstaculos directamente. |
+| T08 (CRT→PRT/TT) | `emergency_action` | Accion de contencion urgente. Marcar como temporal. |
+| T24 (NBR→FRT) | `trimming` | Recorte de rama negativa. Distinto de `revision` porque no cambia la estructura del FRT sino que anade una mitigacion puntual. |
+| T31, T33, T36 | `self_revision` | Reestructuracion interna de un arbol (GT, EC, PRT/TT). Distinto de `extends` (que anade) — `self_revision` reorganiza o reformula. |
 
 ### Recomendacion
 
-Agregar 3 `relation_type` nuevos al RFC-002:
+Agregar 5 `relation_type` nuevos al RFC-002:
 
 ```
-| benchmark         | Evaluacion proactiva de una iniciativa contra la norma  | GT → FRT           |
+| relation_type     | Descripcion                                              | Transiciones       |
+|-------------------|----------------------------------------------------------|--------------------|
+| benchmark         | Evaluacion proactiva de una iniciativa contra la norma   | GT → FRT           |
 | strategic_roadmap | Planificacion greenfield desde la norma                  | GT → PRT/TT        |
 | emergency_action  | Contencion urgente antes de completar el analisis        | CRT → PRT/TT       |
+| trimming          | Recorte de rama negativa del FRT via INJ de mitigacion   | NBR → FRT          |
+| self_revision     | Reestructuracion interna sin cambio de herramienta       | X → X (diagonal)   |
 ```
 
-Estos 3 tipos son Tier 4 (excepcionales) pero necesitan `relation_type` propio para distinguirlos de las transiciones estandar.
+`benchmark`, `strategic_roadmap` y `emergency_action` son Tier 4 (excepcionales). `trimming` es Tier 1 (esencial — todo analisis con NBR lo usa). `self_revision` es Tier 2 (frecuente en analisis serios).
 
 ---
 
@@ -563,9 +941,13 @@ Estos 3 tipos son Tier 4 (excepcionales) pero necesitan `relation_type` propio p
 |---------|---------|-----------|
 | `CANONICAL_SKIP_EC` | Existe relacion CRT→FRT sin EC intermedia (T07) | MEDIA |
 | `CANONICAL_SKIP_FRT` | Existe relacion EC→PRT/TT sin FRT intermedio (T12) | BAJA |
+| `CANONICAL_SKIP_NBR` | Existe relacion FRT→PRT/TT sin NBR intermedio (T29 ausente) | MEDIA |
 | `EMERGENCY_ACTION_OPEN` | Relacion `emergency_action` sin flujo completo paralelo | MEDIA |
 | `BENCHMARK_WITHOUT_DIAGNOSIS` | Relacion `benchmark` GT→FRT sin CRT existente | INFO |
 | `MULTIPLE_REVISIONS` | >2 relaciones `revision` entre el mismo par de arboles | INFO |
+| `TRIMMING_RECURSION_DEPTH` | >2 niveles de NBR→NBR (T35) sin disminucion de severidad | MEDIA |
+| `SELF_REVISION_LOOP` | >3 auto-transiciones del mismo arbol sin convergencia | INFO |
+| `NBR_ESCALATION_MISSING` | NBR con severidad "critica" sin transicion a EC (T23) ni a GT (T21) | MEDIA |
 
 ### Narrativa
 
@@ -576,14 +958,55 @@ Estos 3 tipos son Tier 4 (excepcionales) pero necesitan `relation_type` propio p
   Transicion logica: necesidad → suficiencia
   Handoff: 5 NCs no cumplidas → 5 UDEs
 
-[LOOP CORRECTIVO] FRT "Futuro con optimizacion" → CRT "Diagnostico Q3" (revision)
-  Transicion logica: suficiencia → suficiencia (same_suf)
-  Trigger: FRT revelo UDE-012 no detectada
+[FLUJO CANONICO] FRT "Futuro con optimizacion" → NBR "Riesgos de optimizacion" (risk_check)
+  Transicion logica: suficiencia → suficiencia
+  Hallazgos: 3 UDEs colaterales (1 critica, 2 menores)
 
-[CHALLENGE] FRT "Futuro con optimizacion" → EC "Conflicto entregas" (challenges)
+[TRIMMING] NBR "Riesgos de optimizacion" → FRT "Futuro con optimizacion" (trimming)
+  Transicion logica: suficiencia → suficiencia
+  Trimming INJ: "Modo fallback con rutas estaticas"
+
+[CHALLENGE] NBR "Riesgos de optimizacion" → EC "Conflicto lock-in" (challenges)
   Transicion logica: suficiencia → necesidad
-  Trigger: NBR catastrofico no recortable
+  Trigger: UDE colateral critica no recortable — escalada a EC hija
+
+[LOOP CORRECTIVO] NBR "Riesgos de optimizacion" → CRT "Diagnostico Q3" (revision)
+  Transicion logica: suficiencia → suficiencia
+  Trigger: NBR revelo cultura de autonomia no diagnosticada
+
+[AUTO-REVISION] EC "Conflicto entregas" → EC "Conflicto entregas" (self_revision)
+  Transicion logica: necesidad → necesidad (same_nec)
+  Trigger: supuestos triviales — conflicto reformulado
 ```
+
+---
+
+## 7. Diagrama de Flujo Canonico Expandido
+
+```
+GT ──(T01)──→ CRT ──(T06)──→ EC ──(T11)──→ FRT ──(T29)──→ NBR ──(T24)──→ FRT' ──(T16)──→ PRT ──→ TT
+ ↑               ↑               ↑              ↑              │              │               │
+ │               │               │              │              ├──(T23)──→ EC₂ (recursion)    │
+ │               │               │              │              ├──(T22)──→ CRT (revision)     │
+ │               │               │              │              ├──(T25)──→ PRT (absorcion)    │
+ │               │               │              │              └──(T21)──→ GT  (raro)         │
+ │               │               │              │                                             │
+ │               │               │              ├──────────(T15)──→ EC  (challenge)           │
+ │               │               │              └──────────(T14)──→ CRT (revision)            │
+ │               │               │                                                            │
+ │               ├──(T10)──← EC  │                                                            │
+ ├──(T05)──← CRT │              │                                                            │
+ ├──(T09)──← EC  │              │                                                            │
+ ├──(T13)──← FRT │              │                                                            │
+ ├──(T17)──← PRT/TT             │                                                            │
+ │                               ├──(T18)──← PRT/TT                                          │
+ │                               ├──(T19)──← PRT/TT → EC (challenge)                         │
+ │                               └──(T20)──← PRT/TT → FRT (revision)                         │
+ │
+ └──── Auto-transiciones (T31-T36): cada arbol puede revisarse a si mismo ────┘
+```
+
+> El flujo canonico expandido incluye NBR como paso obligatorio entre FRT y PRT/TT. Las flechas secundarias muestran las retroalimentaciones mas frecuentes.
 
 ---
 
@@ -591,4 +1014,5 @@ Estos 3 tipos son Tier 4 (excepcionales) pero necesitan `relation_type` propio p
 
 | Fecha | Cambio |
 |-------|--------|
+| 2026-09-12 | Expansion a 36 transiciones: GRUPO F (T21-T30, NBR como 6.ª herramienta), GRUPO G (T31-T36, auto-transiciones). Matriz actualizada de 5×5 a 6×6. Sintesis ampliada con secciones 4.5 (NBR como amplificador) y 4.6 (auto-transiciones como indicador de madurez). Mapping actualizado con 5 nuevos relation_types (benchmark, strategic_roadmap, emergency_action, trimming, self_revision). Validacion ampliada con 4 nuevos warnings. Seccion 7 con diagrama de flujo canonico expandido. |
 | 2026-09-11 | Creacion: auditoria completa de 20 transiciones, matriz 5×5, mapping a relation_types, implicaciones para el motor |
