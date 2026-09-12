@@ -1980,7 +1980,7 @@ Las 20 transiciones (apendice) describen el nivel MACRO (arbol → arbol). Esta 
 | **CRT** | Suficiencia | UDE, INT, RC | UDE = efecto indeseable observable. INT = causa intermedia. RC = causa raiz (CRC si conecta >70% UDEs). |
 | **EC** | Necesidad | REQ (roles: A=objective, B/C=requirement), PRE (roles: D/D'=prerequisite) | 5 nodos fijos. D↔D' en conflicto XOR. Ver seccion 13.4 para espacio de fuentes. |
 | **FRT** | Suficiencia | DE, INJ | DE = efecto deseable (opuesto a UDE). INJ = inyeccion (nodo raiz que entra del EC). |
-| **NBR** | Suficiencia | NDE, Trimming INJ | NDE = efecto negativo no deseado. Trimming INJ = inyeccion de recorte para mitigar NDE. |
+| **NBR** | Suficiencia | UDE (colateral), Trimming INJ | UDE = efecto indeseable colateral de la INJ (mismo tipo que en CRT, distinto origen). Trimming INJ = inyeccion de recorte para mitigar la UDE colateral. |
 | **PRT** | Necesidad | OBS, IO, INJ (como objetivo) | OBS = obstaculo. IO = objetivo intermedio. INJ validada entra como objetivo a implementar. |
 | **TT** | Suficiencia | Nodos de accion tactica | 5 elementos por paso: realidad actual, necesidad, accion, nueva realidad, siguiente necesidad. |
 
@@ -2034,7 +2034,7 @@ Los CSF y NC del Goal Tree son la **norma** — la definicion de como deberia fu
 | INJ validada (FRT) | → | Objective (PRT) | T16 prerequisite | **Promocion**: inyeccion inmunizada contra NBRs se convierte en objetivo a implementar | INJ-001 validada → objetivo del PRT "Implementar optimizacion" |
 | OBS (PRT) | → | IO (PRT) | interno | **Conversion**: obstaculo se transforma en objetivo intermedio que lo supera | OBS "No hay proveedor" → IO "Seleccionar proveedor" |
 | IO (PRT) | → | Accion (TT) | T16 tactical | **Descomposicion**: objetivo intermedio se descompone en pasos tacticos ejecutables | IO "Seleccionar proveedor" → Paso 1: "Solicitar propuestas a 3 proveedores" |
-| NDE (NBR) | → | Trimming INJ (NBR) | interno | **Mitigacion**: efecto negativo genera inyeccion de recorte | NDE "Dependencia de proveedor unico" → Trim INJ "Clausula multi-vendor" |
+| UDE colateral (NBR) | → | Trimming INJ (NBR) | interno | **Mitigacion**: efecto negativo colateral genera inyeccion de recorte | UDE "Dependencia de proveedor unico" → Trim INJ "Clausula multi-vendor" |
 
 #### Loops correctivos (Tier 2: T05, T09, T10, T14, T15, T18, T20)
 
@@ -2047,7 +2047,7 @@ Los CSF y NC del Goal Tree son la **norma** — la definicion de como deberia fu
 | UDE nueva (FRT) | → | UDE (CRT) | T14 FRT→CRT revision | **Descubrimiento**: la simulacion revela problemas del presente no diagnosticados | FRT revela "conductores desconfian de algoritmos" → UDE-012 en CRT |
 | DE no alcanzado (FRT) | → | NC revisada (GT) | T13 FRT→GT | **Ajuste**: NC inalcanzable incluso con la mejor INJ requiere revision de la meta | FRT muestra max 85% on-time → NC-003 se ajusta a ≥85% |
 | DE emergente (FRT) | → | CSF nuevo (GT) | T13 FRT→GT | **Oportunidad**: DE inesperado merece convertirse en CSF | DE "Tracking live para clientes" → nuevo CSF "Revenue por servicios premium" |
-| NDE grave (NBR) | → | D/D' (EC nueva) | T15 FRT→EC challenges | **Escalacion**: NBR no recortable obliga a buscar INJ alternativa | NDE catastrofico → nueva EC con otro supuesto a invalidar |
+| UDE colateral grave (NBR) | → | D/D' (EC nueva) | T15 FRT→EC challenges | **Escalacion**: NBR no recortable obliga a buscar INJ alternativa | UDE colateral catastrofica → nueva EC con otro supuesto a invalidar |
 | OBS (PRT) | → | UDE (CRT) | T18 PRT/TT→CRT | **Descubrimiento**: obstaculo de implementacion revela problema no diagnosticado | OBS "Sistema sin API" → UDE nueva "Legacy sin integracion" |
 | IO (PRT) conflictivo | → | D/D' (EC nueva) | T19 PRT/TT→EC | **Conflicto tactico**: dos IOs mutuamente excluyentes generan EC de implementacion | IO "Exclusividad proveedor" vs IO "Multi-vendor" → EC tactica |
 | Restriccion (PRT/TT) | → | cadena FRT | T20 PRT/TT→FRT | **Retroalimentacion**: implementacion revela que el FRT era incompleto | OBS "Sin API" → FRT necesita cadena "Si migramos a sistema con API..." |
@@ -2473,8 +2473,8 @@ CREATE TABLE scenario_trees (
 |----------|----------------|--------|
 | UDEs resueltas | Contar DEs del FRT que son opuestos a UDEs del CRT | FRT + CRT |
 | UDEs no resueltas | UDEs del CRT sin DE opuesto en el FRT | FRT + CRT |
-| NBRs residuales | NDEs del NBR sin trimming INJ efectiva | NBR |
-| Severidad de NBRs | Suma ponderada de severidad de NDEs residuales | NBR |
+| NBRs residuales | UDEs colaterales del NBR sin trimming INJ efectiva | NBR |
+| Severidad de NBRs | Suma ponderada de severidad de UDEs colaterales residuales | NBR |
 | Complejidad de PRT | Numero de OBS e IOs | PRT |
 | Impacto por actor | UDEs resueltas/generadas que afectan a cada actor | FRT + actores |
 | Profundidad de recursion | `depth` del escenario | Escenario |
