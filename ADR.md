@@ -263,3 +263,40 @@ Justificación
 Consecuencias
 - Positivas: Conocimiento huérfano tiene hogar propio (inbox de input pendiente). Multi-link natural (1 KN → N targets). Relaciones no-causales explícitas sin contaminar el DAG. Queries epistémicas (`status`, `node list --epistemic hypothesis`). Compone con `tree clone` (what-if sobre hipótesis), `invalidate` (knowledge contradictorio fundamenta la invalidación) y `trace --show-knowledge`. Hypothesis-driven analysis habilitado como flujo completo.
 - Negativas: Más complejidad (nuevo directorio, 7 comandos, nuevo schema). Integridad referencial bidireccional requiere warnings en validate. Scope creep potencial (mitigado: MVP estricto + ADR-001 como guardrail). El scan lineal de `knowledge/` para queries inversas no escala a miles de items (mitigado: YAGNI — un proyecto LTP rara vez supera 500 knowledge items).
+
+ADR-013: Ciclo de Vida Tipado de la Flecha Larga (`macro_edge` como Reserva / Overlay)
+
+Contexto
+
+`path collapse` (ADR-010) crea `macro_edge`s **bottom-up**: resume una cadena causa-efecto real que ya existe. Pero el LTP de Dettmer también trabaja **top-down** (CLR #1, "flecha larga"): el analista declara un salto lógico `A ⇒ E` que *cree* válido antes de haber articulado los pasos intermedios, y solo después lo resuelve. El motor pre-Slice-2 no tenía forma de representar esa flecha larga *pendiente*: un `macro_edge` siempre presuponía interior poblado. Además, un `macro_edge` con interior vacío y extremos sin edges reales disparaba `ORPHAN_NODE_IN_TREE` sobre sus extremos, contradiciendo la intención del analista (los extremos *están* conectados lógicamente, solo que aún no tácticamente).
+
+Se necesitaba: (a) un estado explícito para la reserva top-down; (b) primitivas para resolverla — materializar la cadena intermedia (`expand`) o aceptar el salto como causalidad directa (`promote`); (c) preservar la semántica no bloqueante de ADR-010 sin abrir un agujero de integridad topológica.
+
+Se evaluaron con Six Thinking Hats tres opciones para el estado del `macro_edge`:
+1. **Flag booleano `is_reservation`** → mínimo pero no extensible; dos flags booleanos ortogonales (reserva / consumida) degeneran en estados imposibles representables.
+2. **Máquina de estados con tombstones** (`reservation` → `overlay` → `consumed`/`promoted`) → trazabilidad histórica explícita, pero contamina el disco con estados muertos que `validate`/`trace` deben filtrar perpetuamente.
+3. **Máquina de estados sin tombstones** (`reservation` ⇄ `overlay`, y `promote` **elimina** el `macro_edge`) → la trazabilidad histórica la cubren ADR-009 (snapshots undo/redo) y ADR-002 (JSON git-diffable), por lo que los estados muertos son redundantes.
+
+Decisión
+
+Adoptar una **máquina de estados tipada de dos estados vivos** (`enum MacroEdgeStatus { Reservation, Overlay }`, `#[serde(rename_all = "snake_case")]`) más tres primitivas de mutación por intención (ADR-004):
+
+- `macro add --from A --to E --label L` → crea una **`Reservation`** (interior vacío, `MACRO-xxx`). No valida topología (la reserva es independiente del grafo táctico); **no** afecta `valid_dag` (ADR-010: fuera del DAG).
+- `macro expand --macro-link M --steps "s1,s2,…"` → transición **`Reservation → Overlay`**: materializa `n` nodos `INT` (uno por label) y `n+1` edges encadenando `A → INT₁ → … → INTₙ → E`, con la lógica derivada del árbol contenedor. Los `MacroAssumption` se conservan (ahora proyectables por `macro-assume`).
+- `macro promote --macro-link M` → transición **`Reservation → (edge atómico + macro eliminada)`**: crea un edge `A → E` (`SINGLE`) y **migra** los `MacroAssumption` de la reserva a `Assumption` del edge (preserva `status`/`text`; descarta `projection_refs`, que apuntaban a un interior vacío). El `macro_edge` se elimina (espeja `path replace`).
+
+**Los edges materializados son reales ⇒ `expand`/`promote` SÍ bloquean ciclos** (contrato idéntico a `link connect`): pre-validan el DAG (`tree.edges` + edges nuevos) **antes de persistir**; si cerrarían un ciclo devuelven `CIRCULAR_DEPENDENCY_DETECTED` con contexto `cycle_path`, `valid_dag: false`, y **sin mutación** (ni ficheros ni consumo de la reserva). Orden de operaciones (Sombrero Negro): en `expand` los `INT`/`LINK` se construyen en memoria y el `check_dag` precede a cualquier `save_node`/`save_tree`, de modo que un ciclo bloqueado no deja `INT` huérfanos en disco (solo se queman contadores, igual que `link connect`); en `promote` el `check_dag` precede al minteo de los `ASM` migrados, para no quemar el contador `ASM` en el camino bloqueado.
+
+**Reinterpretación de huérfanos** (D6): los extremos de un `macro_edge` en estado `Reservation` se siembran como "conectados" en el detector de huérfanos, de modo que una reserva pura no dispara `ORPHAN_NODE_IN_TREE`; en su lugar `validate` emite el warning no bloqueante `LONG_ARROW_RESERVATION_PENDING` (CLR #1: recuerda al agente que el salto está sin resolver). Los `Overlay` ya están conectados por su interior real, así que no requieren siembra.
+
+**Decisión de migración serde** (Sombrero Negro — debe quedar documentada, no ser efecto colateral): los workspaces pre-Slice-2 escribían `macro_edge`s sin campo `status` o (en el prototipo) con `"status": "active"`, y sin campo `assumptions`. Se adopta compatibilidad hacia atrás **sin migración destructiva**: `MacroEdgeStatus::Overlay` lleva `#[serde(alias = "active")]` (el `"active"` legacy deserializa como `Overlay`) y el campo `assumptions` lleva `#[serde(default, skip_serializing_if = "Vec::is_empty")]` (los ficheros legacy sin el campo deserializan con `Vec` vacío; las macros sin resumen no ensucian el JSON). Un `macro_edge` sin `status` deserializa como `Overlay` (el default histórico: todo `macro_edge` pre-Slice-2 provenía de `path collapse`).
+
+Justificación
+- Precedente ADR-004 (mutaciones por intención): `add`/`expand`/`promote` son verbos de intención explícita, no ediciones bidireccionales sobre la vista ejecutiva.
+- Precedente ADR-010 (semántica no bloqueante): la reserva hereda el principio (fuera del DAG), pero la materialización a edges reales recupera el bloqueo topológico — la frontera es "¿el elemento es un edge real en `tree.edges`?", no "¿es un `macro_edge`?".
+- Precedente ADR-005 (assumptions direccionables): `promote` preserva la direccionabilidad migrando `MacroAssumption` → `Assumption` con ID propio.
+- ADR-009 + ADR-002 como sustituto de tombstones: el historial undo/redo y el `git log trees/` reconstruyen cualquier estado pasado, haciendo redundantes los estados muertos en disco.
+
+Consecuencias
+- Positivas: el flujo top-down de Dettmer (declarar el salto, luego resolverlo) tiene representación de primer nivel. `expand` y `promote` ofrecen las dos salidas canónicas (articular vs. aceptar). Los ciclos quedan cerrados con el mismo contrato que el resto de creadores de edges (sin agujero de integridad). Huérfanos reinterpretados: un CRT en construcción con saltos pendientes ya no genera ruido de `ORPHAN_NODE_IN_TREE`. Retrocompatibilidad total con workspaces existentes vía alias serde (cero migraciones manuales).
+- Negativas: dos rutas de nacimiento para un `macro_edge` (`path collapse` → `Overlay`; `macro add` → `Reservation`) que el consumidor debe distinguir por `status`. El `MacroAssumption` "envejece" al expandir (un resumen sin `projection_refs` pasa de válido sobre interior vacío a `MACRO_ASSUMPTION_UNGROUNDED` sobre interior poblado) — comportamiento correcto pero sutil, cubierto por UAT I6. Contadores `INT`/`LINK`/`ASM` pueden quemarse en un `expand`/`promote` bloqueado por ciclo (idéntico a `link connect`; los IDs no retroceden, ADR-009).

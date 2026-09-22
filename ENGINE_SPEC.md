@@ -298,6 +298,28 @@ Desglosa un supuesto convirtiéndolo en un nodo intermedio explícito (INT) dent
 
 Reemplaza un sub-grafo colapsado por una Inyección, marcando la cadena táctica previa como `superseded`.
 
+#### `ltp macro add --tree <ID> --from <ID1> --to <ID2> --label "<label>"`
+
+Declara **top-down** un salto lógico (CLR #1, "flecha larga"): crea un `macro_edge` en estado `reservation` con interior vacío (`MACRO-xxx`), representando una relación `from → to` que el analista cree válida pero cuyos pasos intermedios aún no ha articulado (ADR-013). No valida topología (la reserva es independiente del grafo táctico) y **no** afecta `valid_dag` (ADR-010: fuera del DAG). Es la operación inversa a `path collapse` (que resume una cadena real existente, `overlay`).
+
+Errores: `TREE_NOT_FOUND`, `LABEL_REQUIRED` (label vacío), `RESERVATION_SELF_LOOP` (`from == to`, contexto `node_id`), `NODE_NOT_IN_TREE` (extremo no attached, contexto `node_id`). Todas las validaciones preceden al minteo del ID ⇒ el contador `MACRO` no se consume en un fallo de validación. `data`: `{ macro_edge_id, from, to, label }`.
+
+#### `ltp macro expand --tree <ID> --macro-link <MACRO_ID> --steps "<s1,s2,…>"`
+
+Materializa una reserva en una cadena `INT` explícita (transición `reservation → overlay`, ADR-013): crea `n` nodos `INT` (uno por label separada por comas; labels duplicadas permitidas, IDs distintos) y `n+1` edges encadenando `from → INT₁ → … → INTₙ → to`, con la lógica derivada del árbol contenedor (`SUFFICIENCY` en GT/CRT/FRT/TT; `NECESSITY` en EC/PRT). Los `macro_assume` de la reserva se conservan (ahora proyectables sobre el interior real).
+
+Los edges son reales ⇒ **bloquea ciclos**: pre-valida el DAG antes de persistir; si la cadena cerraría un ciclo devuelve `CIRCULAR_DEPENDENCY_DETECTED` (contexto `cycle_path`, `valid_dag: false`) sin crear ningún `INT`/`LINK` ni mutar el estado en disco (mismo contrato que `link connect`).
+
+Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro ya es `overlay`), `STEPS_REQUIRED` (sin labels no vacías), `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_nodes: [INT…], created_links: [LINK…], status: "overlay" }`.
+
+#### `ltp macro promote --tree <ID> --macro-link <MACRO_ID>`
+
+Acepta el salto como causalidad directa y consume la reserva (transición `reservation → edge atómico + macro eliminada`, ADR-013): crea un edge `from → to` (`SINGLE`, lógica derivada del árbol) y **migra** los `macro_assume` de la reserva a `Assumption` del edge (preserva `status`/`text`, `ASM-xxx`; descarta `projection_refs`). El `macro_edge` se elimina (espeja `path replace`). Para consumir un `overlay` úsese `path replace`, no `promote`.
+
+El edge es real ⇒ **bloquea ciclos** con el mismo contrato que `expand`: el pre-check DAG precede al minteo de los `ASM` migrados, de modo que un ciclo bloqueado no consume la reserva ni quema el contador `ASM`.
+
+Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro es `overlay`; usar `path replace`), `NODE_NOT_IN_TREE`, `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_link, migrated_assumptions: [ASM…], from, to }`.
+
 ---
 
 ### 2.11. Negative Branch Reservations
@@ -336,7 +358,9 @@ Ejecuta validaciones en dos niveles:
 - Nodos con `observable: false` y <2 edges salientes: candidatos a CLR #7 (causa intangible sin efecto predicho).
 - Inversión de tipos sospechosa (CLR #6): nodo de nivel alto (UDE, DE) en posición `from` apuntando a nodo de nivel bajo (RC, INT).
 - CLR #5 (MAG weights): `CLR5_MAG_WEIGHTS_NOT_NORMALIZED` si las weights de edges MAG al mismo nodo no suman ~1.0 (tolerancia ±0.01). `CLR5_MAG_WEIGHT_UNDEFINED` si un edge MAG no tiene weight definido.
-- Nodos huérfanos dentro del tree (attached pero sin edges).
+- Nodos huérfanos dentro del tree (attached pero sin edges). Excepción (ADR-013): los extremos de un `macro_edge` en estado `reservation` se consideran conectados (el salto lógico ya los relaciona), por lo que no disparan `ORPHAN_NODE_IN_TREE`.
+- Flecha larga en estado `reservation` sin resolver: `LONG_ARROW_RESERVATION_PENDING` (CLR #1, contexto `macro_link`/`from`/`to`) recuerda que el salto está pendiente de `macro expand` o `macro promote`. No bloquea (ADR-010).
+- Higiene de resumen de flecha larga (Slice 1): `LONG_ARROW_SUMMARY_STALE` (proyecciones colgantes o supuestos interiores sin mapear) y `MACRO_ASSUMPTION_UNGROUNDED` (macro-assume sobre un `overlay` con interior no vacío pero sin `projection_refs`).
 
 ---
 
@@ -557,7 +581,24 @@ Vocabulario de `status`: `active | draft | invalidated | superseded`
       "label": "Cadena logística completa",
       "interior_nodes": ["CRT-INT-001", "CRT-INT-002", "CRT-INT-003"],
       "interior_links": ["LINK-001", "LINK-002", "LINK-003"],
-      "status": "active"
+      "status": "overlay",
+      "assumptions": [
+        {
+          "id": "MASM-001",
+          "status": "valid",
+          "text": "El resumen supone estabilidad de la demanda en el tramo.",
+          "projection_refs": ["ASM-001", "LINK-002"]
+        }
+      ]
+    },
+    {
+      "id": "MACRO-002",
+      "from": "CRT-RC-002",
+      "to": "CRT-UDE-004",
+      "label": "Salto lógico pendiente de articular",
+      "interior_nodes": [],
+      "interior_links": [],
+      "status": "reservation"
     }
   ],
   "feedback_edges": [
@@ -596,6 +637,10 @@ Vocabulario de `status` en edges: `active | broken | superseded | needs_review`
 Vocabulario de `logic` en tree: `sufficiency | necessity`
 
 Vocabulario de `status` en assumptions: `valid | invalid | needs_review`
+
+Vocabulario de `status` en macro_edges: `reservation | overlay` (ADR-013). `overlay` = resume una cadena causa-efecto real coexistente (creado por `path collapse` o resultante de `macro expand`); `reservation` = salto lógico top-down con interior vacío pendiente de `macro expand`/`macro promote`. Retrocompat: los `macro_edges` previos con `"status": "active"` (o sin campo `status`) deserializan como `overlay` vía `#[serde(alias)]`.
+
+Campo `assumptions` en macro_edges (opcional): supuestos-resumen autorados (`MASM-xxx`) que cuelgan de la flecha larga, con `projection_refs` (IDs interiores `LINK-xxx`/`ASM-xxx` que resumen). Se omite del JSON cuando está vacío (`skip_serializing_if`); los ficheros legacy sin el campo deserializan con lista vacía. Gestionados por los comandos `macro-assume gather|add|rm|list` (Slice 1).
 
 ---
 

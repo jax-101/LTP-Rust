@@ -8,15 +8,16 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | Slice 1 — Long Arrow Assumptions (macro-assume) |
+| **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
 | **Último bugfix** | insert-between assumptions preservation |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
 | **Tests F13** | 11/11 |
 | **Tests F14** | 6/6 |
-| **Tests Slice long-arrow** | 40/40 |
-| **Tests totales** | 480 |
+| **Tests Slice 1 (macro-assume)** | 40/40 |
+| **Tests Slice 2 (macro lifecycle)** | 36/36 |
+| **Tests totales** | 516 |
 
 ---
 
@@ -62,6 +63,34 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Slice 2] — Long Arrow Lifecycle (`macro add` / `macro expand` / `macro promote`)
+**Fecha**: 2026-09-22
+**Avance fase**: M1→M7 completadas, 36 tests nuevos ✅ (31 E2E `macro_lifecycle` + 5 unit: migración serde `MacroEdgeStatus` + huérfanos con reservas)
+**Tests totales**: 480 → 516
+**Plan**: `PLAN_long-arrow-slice2.md` | **Specs**: ENGINE_SPEC §2.10/§2.12/§3.2, ADR-013 (nuevo), ADR 004/005/009/010, CLR_SPEC §1
+**Factor de escala**: 1.0x (7 paquetes, esfuerzo ≈ estimado)
+**Origen**: Creación **top-down** de flechas largas (dirección inversa a `path collapse`): declarar un salto lógico (CLR #1) como reserva y luego resolverlo articulando la cadena (`expand`) o aceptándolo como causalidad directa (`promote`).
+
+#### Entregables
+- **`MacroEdgeStatus { Reservation, Overlay }`** (M1, ADR-013): enum tipado `#[serde(rename_all="snake_case")]`, máquina de estados sin tombstones. Migración serde no destructiva: alias `"active"` → `Overlay`, `status` ausente → `Overlay` (default histórico de `path collapse`).
+- **`macro add`** (M2): reserva top-down con interior vacío (`MACRO-xxx`, estado `reservation`). Validaciones pre-minteo (`LABEL_REQUIRED`, `RESERVATION_SELF_LOOP`, `NODE_NOT_IN_TREE`) → el contador no se quema en fallo. Fuera del DAG (ADR-010).
+- **`macro expand`** (M3): `reservation → overlay`. Materializa `n` INT + `n+1` LINK (`from→INT₁→…→INTₙ→to`), lógica derivada del árbol. **Bloquea ciclos** (pre-check DAG en memoria antes de `save_node`/`save_tree` → sin INT huérfanos en disco). `STEPS_REQUIRED` si no hay labels.
+- **`macro promote`** (M4): `reservation → edge atómico + macro eliminada`. Migra `MacroAssumption → Assumption` (preserva `status`/`text`). Pre-check DAG antes de mintear ASM (no quema contador en camino bloqueado). Para `overlay` → `path replace`.
+- **Integración `validate`** (M5): warning `LONG_ARROW_RESERVATION_PENDING` (CLR #1); reinterpretación de huérfanos (extremos de reservas sembrados como conectados → sin `ORPHAN_NODE_IN_TREE`).
+- **Wiring CLI + MCP** (M6): `ltp macro add|expand|promote` + 3 MCP tools (`ltp/macro_add|expand|promote`, total **67 → 70**), con captura de historial en el llamador (ADR-009).
+- **E2E + docs** (M7): `tests/macro_lifecycle.rs` (28 UATs adversariales: H1-H5, B1-B6, C1-C6, I1-I9, O1-O5, incl. bloqueos de ciclo I7/I9 e idempotencia undo/redo/batch); ADR-013; ENGINE_SPEC §2.10/§2.12/§3.2.
+
+#### Decisiones
+- **Frontera del bloqueo de ciclos** (Sombrero Negro): la reserva es no bloqueante (fuera del DAG, ADR-010), pero `expand`/`promote` crean edges reales ⇒ recuperan el bloqueo topológico con contrato idéntico a `link connect` (`CIRCULAR_DEPENDENCY_DETECTED` + `cycle_path`, sin mutación). La frontera es "¿es un edge real en `tree.edges`?", no "¿es un `macro_edge`?".
+- **Orden de operaciones**: construir INT/edges en memoria → `check_dag` → persistir (evita huérfanos en disco); en `promote`, `check_dag` antes del minteo de ASM (no quema contadores en el camino bloqueado).
+- **Sin tombstones**: `promote` elimina el `macro_edge`; la trazabilidad histórica la cubren ADR-009 (undo) + ADR-002 (git-diff). Registrada como decisión serde en ADR-013 (no efecto colateral).
+- **Los `execute_*` no capturan historial**: lo envuelve el llamador (CLI/MCP), invariante heredada de Slice 1.
+
+#### Siguiente
+- Slice 2 completado. Fuera de alcance: `macro_assume_edit`, `explode` generalizado, reserva con extremos aún no attached (auto-attach), hash de contenido para staleness de texto.
+
+---
 
 ### [Slice 1] — Long Arrow Assumptions (`macro-assume`)
 **Fecha**: 2026-09-22
@@ -715,4 +744,5 @@ Análisis Six Thinking Hats → regla: "el edge que conserva las causas original
 |-------|--------|--------|-----------------|
 | — | Plan inicial | 14 paquetes, 128 UATs | 100% baseline |
 | 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global sigue 58% (pesos por fase sin cambio; fases completadas mantienen 100% de su peso). |
+| 2026-09-22 | Slice 2 — Long Arrow Lifecycle (ADR-013) | +36 tests (31 E2E `macro_lifecycle` + 5 unit). Enriquecimiento sobre el motor base ya completo (no altera % del motor base ni del Knowledge Pool). | 480 → 516 tests. Factor de escala 1.0x. |
 
