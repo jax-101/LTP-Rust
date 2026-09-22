@@ -28,6 +28,7 @@ use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
     execute_link_feedback_list, execute_link_feedback_rm,
 };
+use ltp_engine::macro_assume::execute_macro_assume_gather;
 use ltp_engine::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
@@ -96,6 +97,12 @@ enum Commands {
     Assume {
         #[command(subcommand)]
         action: AssumeAction,
+    },
+
+    /// Manage summary assumptions on long arrows (macro-edges)
+    MacroAssume {
+        #[command(subcommand)]
+        action: MacroAssumeAction,
     },
 
     /// Trace upstream/downstream from a node
@@ -476,6 +483,17 @@ enum AssumeAction {
         asm: String,
         #[arg(long)]
         to_link: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MacroAssumeAction {
+    /// Live view of a long arrow's interior assumptions + staleness diff (read-only)
+    Gather {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
     },
 }
 
@@ -1594,6 +1612,15 @@ fn main() {
                 if output.success {
                     history_commit(capture, "assume_move", &full_command);
                 }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
+        Commands::MacroAssume { action } => match action {
+            MacroAssumeAction::Gather { tree, macro_link } => {
+                let output = execute_macro_assume_gather(&storage, &tree, &macro_link);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

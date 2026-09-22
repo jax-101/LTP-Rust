@@ -5,9 +5,13 @@
 //! el LLM/usuario destila y mapea vía `add`/`rm`. Namespace propio para preparar el Slice 2
 //! (creación top-down `macro_*`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::link::Assumption;
+use serde::Serialize;
+
+use crate::link::{Assumption, AssumptionStatus};
+use crate::output::{CommandOutput, GraphHealth, OutputError};
+use crate::storage::Storage;
 use crate::tree::{MacroEdge, Tree};
 
 /// Recolecta las assumptions de los `interior_links` de una long arrow, agrupadas por link.
@@ -28,6 +32,183 @@ pub fn gather_interior_assumptions<'a>(
         }
     }
     grouped
+}
+
+/// Un supuesto interior proyectado en la vista de `gather` (solo lectura).
+#[derive(Debug, Serialize)]
+pub struct InteriorAsm {
+    /// ID del supuesto interior (`ASM-xxx`).
+    pub id: String,
+    /// Estado del supuesto interior.
+    pub status: AssumptionStatus,
+    /// Texto del supuesto interior.
+    pub text: String,
+}
+
+/// Reconciliación por membresía de conjuntos entre el interior vivo y el resumen almacenado.
+///
+/// Limitación (D9): detecta cambios de *membresía* (`unmapped`/`dangling`), no cambios de
+/// *texto* de un supuesto interior ya mapeado (hash de contenido diferido, YAGNI).
+#[derive(Debug, Serialize)]
+pub struct GatherDiff {
+    /// Supuestos interiores (`ASM-xxx`) que ningún `projection_ref` del resumen cubre.
+    pub unmapped: Vec<String>,
+    /// `projection_refs` del resumen que ya no existen en el interior vivo.
+    pub dangling: Vec<String>,
+    /// Número de `MacroAssumption` almacenados en la long arrow.
+    pub summary_count: usize,
+}
+
+/// Vista viva del interior de una long arrow más su diff contra el resumen almacenado.
+#[derive(Debug, Serialize)]
+pub struct GatherData {
+    /// ID de la long arrow inspeccionada.
+    pub macro_link: String,
+    /// Supuestos interiores agrupados por `link_id` (ordenado, determinista).
+    pub interior: BTreeMap<String, Vec<InteriorAsm>>,
+    /// Reconciliación de obsolescencia.
+    pub diff: GatherDiff,
+}
+
+/// Calcula el diff de obsolescencia entre el interior vivo y el resumen de la long arrow.
+///
+/// Puro, storage-agnostic; compartido por `macro_assume_gather` (M2) y `validate` (M4).
+/// Determinista: todos los conjuntos son `BTreeSet`, así que las salidas van ordenadas.
+///
+/// Set vivo (R3) = `(interior_links ∩ edges existentes)` ∪ `{asm.id de esos links}`.
+/// Un `interior_link` eliminado del grafo (p. ej. por `link split`) deja de estar en el set
+/// vivo, de modo que las refs que lo apuntaban pasan a `dangling`.
+pub fn compute_diff(tree: &Tree, macro_edge: &MacroEdge) -> GatherDiff {
+    let grouped = gather_interior_assumptions(tree, macro_edge);
+
+    let mut live: BTreeSet<String> = BTreeSet::new();
+    let mut interior_asm_ids: BTreeSet<String> = BTreeSet::new();
+    for (link_id, asms) in &grouped {
+        live.insert(link_id.clone());
+        for asm in asms {
+            live.insert(asm.id.clone());
+            interior_asm_ids.insert(asm.id.clone());
+        }
+    }
+
+    let summary_refs: BTreeSet<String> = macro_edge
+        .assumptions
+        .iter()
+        .flat_map(|ma| ma.projection_refs.iter().cloned())
+        .collect();
+
+    let dangling: Vec<String> = summary_refs
+        .iter()
+        .filter(|r| !live.contains(*r))
+        .cloned()
+        .collect();
+    let unmapped: Vec<String> = interior_asm_ids
+        .iter()
+        .filter(|a| !summary_refs.contains(*a))
+        .cloned()
+        .collect();
+
+    GatherDiff {
+        unmapped,
+        dangling,
+        summary_count: macro_edge.assumptions.len(),
+    }
+}
+
+/// Construye una salida de fallo para `gather` con `GatherData` vacío.
+fn gather_failure(
+    action: &str,
+    ws_name: &str,
+    macro_link: &str,
+    error: OutputError,
+) -> CommandOutput<GatherData> {
+    CommandOutput {
+        success: false,
+        action: action.to_string(),
+        workspace: ws_name.to_string(),
+        data: GatherData {
+            macro_link: macro_link.to_string(),
+            interior: BTreeMap::new(),
+            diff: GatherDiff {
+                unmapped: vec![],
+                dangling: vec![],
+                summary_count: 0,
+            },
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    }
+}
+
+/// Ejecuta `macro-assume gather`: vista viva del interior + reconciliación (solo lectura).
+///
+/// No adquiere lock ni participa en el historial (invariante #3: vistas al vuelo).
+pub fn execute_macro_assume_gather(
+    storage: &dyn Storage,
+    tree_id: &str,
+    macro_link: &str,
+) -> CommandOutput<GatherData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "macro_assume_gather";
+
+    let tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(_) => {
+            return gather_failure(
+                action,
+                &ws_name,
+                macro_link,
+                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+            );
+        }
+    };
+
+    let macro_edge = match tree.macro_edges.iter().find(|m| m.id == macro_link) {
+        Some(m) => m,
+        None => {
+            return gather_failure(
+                action,
+                &ws_name,
+                macro_link,
+                OutputError::new(
+                    "MACRO_EDGE_NOT_FOUND",
+                    format!("Macro-edge '{macro_link}' not found in tree '{tree_id}'"),
+                ),
+            );
+        }
+    };
+
+    let interior: BTreeMap<String, Vec<InteriorAsm>> =
+        gather_interior_assumptions(&tree, macro_edge)
+            .into_iter()
+            .map(|(link_id, asms)| {
+                let entries = asms
+                    .into_iter()
+                    .map(|a| InteriorAsm {
+                        id: a.id.clone(),
+                        status: a.status,
+                        text: a.text.clone(),
+                    })
+                    .collect();
+                (link_id, entries)
+            })
+            .collect();
+
+    let diff = compute_diff(&tree, macro_edge);
+
+    CommandOutput::ok(
+        action,
+        &ws_name,
+        GatherData {
+            macro_link: macro_link.to_string(),
+            interior,
+            diff,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -174,5 +355,68 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(result.contains_key("LINK-001"));
         assert!(!result.contains_key("LINK-002"));
+    }
+
+    fn masm(id: &str, refs: &[&str]) -> MacroAssumption {
+        MacroAssumption {
+            id: id.to_string(),
+            status: AssumptionStatus::Valid,
+            text: format!("resumen {id}"),
+            projection_refs: refs.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // --- compute_diff: resumen vacío => todos los ASM interiores unmapped ---
+    #[test]
+    fn compute_diff_empty_summary_marks_all_unmapped() {
+        let edges = vec![
+            edge("LINK-001", "A", "B", vec![asm("ASM-001")]),
+            edge("LINK-002", "B", "C", vec![asm("ASM-002")]),
+        ];
+        let me = macro_edge("MACRO-001", vec!["LINK-001", "LINK-002"]);
+        let tree = tree_with(edges, vec![me.clone()]);
+        let diff = compute_diff(&tree, &me);
+        assert_eq!(diff.summary_count, 0);
+        assert_eq!(diff.unmapped, vec!["ASM-001", "ASM-002"]);
+        assert!(diff.dangling.is_empty());
+    }
+
+    // --- compute_diff: mapeo parcial => solo los no cubiertos quedan unmapped ---
+    #[test]
+    fn compute_diff_partial_mapping() {
+        let edges = vec![
+            edge("LINK-001", "A", "B", vec![asm("ASM-001")]),
+            edge("LINK-002", "B", "C", vec![asm("ASM-002")]),
+        ];
+        let mut me = macro_edge("MACRO-001", vec!["LINK-001", "LINK-002"]);
+        me.assumptions = vec![masm("MASM-001", &["ASM-001"])];
+        let tree = tree_with(edges, vec![me.clone()]);
+        let diff = compute_diff(&tree, &me);
+        assert_eq!(diff.summary_count, 1);
+        assert_eq!(diff.unmapped, vec!["ASM-002"]);
+        assert!(diff.dangling.is_empty());
+    }
+
+    // --- compute_diff: ref a un ASM interior removido => dangling ---
+    #[test]
+    fn compute_diff_dangling_when_interior_asm_removed() {
+        let edges = vec![edge("LINK-001", "A", "B", vec![])];
+        let mut me = macro_edge("MACRO-001", vec!["LINK-001"]);
+        me.assumptions = vec![masm("MASM-001", &["ASM-001"])];
+        let tree = tree_with(edges, vec![me.clone()]);
+        let diff = compute_diff(&tree, &me);
+        assert_eq!(diff.dangling, vec!["ASM-001"]);
+        assert!(diff.unmapped.is_empty());
+    }
+
+    // --- compute_diff R3: ref a un interior_link eliminado del grafo => dangling ---
+    #[test]
+    fn compute_diff_dangling_when_interior_link_removed_r3() {
+        let edges = vec![edge("LINK-001", "A", "B", vec![])];
+        let mut me = macro_edge("MACRO-001", vec!["LINK-001", "LINK-002"]);
+        me.assumptions = vec![masm("MASM-001", &["LINK-002"])];
+        let tree = tree_with(edges, vec![me.clone()]);
+        let diff = compute_diff(&tree, &me);
+        assert_eq!(diff.dangling, vec!["LINK-002"]);
     }
 }

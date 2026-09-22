@@ -27,6 +27,7 @@ use crate::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
     execute_link_feedback_list, execute_link_feedback_rm,
 };
+use crate::macro_assume::execute_macro_assume_gather;
 use crate::mcp::types::{JsonRpcError, ToolCallResult};
 use crate::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use crate::node::commands::{
@@ -101,6 +102,7 @@ pub fn dispatch_tool(
         "ltp/assume_rm" => dispatch_assume_rm(args, storage),
         "ltp/assume_list" => dispatch_assume_list(args, storage),
         "ltp/assume_move" => dispatch_assume_move(args, storage),
+        "ltp/macro_assume_gather" => dispatch_macro_assume_gather(args, storage),
         "ltp/invalidate" => dispatch_invalidate(args, storage),
         "ltp/validate" => dispatch_validate(args, storage),
         "ltp/trace" => dispatch_trace(args, storage),
@@ -946,6 +948,18 @@ fn dispatch_assume_move(
     if output.success {
         history_commit(capture, "assume_move", "mcp:ltp/assume_move");
     }
+    to_result(&output)
+}
+
+// --- Macro-assume (long arrow assumptions) ---
+
+fn dispatch_macro_assume_gather(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let macro_link = get_str(args, "macro_link")?;
+    let output = execute_macro_assume_gather(storage, tree, macro_link);
     to_result(&output)
 }
 

@@ -490,6 +490,20 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         }),
     ));
 
+    // --- Macro-assume (long arrow assumptions) ---
+    tools.push(tool(
+        "ltp/macro_assume_gather",
+        "Gather interior assumptions of a long arrow and diff them against the stored summary (read-only)",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" }
+            },
+            "required": ["tree", "macro_link"]
+        }),
+    ));
+
     // --- Invalidate ---
     tools.push(tool(
         "ltp/invalidate",
