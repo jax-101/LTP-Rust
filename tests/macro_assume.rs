@@ -546,3 +546,103 @@ fn uat_c6_rm_nonexistent_masm() {
     assert_eq!(code, 1, "expected failure: {json:?}");
     assert_eq!(json["errors"][0]["code"], "MACRO_ASSUMPTION_NOT_FOUND");
 }
+
+// ============================================================================
+// Phase M4: validate integration (non-blocking warnings)
+// ============================================================================
+
+/// Run `validate --tree <id>` and return the warnings recorded for that tree.
+fn validate_tree_warnings(dir: &std::path::Path, tree: &str) -> Vec<Value> {
+    let (json, code) = run_ltp(dir, &["validate", "--tree", tree]);
+    assert_eq!(
+        code, 0,
+        "validate should succeed (warnings are non-blocking): {json:?}"
+    );
+    json["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["tree_id"] == *tree)
+        .map(|d| d["warnings"].as_array().unwrap().clone())
+        .unwrap_or_default()
+}
+
+fn find_warning<'a>(warnings: &'a [Value], code: &str) -> &'a Value {
+    warnings
+        .iter()
+        .find(|w| w["code"] == code)
+        .unwrap_or_else(|| panic!("warning {code} not found in {warnings:?}"))
+}
+
+// --- UAT I1: projection to an interior ASM, then delete it => SUMMARY_STALE dangling=[ASM] ---
+#[test]
+fn uat_i1_asm_removed_makes_summary_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto interior");
+
+    // Ground a summary to the interior ASM.
+    let (add_json, ac) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&asm1));
+    assert_eq!(ac, 0, "add failed: {add_json:?}");
+
+    // Remove the interior ASM the summary depended on.
+    let (rm_json, rc) = run_ltp(
+        dir.path(),
+        &["assume", "rm", "--tree", &tree, "--asm", &asm1],
+    );
+    assert_eq!(rc, 0, "assume rm failed: {rm_json:?}");
+
+    let warnings = validate_tree_warnings(dir.path(), &tree);
+    let stale = find_warning(&warnings, "LONG_ARROW_SUMMARY_STALE");
+    assert_eq!(stale["macro_link"], macro_id);
+    assert_eq!(stale["dangling"], serde_json::json!([asm1]));
+    assert_eq!(stale["unmapped"], serde_json::json!([]));
+}
+
+// --- UAT I3: split an interior link (insert-between) + unmapped new ASM => SUMMARY_STALE ---
+#[test]
+fn uat_i3_split_interior_link_and_unmapped() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+
+    // Summary grounded to the interior LINK L1.
+    let (add_json, ac) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&links[0]));
+    assert_eq!(ac, 0, "add failed: {add_json:?}");
+
+    // A fresh assumption on a *surviving* interior link L2 — the summary maps nothing to it.
+    let asm_new = add_assumption(dir.path(), &tree, &links[1], "supuesto nuevo");
+
+    // Split L1 by inserting a new INT node: removes L1 (=> dangling ref).
+    let x = add_node(dir.path(), "Node X", "INT");
+    attach_node(dir.path(), &tree, &x);
+    let (ins_json, ic) = run_ltp(
+        dir.path(),
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &links[0],
+            "--node",
+            &x,
+            "--insert-before-effect",
+        ],
+    );
+    assert_eq!(ic, 0, "insert-between failed: {ins_json:?}");
+
+    let warnings = validate_tree_warnings(dir.path(), &tree);
+    let stale = find_warning(&warnings, "LONG_ARROW_SUMMARY_STALE");
+    assert_eq!(stale["macro_link"], macro_id);
+    // L1 no longer exists in the live interior => dangling.
+    assert_eq!(
+        string_array(&stale["dangling"]),
+        vec![links[0].clone()],
+        "dangling should contain the split interior link"
+    );
+    // The new interior ASM on L2 is not mapped by any summary => unmapped.
+    assert!(
+        string_array(&stale["unmapped"]).contains(&asm_new),
+        "unmapped should contain the new interior ASM: {stale:?}"
+    );
+}

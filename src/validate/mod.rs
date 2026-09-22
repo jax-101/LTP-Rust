@@ -3,6 +3,7 @@ pub mod dag;
 pub mod ec;
 pub mod integrity;
 pub mod knowledge;
+pub mod macro_edge;
 pub mod orphans;
 
 pub use dag::check_dag;
@@ -201,6 +202,9 @@ pub fn execute_validate<S: Storage>(
         let orphan_warnings = orphans::check_orphans(&tree.nodes, &tree.edges, &tree.id);
         total_orphans += orphan_warnings.len();
         tree_warnings.extend(orphan_warnings);
+
+        // Long arrow (macro_edge) summary hygiene — non-blocking, never affects valid_dag
+        tree_warnings.extend(macro_edge::check_macro_edges(&tree));
 
         details.push(TreeValidation {
             tree_id: tree.id,
