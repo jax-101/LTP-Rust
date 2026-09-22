@@ -6,7 +6,7 @@ use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
-use crate::tree::types::{MacroEdge, NodeRef};
+use crate::tree::types::{MacroEdge, MacroEdgeStatus, NodeRef};
 
 // --- Output types ---
 
@@ -361,7 +361,7 @@ pub fn execute_path_collapse(
         label: label.to_string(),
         interior_nodes: interior_nodes.clone(),
         interior_links: interior_links.clone(),
-        status: "active".to_string(),
+        status: MacroEdgeStatus::Overlay,
         assumptions: Vec::new(),
     };
 

@@ -46,6 +46,26 @@ pub struct MacroAssumption {
     pub projection_refs: Vec<String>,
 }
 
+/// Ciclo de vida de una long arrow (`MacroEdge`).
+///
+/// - `Overlay`: resume una cadena causa-efecto real que coexiste con ella (creada por
+///   `path collapse` o resultante de `macro expand`). Retrocompat: los `macro_edges` previos
+///   con `"status": "active"` deserializan aquí vía `#[serde(alias)]`.
+/// - `Reservation`: salto lógico declarado top-down (CLR#1 "flecha larga"), con interior
+///   vacío, pendiente de `macro expand` (materializar) o `macro promote` (edge atómico).
+///
+/// Máquina de estados sin estados muertos (ADR-013): la trazabilidad histórica la cubren
+/// ADR-009 (snapshots undo) y ADR-002 (JSON git-diffable), por lo que no hay tombstones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroEdgeStatus {
+    /// Reserva top-down: salto lógico con interior vacío, pendiente de resolución.
+    Reservation,
+    /// Resumen no-destructivo de una cadena causa-efecto real coexistente.
+    #[serde(alias = "active")] // retrocompat: workspaces previos a Slice 2 escribían "active".
+    Overlay,
+}
+
 /// Long arrow: resume una cadena causa-efecto colapsada (`path collapse`).
 ///
 /// Coexiste de forma no-destructiva con la cadena interior. Sus `assumptions` son el
@@ -58,7 +78,8 @@ pub struct MacroEdge {
     pub label: String,
     pub interior_nodes: Vec<String>,
     pub interior_links: Vec<String>,
-    pub status: String,
+    /// Estado del ciclo de vida de la long arrow (ver [`MacroEdgeStatus`]).
+    pub status: MacroEdgeStatus,
     /// Supuestos-resumen autorados que cuelgan de esta long arrow.
     ///
     /// `#[serde(default)]` permite que los `macro_edges` previos (sin el campo)
@@ -93,4 +114,67 @@ pub struct Tree {
     pub feedback_edges: Vec<FeedbackEdge>,
     #[serde(default)]
     pub nbr_branches: Vec<NbrBranch>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn macro_edge(status: MacroEdgeStatus) -> MacroEdge {
+        MacroEdge {
+            id: "MACRO-001".to_string(),
+            from: "RC-001".to_string(),
+            to: "UDE-001".to_string(),
+            label: "Long arrow".to_string(),
+            interior_nodes: vec![],
+            interior_links: vec![],
+            status,
+            assumptions: vec![],
+        }
+    }
+
+    // (a) Retrocompat: JSON legacy `"status":"active"` (sin `assumptions`) => Overlay + vacío.
+    #[test]
+    fn legacy_active_status_deserializes_as_overlay() {
+        let legacy = r#"{
+            "id": "MACRO-001",
+            "from": "RC-001",
+            "to": "UDE-001",
+            "label": "Cadena",
+            "interior_nodes": [],
+            "interior_links": ["LINK-001"],
+            "status": "active"
+        }"#;
+        let me: MacroEdge = serde_json::from_str(legacy).expect("legacy debe deserializar");
+        assert_eq!(me.status, MacroEdgeStatus::Overlay);
+        assert!(me.assumptions.is_empty());
+    }
+
+    // (b) Reservation serializa como `"reservation"` y hace roundtrip.
+    #[test]
+    fn reservation_serializes_snake_case() {
+        let json = serde_json::to_string(&macro_edge(MacroEdgeStatus::Reservation)).unwrap();
+        assert!(
+            json.contains("\"status\":\"reservation\""),
+            "esperaba status reservation en {json}"
+        );
+        let back: MacroEdge = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, MacroEdgeStatus::Reservation);
+    }
+
+    // (c) Overlay serializa como `"overlay"` (nueva escritura canónica, no `"active"`).
+    #[test]
+    fn overlay_serializes_snake_case() {
+        let json = serde_json::to_string(&macro_edge(MacroEdgeStatus::Overlay)).unwrap();
+        assert!(
+            json.contains("\"status\":\"overlay\""),
+            "esperaba status overlay en {json}"
+        );
+        assert!(
+            !json.contains("\"active\""),
+            "la escritura canónica migra fuera de 'active': {json}"
+        );
+        let back: MacroEdge = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, MacroEdgeStatus::Overlay);
+    }
 }

@@ -690,7 +690,7 @@ pub fn execute_macro_assume_list(
 mod tests {
     use super::*;
     use crate::link::{Assumption, AssumptionStatus, Edge, Logic, Operator};
-    use crate::tree::{MacroAssumption, MacroEdge, Tree, TreeLogic, TreeType};
+    use crate::tree::{MacroAssumption, MacroEdge, MacroEdgeStatus, Tree, TreeLogic, TreeType};
 
     fn asm(id: &str) -> Assumption {
         Assumption {
@@ -735,7 +735,7 @@ mod tests {
             label: "Long arrow".to_string(),
             interior_nodes: vec![],
             interior_links: interior_links.into_iter().map(String::from).collect(),
-            status: "active".to_string(),
+            status: MacroEdgeStatus::Overlay,
             assumptions: vec![],
         }
     }

@@ -8,85 +8,91 @@ use serde_json::Value;
 
 use crate::macro_assume::{compute_diff, gather_interior_assumptions};
 use crate::output::OutputWarning;
-use crate::tree::Tree;
+use crate::tree::{MacroEdgeStatus, Tree};
 
-/// Estado textual que marca una long arrow como activa (elegible para auditoría).
-const ACTIVE_STATUS: &str = "active";
-
-/// Audita las long arrows activas de un árbol y emite warnings de higiene del resumen.
+/// Audita las long arrows de un árbol y emite warnings de higiene (nunca errores; no afectan
+/// `valid_dag`, ADR-010).
 ///
-/// - `LONG_ARROW_UNSUMMARIZED`: macro activa sin resumen alguno pese a tener supuestos
-///   interiores (`interior_asm_count > 0`).
-/// - `LONG_ARROW_SUMMARY_STALE`: el resumen existe pero su diff (`unmapped` ∪ `dangling`) no
-///   está vacío (reusa [`compute_diff`]). Mutuamente excluyente con `UNSUMMARIZED`.
-/// - `MACRO_ASSUMPTION_UNGROUNDED`: un `MacroAssumption` sin `projection_refs` teniendo interior
-///   (mismo criterio que `macro-assume add`).
+/// El comportamiento se ramifica por [`MacroEdgeStatus`] (`match` exhaustivo: añadir un estado
+/// obliga a decidir su auditoría):
 ///
-/// Nunca produce errores; solo `macro_edges` con `status == "active"`.
+/// - `Reservation`: interior vacío por construcción ⇒ la higiene de resumen no aplica. La
+///   M5 emite aquí `LONG_ARROW_RESERVATION_PENDING`.
+/// - `Overlay`: higiene del resumen de Slice 1:
+///   - `LONG_ARROW_UNSUMMARIZED`: overlay sin resumen pese a tener supuestos interiores
+///     (`interior_asm_count > 0`).
+///   - `LONG_ARROW_SUMMARY_STALE`: el resumen existe pero su diff (`unmapped` ∪ `dangling`) no
+///     está vacío (reusa [`compute_diff`]). Mutuamente excluyente con `UNSUMMARIZED`.
+///   - `MACRO_ASSUMPTION_UNGROUNDED`: un `MacroAssumption` sin `projection_refs` teniendo
+///     interior (mismo criterio que `macro-assume add`).
 pub fn check_macro_edges(tree: &Tree) -> Vec<OutputWarning> {
     let mut warnings = Vec::new();
 
     for me in &tree.macro_edges {
-        if me.status != ACTIVE_STATUS {
-            continue;
-        }
-
-        let grouped = gather_interior_assumptions(tree, me);
-        let interior_non_empty = !grouped.is_empty();
-        let interior_asm_count: usize = grouped.values().map(|v| v.len()).sum();
-
-        if me.assumptions.is_empty() {
-            // Sin resumen: solo se avisa si hay supuestos interiores que resumir.
-            if interior_asm_count > 0 {
-                warnings.push(
-                    OutputWarning::new(
-                        "LONG_ARROW_UNSUMMARIZED",
-                        format!(
-                            "Long arrow '{}' has {interior_asm_count} interior assumption(s) but no summary",
-                            me.id
-                        ),
-                    )
-                    .with_context("macro_link", me.id.as_str())
-                    .with_context("interior_asm_count", interior_asm_count as u64),
-                );
+        match me.status {
+            MacroEdgeStatus::Reservation => {
+                // Interior vacío ⇒ ni UNSUMMARIZED ni UNGROUNDED aplican.
+                // (M5 añade aquí `LONG_ARROW_RESERVATION_PENDING`.)
             }
-            continue;
-        }
+            MacroEdgeStatus::Overlay => {
+                let grouped = gather_interior_assumptions(tree, me);
+                let interior_non_empty = !grouped.is_empty();
+                let interior_asm_count: usize = grouped.values().map(|v| v.len()).sum();
 
-        // Con resumen: detectar obsolescencia (idéntico diff que M2 / gather).
-        let diff = compute_diff(tree, me);
-        if !diff.unmapped.is_empty() || !diff.dangling.is_empty() {
-            warnings.push(
-                OutputWarning::new(
-                    "LONG_ARROW_SUMMARY_STALE",
-                    format!(
-                        "Long arrow '{}' summary is stale ({} unmapped, {} dangling)",
-                        me.id,
-                        diff.unmapped.len(),
-                        diff.dangling.len()
-                    ),
-                )
-                .with_context("macro_link", me.id.as_str())
-                .with_context("unmapped", string_array_value(&diff.unmapped))
-                .with_context("dangling", string_array_value(&diff.dangling)),
-            );
-        }
+                if me.assumptions.is_empty() {
+                    // Sin resumen: solo se avisa si hay supuestos interiores que resumir.
+                    if interior_asm_count > 0 {
+                        warnings.push(
+                            OutputWarning::new(
+                                "LONG_ARROW_UNSUMMARIZED",
+                                format!(
+                                    "Long arrow '{}' has {interior_asm_count} interior assumption(s) but no summary",
+                                    me.id
+                                ),
+                            )
+                            .with_context("macro_link", me.id.as_str())
+                            .with_context("interior_asm_count", interior_asm_count as u64),
+                        );
+                    }
+                    continue;
+                }
 
-        // Supuestos-resumen sin anclar (mismo criterio que `macro-assume add`).
-        if interior_non_empty {
-            for ma in &me.assumptions {
-                if ma.projection_refs.is_empty() {
+                // Con resumen: detectar obsolescencia (idéntico diff que M2 / gather).
+                let diff = compute_diff(tree, me);
+                if !diff.unmapped.is_empty() || !diff.dangling.is_empty() {
                     warnings.push(
                         OutputWarning::new(
-                            "MACRO_ASSUMPTION_UNGROUNDED",
+                            "LONG_ARROW_SUMMARY_STALE",
                             format!(
-                                "Macro-assumption '{}' has no projection_refs while the interior is non-empty",
-                                ma.id
+                                "Long arrow '{}' summary is stale ({} unmapped, {} dangling)",
+                                me.id,
+                                diff.unmapped.len(),
+                                diff.dangling.len()
                             ),
                         )
                         .with_context("macro_link", me.id.as_str())
-                        .with_context("assumption_id", ma.id.as_str()),
+                        .with_context("unmapped", string_array_value(&diff.unmapped))
+                        .with_context("dangling", string_array_value(&diff.dangling)),
                     );
+                }
+
+                // Supuestos-resumen sin anclar (mismo criterio que `macro-assume add`).
+                if interior_non_empty {
+                    for ma in &me.assumptions {
+                        if ma.projection_refs.is_empty() {
+                            warnings.push(
+                                OutputWarning::new(
+                                    "MACRO_ASSUMPTION_UNGROUNDED",
+                                    format!(
+                                        "Macro-assumption '{}' has no projection_refs while the interior is non-empty",
+                                        ma.id
+                                    ),
+                                )
+                                .with_context("macro_link", me.id.as_str())
+                                .with_context("assumption_id", ma.id.as_str()),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -104,7 +110,7 @@ fn string_array_value(items: &[String]) -> Value {
 mod tests {
     use super::*;
     use crate::link::{Assumption, AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
-    use crate::tree::{MacroAssumption, MacroEdge, Tree, TreeLogic, TreeType};
+    use crate::tree::{MacroAssumption, MacroEdge, MacroEdgeStatus, Tree, TreeLogic, TreeType};
 
     fn asm(id: &str) -> Assumption {
         Assumption {
@@ -139,7 +145,7 @@ mod tests {
             label: "Long arrow".to_string(),
             interior_nodes: vec![],
             interior_links: interior_links.into_iter().map(String::from).collect(),
-            status: "active".to_string(),
+            status: MacroEdgeStatus::Overlay,
             assumptions,
         }
     }
@@ -224,10 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn inactive_macro_edge_is_skipped() {
+    fn reservation_is_skipped_for_summary_hygiene() {
+        // Una reserva (interior vacío) no participa en la higiene de resumen de overlays.
+        // (M5 le añade `LONG_ARROW_RESERVATION_PENDING`; aquí solo se verifica que la rama
+        // `Overlay` no la audita como si tuviera resumen que reconciliar.)
         let edges = vec![edge("LINK-001", "A", "B", vec![asm("ASM-001")])];
-        let mut me = macro_edge("MACRO-001", vec!["LINK-001"], vec![]);
-        me.status = "exploded".to_string();
+        let mut me = macro_edge("MACRO-001", vec![], vec![]);
+        me.status = MacroEdgeStatus::Reservation;
         let tree = tree_with(edges, vec![me]);
         assert!(check_macro_edges(&tree).is_empty());
     }
