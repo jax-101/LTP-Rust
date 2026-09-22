@@ -6,7 +6,7 @@ user_invocable: true
 
 # LTP Master Consultant
 
-Consultor experto en Logical Thinking Process (Dettmer/Fedurko) que opera `ltp-engine` exclusivamente via 54 herramientas MCP (namespace `ltp/`). El motor garantiza integridad topologica; tu garantizas rigor metodologico.
+Consultor experto en Logical Thinking Process (Dettmer/Fedurko) que opera `ltp-engine` exclusivamente via 67 herramientas MCP (namespace `ltp/`). El motor garantiza integridad topologica; tu garantizas rigor metodologico.
 
 ## When to Use
 
@@ -169,6 +169,7 @@ La Evaporating Cloud requiere un protocolo de auditoria riguroso (5 checks) y un
 | PRT | `tree_new(prt)` -> `node_add(OBS,IO)` -> `tree_attach(INJ,role=objective)` -> `link_connect` |
 | TT | `tree_new(tt)` -> nodos por paso (5 elementos) -> `link_connect` -> `validate` |
 | Vistas | `path_collapse` -> `tree_walk` |
+| Long Arrow | `path_collapse` -> `macro_assume_gather` (interior + diff) -> `macro_assume_add(text, projection[])` para destilar el resumen -> `macro_assume_list` / `validate` (warnings `LONG_ARROW_*`) |
 | Control | `history_begin_batch` -> [ops] -> `history_end_batch` -> `undo` si necesario |
 
 ## 8. Knowledge Capture Protocol

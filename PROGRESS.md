@@ -8,14 +8,15 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | F14 — Feedback Edge Primitives |
+| **Última fase completada** | Slice 1 — Long Arrow Assumptions (macro-assume) |
 | **Último bugfix** | insert-between assumptions preservation |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
 | **UATs Knowledge Pool** | 220/239 |
 | **Tests F13** | 11/11 |
 | **Tests F14** | 6/6 |
-| **Tests totales** | 440 |
+| **Tests Slice long-arrow** | 40/40 |
+| **Tests totales** | 480 |
 
 ---
 
@@ -61,6 +62,32 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Slice 1] — Long Arrow Assumptions (`macro-assume`)
+**Fecha**: 2026-09-22
+**Avance fase**: M1→M5 completadas, 40/40 tests ✅ (27 integración + 8 unit `macro_assume` + 5 unit `validate::macro_edge`)
+**Tests totales**: 440 → 480
+**Plan**: `PLAN_long-arrow-assumptions.md` | **Specs**: ENGINE_SPEC §2.10/§3.2, ADR 001/004/005/010, CLR_SPEC §2.1
+**Origen**: Llenar/actualizar los supuestos-resumen de una long arrow (`macro_edge`) a partir de su cadena interior — ritmo "gather → author", como operación separada nunca automática.
+
+#### Entregables
+- **`MacroAssumption` (`MASM-xxx`)**: tipo propio (no extiende `Assumption`, ADR-005) con `projection_refs: Vec<String>` apuntando hacia abajo (ADR-004, solo-lectura). Vive en `MacroEdge.assumptions` con `#[serde(default, skip_serializing_if = "Vec::is_empty")]` → compat con `macro_edges` legacy. Counter `MASM` en `ENTITY_TYPES`.
+- **`macro-assume gather`** (M2): vista viva del interior + diff contra el resumen (lectura pura, **sin lock de mutación ni historial**). Núcleo `compute_diff` = función pura storage-agnostic (futuro `ltp-core`), compartida con `validate`.
+- **`macro-assume add / rm / list`** (M3): `add` valida `TEXT_REQUIRED`, resuelve/dedup+ordena `--projection` (BTreeSet) contra el interior vivo (`PROJECTION_REF_NOT_IN_INTERIOR`, `PROJECTION_REF_INVALID` si apunta a un MASM); `rm` → `MACRO_ASSUMPTION_NOT_FOUND`. `add`/`rm` participan en undo/redo; `list` es lectura pura.
+- **Integración `validate`** (M4): `src/validate/macro_edge.rs` audita solo `macro_edges` activos y emite **warnings no-bloqueantes** (nunca afectan `valid_dag`, ADR-010): `LONG_ARROW_UNSUMMARIZED`, `LONG_ARROW_SUMMARY_STALE` (reusa `compute_diff`), `MACRO_ASSUMPTION_UNGROUNDED`.
+- **4 MCP tools**: `ltp/macro_assume_gather|add|rm|list` (total tools **63 → 67**).
+- **E2E** (M5): workflows collapse→gather→add×2→list→validate limpio; unmapped→stale; dangling vía `assume rm`; `path_replace` elimina la macro → `MACRO_EDGE_NOT_FOUND`; undo/redo roundtrip (mismo ID); batch (3 add + 1 rm → un undo revierte todo); diamante; macro legacy sin campo `assumptions`.
+
+#### Decisiones
+- **Namespace propio** `src/macro_assume/mod.rs` (prepara `macro_*` de Slice 2), no dentro de `path/`.
+- **`gather` es lectura pura**: NO genera undo; `add`/`rm` sí (invariante de historial).
+- **Staleness por membresía de conjuntos** (D9): conjunto vivo = (`interior_links` ∩ `tree.edges` existentes) ∪ {`asm.id` de esos links}. `unmapped` = supuestos interiores que ningún `projection_ref` cubre; `dangling` = refs del resumen que ya no están en el interior vivo. Cambio de *texto* NO se detecta (hash diferido, YAGNI).
+- **`interior_links` es estático** (no se recomputa en mutaciones del interior): el "half unmapped" de I3 se realiza con un supuesto fresco sobre un link superviviente; el "half dangling" vía eliminación/`insert-between` del link — limitación documentada de Slice 1.
+
+#### Siguiente
+- Slice 1 completado. Slice 2 (fuera de alcance): creación top-down (`macro_add` reserva con interior vacío), `explode` generalizado, `macro_assume_edit`, hash de contenido para staleness de texto.
+
+---
 
 ### [Bugfix] — insert-between pierde assumptions
 **Fecha**: 2026-09-10

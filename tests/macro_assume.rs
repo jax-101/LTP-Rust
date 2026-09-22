@@ -646,3 +646,387 @@ fn uat_i3_split_interior_link_and_unmapped() {
         "unmapped should contain the new interior ASM: {stale:?}"
     );
 }
+
+// ============================================================================
+// Phase M5: end-to-end workflows + closure UATs
+// ============================================================================
+
+/// Long-arrow hygiene warning codes recorded for `tree` by `validate`.
+fn macro_hygiene_codes(dir: &std::path::Path, tree: &str) -> Vec<String> {
+    validate_tree_warnings(dir, tree)
+        .iter()
+        .map(|w| w["code"].as_str().unwrap().to_string())
+        .filter(|c| c.starts_with("LONG_ARROW") || c == "MACRO_ASSUMPTION_UNGROUNDED")
+        .collect()
+}
+
+fn undo(dir: &std::path::Path) {
+    let (json, code) = run_ltp(dir, &["undo"]);
+    assert_eq!(code, 0, "undo failed: {json:?}");
+    assert!(
+        json["success"].as_bool().unwrap(),
+        "undo not successful: {json:?}"
+    );
+}
+
+fn redo(dir: &std::path::Path) {
+    let (json, code) = run_ltp(dir, &["redo"]);
+    assert_eq!(code, 0, "redo failed: {json:?}");
+    assert!(
+        json["success"].as_bool().unwrap(),
+        "redo not successful: {json:?}"
+    );
+}
+
+fn gather(dir: &std::path::Path, tree: &str, macro_link: &str) -> (Value, i32) {
+    run_ltp(
+        dir,
+        &[
+            "macro-assume",
+            "gather",
+            "--tree",
+            tree,
+            "--macro-link",
+            macro_link,
+        ],
+    )
+}
+
+/// Build a diamond A→{B,C}→D and collapse it whole (A→D).
+///
+/// Returns `(tree_id, links[L1..L4], macro_edge_id)`. All four edges are interior.
+fn diamond_collapsed(dir: &std::path::Path) -> (String, Vec<String>, String) {
+    setup_workspace(dir);
+    let a = add_node(dir, "Node A", "RC");
+    let b = add_node(dir, "Node B", "INT");
+    let c = add_node(dir, "Node C", "INT");
+    let d = add_node(dir, "Node D", "UDE");
+    let tree = create_tree(dir, "crt", "DiamondCRT");
+    for n in [&a, &b, &c, &d] {
+        attach_node(dir, &tree, n);
+    }
+    let l1 = connect(dir, &tree, &a, &b);
+    let l2 = connect(dir, &tree, &a, &c);
+    let l3 = connect(dir, &tree, &b, &d);
+    let l4 = connect(dir, &tree, &c, &d);
+    let macro_id = collapse(dir, &tree, &a, &d, "Diamante");
+    (tree, vec![l1, l2, l3, l4], macro_id)
+}
+
+// --- Workflow 1: collapse → gather (empty) → add×2 (grounded) → list → validate clean ---
+#[test]
+fn e2e_wf1_collapse_gather_add_list_validate_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto 1");
+    let asm2 = add_assumption(dir.path(), &tree, &links[1], "supuesto 2");
+
+    // gather: two interior ASMs, no summary yet => both unmapped.
+    let (g0, gc0) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc0, 0, "gather failed: {g0:?}");
+    assert_eq!(g0["data"]["diff"]["summary_count"], 0);
+    assert_eq!(
+        string_array(&g0["data"]["diff"]["unmapped"]),
+        vec![asm1.clone(), asm2.clone()]
+    );
+
+    // Ground each interior ASM with its own summary.
+    let (a1, ac1) = macro_add(dir.path(), &tree, &macro_id, "Resumen 1", Some(&asm1));
+    assert_eq!(ac1, 0, "add 1 failed: {a1:?}");
+    let (a2, ac2) = macro_add(dir.path(), &tree, &macro_id, "Resumen 2", Some(&asm2));
+    assert_eq!(ac2, 0, "add 2 failed: {a2:?}");
+
+    // list => 2 summaries.
+    let (l, lc) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(lc, 0, "list failed: {l:?}");
+    assert_eq!(l["data"]["count"], 2);
+
+    // gather now reports a fully mapped interior.
+    let (g1, gc1) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc1, 0);
+    assert_eq!(g1["data"]["diff"]["summary_count"], 2);
+    assert!(g1["data"]["diff"]["unmapped"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(g1["data"]["diff"]["dangling"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // validate: no long-arrow hygiene warnings — the summary is healthy.
+    assert!(
+        macro_hygiene_codes(dir.path(), &tree).is_empty(),
+        "expected a clean summary, got: {:?}",
+        validate_tree_warnings(dir.path(), &tree)
+    );
+}
+
+// --- Workflow 2: add covering only one of two interior ASMs => unmapped => STALE ---
+#[test]
+fn e2e_wf2_partial_summary_is_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto 1");
+    let asm2 = add_assumption(dir.path(), &tree, &links[1], "supuesto 2");
+
+    // Ground only ASM-001, leaving ASM-002 unmapped.
+    let (a1, ac1) = macro_add(dir.path(), &tree, &macro_id, "Resumen parcial", Some(&asm1));
+    assert_eq!(ac1, 0, "add failed: {a1:?}");
+
+    // gather surfaces the unmapped ASM.
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc, 0);
+    assert_eq!(
+        string_array(&g["data"]["diff"]["unmapped"]),
+        vec![asm2.clone()]
+    );
+    assert!(g["data"]["diff"]["dangling"].as_array().unwrap().is_empty());
+
+    // validate escalates it to a non-blocking STALE warning.
+    let warnings = validate_tree_warnings(dir.path(), &tree);
+    let stale = find_warning(&warnings, "LONG_ARROW_SUMMARY_STALE");
+    assert_eq!(stale["macro_link"], macro_id);
+    assert_eq!(string_array(&stale["unmapped"]), vec![asm2]);
+    assert!(string_array(&stale["dangling"]).is_empty());
+    // ASM-001 is still grounded => the MASM is not ungrounded.
+    let _ = asm1;
+    assert!(!macro_hygiene_codes(dir.path(), &tree)
+        .contains(&"MACRO_ASSUMPTION_UNGROUNDED".to_string()));
+}
+
+// --- Workflow 3: add grounded on an interior ASM, then delete it => gather dangling => STALE ---
+#[test]
+fn e2e_wf3_assume_rm_makes_dangling_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto anclado");
+
+    let (a1, ac1) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&asm1));
+    assert_eq!(ac1, 0, "add failed: {a1:?}");
+
+    // Remove the interior ASM the summary was grounded on.
+    let (rm, rc) = run_ltp(
+        dir.path(),
+        &["assume", "rm", "--tree", &tree, "--asm", &asm1],
+    );
+    assert_eq!(rc, 0, "assume rm failed: {rm:?}");
+
+    // gather now reports the ref as dangling (no longer in the live interior).
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc, 0);
+    assert_eq!(
+        string_array(&g["data"]["diff"]["dangling"]),
+        vec![asm1.clone()]
+    );
+    assert!(g["data"]["diff"]["unmapped"].as_array().unwrap().is_empty());
+
+    // validate agrees.
+    let warnings = validate_tree_warnings(dir.path(), &tree);
+    let stale = find_warning(&warnings, "LONG_ARROW_SUMMARY_STALE");
+    assert_eq!(string_array(&stale["dangling"]), vec![asm1]);
+}
+
+// --- UAT I2: path_replace removes the macro => subsequent gather => MACRO_EDGE_NOT_FOUND ---
+#[test]
+fn uat_i2_path_replace_removes_macro() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto");
+    let (a1, ac1) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&asm1));
+    assert_eq!(ac1, 0, "add failed: {a1:?}");
+
+    // Replace the whole long arrow with a single synthesis node.
+    let synth = add_node(dir.path(), "Síntesis", "INT");
+    let (rep, repc) = run_ltp(
+        dir.path(),
+        &[
+            "path",
+            "replace",
+            "--tree",
+            &tree,
+            "--macro-link",
+            &macro_id,
+            "--by-node",
+            &synth,
+        ],
+    );
+    assert_eq!(repc, 0, "path replace failed: {rep:?}");
+
+    // The macro is gone: gather can no longer find it.
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc, 1, "gather should fail after replace: {g:?}");
+    assert_eq!(g["errors"][0]["code"], "MACRO_EDGE_NOT_FOUND");
+
+    // And validate emits no long-arrow hygiene warnings — there is no macro to audit.
+    assert!(
+        macro_hygiene_codes(dir.path(), &tree).is_empty(),
+        "no macro => no long-arrow warnings"
+    );
+}
+
+// --- UAT I4: gather over a diamond interior does not break ---
+#[test]
+fn uat_i4_diamond_gather_robust() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = diamond_collapsed(dir.path());
+    // Put an assumption on one branch to exercise mixed empty/non-empty interior.
+    let asm = add_assumption(dir.path(), &tree, &links[0], "rama izquierda");
+
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc, 0, "gather failed on diamond: {g:?}");
+    let interior = g["data"]["interior"].as_object().unwrap();
+    assert_eq!(
+        interior.len(),
+        4,
+        "all four interior links present: {interior:?}"
+    );
+    assert_eq!(interior[&links[0]][0]["id"], asm);
+    assert!(interior[&links[3]].as_array().unwrap().is_empty());
+    // The lone interior ASM is unmapped (no summary yet).
+    assert_eq!(string_array(&g["data"]["diff"]["unmapped"]), vec![asm]);
+}
+
+// --- UAT O1: undo of add removes the MASM; redo restores it with the same ID ---
+#[test]
+fn uat_o1_undo_redo_add_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto");
+
+    let (a1, ac1) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&asm1));
+    assert_eq!(ac1, 0, "add failed: {a1:?}");
+    assert_eq!(a1["data"]["created_assumption_id"], "MASM-001");
+
+    // undo removes it.
+    undo(dir.path());
+    let (l0, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(
+        l0["data"]["count"], 0,
+        "undo should remove the MASM: {l0:?}"
+    );
+
+    // redo restores the exact same MASM id (snapshot fidelity).
+    redo(dir.path());
+    let (l1, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(l1["data"]["count"], 1);
+    assert_eq!(l1["data"]["assumptions"][0]["id"], "MASM-001");
+}
+
+// --- UAT O2: projection refs are stored in canonical (sorted) order regardless of input ---
+#[test]
+fn uat_o2_projection_refs_canonical_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "s1");
+    let asm2 = add_assumption(dir.path(), &tree, &links[1], "s2");
+    let asm3 = add_assumption(dir.path(), &tree, &links[2], "s3");
+
+    // Supply refs deliberately out of order.
+    let projection = format!("{asm3},{asm1},{asm2}");
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&projection));
+    assert_eq!(code, 0, "add failed: {json:?}");
+    assert_eq!(
+        string_array(&json["data"]["projection_refs"]),
+        vec![asm1.clone(), asm2.clone(), asm3.clone()],
+        "projection refs must be canonically sorted"
+    );
+
+    // Order is stable on disk too.
+    let disk = read_only_tree(dir.path());
+    let stored = &disk["macro_edges"][0]["assumptions"][0]["projection_refs"];
+    assert_eq!(string_array(stored), vec![asm1, asm2, asm3]);
+}
+
+// --- UAT O3: a batch of 3 adds + 1 rm is reverted by a single undo ---
+#[test]
+fn uat_o3_batch_add_rm_single_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "s1");
+    let asm2 = add_assumption(dir.path(), &tree, &links[1], "s2");
+    let asm3 = add_assumption(dir.path(), &tree, &links[2], "s3");
+
+    let (b, bc) = run_ltp(dir.path(), &["history", "begin-batch", "--label", "batch"]);
+    assert_eq!(bc, 0, "begin-batch failed: {b:?}");
+
+    for (i, asm) in [&asm1, &asm2, &asm3].iter().enumerate() {
+        let (j, c) = macro_add(dir.path(), &tree, &macro_id, &format!("R{i}"), Some(asm));
+        assert_eq!(c, 0, "batched add failed: {j:?}");
+    }
+    let (r, rc) = macro_rm(dir.path(), &tree, &macro_id, "MASM-002");
+    assert_eq!(rc, 0, "batched rm failed: {r:?}");
+
+    let (e, ec) = run_ltp(dir.path(), &["history", "end-batch"]);
+    assert_eq!(ec, 0, "end-batch failed: {e:?}");
+
+    // Net effect: MASM-001 and MASM-003 survive.
+    let (l, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(l["data"]["count"], 2, "batch net state wrong: {l:?}");
+
+    // A single undo reverts the entire batch (all four operations).
+    undo(dir.path());
+    let (l0, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(
+        l0["data"]["count"], 0,
+        "single undo should revert the whole batch: {l0:?}"
+    );
+}
+
+// --- UAT C7: a legacy macro_edge without the `assumptions` field deserializes & gathers ---
+#[test]
+fn uat_c7_legacy_macro_edge_without_assumptions_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "supuesto");
+
+    // A freshly-collapsed macro is legacy-shaped on disk: skip_serializing_if omits
+    // the empty `assumptions` array entirely.
+    let disk = read_only_tree(dir.path());
+    let macro_edge = &disk["macro_edges"][0];
+    assert_eq!(macro_edge["id"], macro_id);
+    assert!(
+        macro_edge.get("assumptions").is_none(),
+        "empty assumptions must be omitted from JSON (legacy shape): {macro_edge:?}"
+    );
+
+    // Deserialization tolerates the missing field: gather works and finds the interior ASM.
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(gc, 0, "gather failed on legacy-shaped macro: {g:?}");
+    assert_eq!(g["data"]["interior"][&links[0]][0]["id"], asm1);
+}
+
+// --- UAT B3: gather over a macro whose interior links were all disconnected => empty, no panic ---
+#[test]
+fn uat_b3_gather_empty_live_interior() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+
+    // Remove every interior edge; interior_links stays static, but the live interior is empty.
+    let (d, dc) = run_ltp(
+        dir.path(),
+        &[
+            "link",
+            "disconnect",
+            "--tree",
+            &tree,
+            "--links",
+            &links.join(","),
+        ],
+    );
+    assert_eq!(dc, 0, "disconnect failed: {d:?}");
+
+    let (g, gc) = gather(dir.path(), &tree, &macro_id);
+    assert_eq!(
+        gc, 0,
+        "gather must not fail on an empty live interior: {g:?}"
+    );
+    assert!(g["success"].as_bool().unwrap());
+    assert!(
+        g["data"]["interior"].as_object().unwrap().is_empty(),
+        "no live interior links remain: {:?}",
+        g["data"]["interior"]
+    );
+    assert!(g["data"]["diff"]["unmapped"].as_array().unwrap().is_empty());
+    assert!(g["data"]["diff"]["dangling"].as_array().unwrap().is_empty());
+}
