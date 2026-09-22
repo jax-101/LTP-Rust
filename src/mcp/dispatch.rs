@@ -31,6 +31,7 @@ use crate::macro_assume::{
     execute_macro_assume_add, execute_macro_assume_gather, execute_macro_assume_list,
     execute_macro_assume_rm,
 };
+use crate::macro_edge::{execute_macro_add, execute_macro_expand, execute_macro_promote};
 use crate::mcp::types::{JsonRpcError, ToolCallResult};
 use crate::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use crate::node::commands::{
@@ -109,6 +110,9 @@ pub fn dispatch_tool(
         "ltp/macro_assume_add" => dispatch_macro_assume_add(args, storage),
         "ltp/macro_assume_rm" => dispatch_macro_assume_rm(args, storage),
         "ltp/macro_assume_list" => dispatch_macro_assume_list(args, storage),
+        "ltp/macro_add" => dispatch_macro_add(args, storage),
+        "ltp/macro_expand" => dispatch_macro_expand(args, storage),
+        "ltp/macro_promote" => dispatch_macro_promote(args, storage),
         "ltp/invalidate" => dispatch_invalidate(args, storage),
         "ltp/validate" => dispatch_validate(args, storage),
         "ltp/trace" => dispatch_trace(args, storage),
@@ -1010,6 +1014,56 @@ fn dispatch_macro_assume_list(
     let macro_link = get_str(args, "macro_link")?;
     let status = get_str_opt(args, "status");
     let output = execute_macro_assume_list(storage, tree, macro_link, status);
+    to_result(&output)
+}
+
+// --- Macro (top-down long arrow lifecycle) ---
+
+fn dispatch_macro_add(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let from = get_str(args, "from")?;
+    let to = get_str(args, "to")?;
+    let label = get_str(args, "label")?;
+
+    let capture = history_begin(storage);
+    let output = execute_macro_add(storage, tree, from, to, label);
+    if output.success {
+        history_commit(capture, "macro_add", "mcp:ltp/macro_add");
+    }
+    to_result(&output)
+}
+
+fn dispatch_macro_expand(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let macro_link = get_str(args, "macro_link")?;
+    let steps = get_str(args, "steps")?;
+
+    let capture = history_begin(storage);
+    let output = execute_macro_expand(storage, tree, macro_link, steps);
+    if output.success {
+        history_commit(capture, "macro_expand", "mcp:ltp/macro_expand");
+    }
+    to_result(&output)
+}
+
+fn dispatch_macro_promote(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = get_str(args, "tree")?;
+    let macro_link = get_str(args, "macro_link")?;
+
+    let capture = history_begin(storage);
+    let output = execute_macro_promote(storage, tree, macro_link);
+    if output.success {
+        history_commit(capture, "macro_promote", "mcp:ltp/macro_promote");
+    }
     to_result(&output)
 }
 

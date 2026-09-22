@@ -548,6 +548,47 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         }),
     ));
 
+    // --- Macro (top-down long arrow lifecycle) ---
+    tools.push(tool(
+        "ltp/macro_add",
+        "Reserve a top-down logical jump between two nodes (long arrow with empty interior)",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "from": { "type": "string", "description": "Source node of the reserved jump" },
+                "to": { "type": "string", "description": "Target node of the reserved jump" },
+                "label": { "type": "string", "description": "Descriptive label for the jump" }
+            },
+            "required": ["tree", "from", "to", "label"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/macro_expand",
+        "Materialize a reservation into an explicit INT chain (Reservation -> Overlay); blocks cycles",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" },
+                "steps": { "type": "string", "description": "Ordered intermediate step labels, comma-separated (one INT node per label)" }
+            },
+            "required": ["tree", "macro_link", "steps"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/macro_promote",
+        "Promote a reservation to a direct atomic edge, migrating its assumptions; blocks cycles",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" }
+            },
+            "required": ["tree", "macro_link"]
+        }),
+    ));
+
     // --- Invalidate ---
     tools.push(tool(
         "ltp/invalidate",

@@ -32,6 +32,7 @@ use ltp_engine::macro_assume::{
     execute_macro_assume_add, execute_macro_assume_gather, execute_macro_assume_list,
     execute_macro_assume_rm,
 };
+use ltp_engine::macro_edge::{execute_macro_add, execute_macro_expand, execute_macro_promote};
 use ltp_engine::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
@@ -106,6 +107,12 @@ enum Commands {
     MacroAssume {
         #[command(subcommand)]
         action: MacroAssumeAction,
+    },
+
+    /// Top-down long arrow lifecycle: reserve a logical jump, then expand or promote it
+    Macro {
+        #[command(subcommand)]
+        action: MacroAction,
     },
 
     /// Trace upstream/downstream from a node
@@ -527,6 +534,41 @@ enum MacroAssumeAction {
         macro_link: String,
         #[arg(long)]
         status: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum MacroAction {
+    /// Reserve a top-down logical jump (long arrow with empty interior)
+    Add {
+        #[arg(long)]
+        tree: String,
+        /// Source node of the reserved jump
+        #[arg(long)]
+        from: String,
+        /// Target node of the reserved jump
+        #[arg(long)]
+        to: String,
+        /// Descriptive label for the jump
+        #[arg(long)]
+        label: String,
+    },
+    /// Materialize a reservation into an explicit INT chain (Reservation -> Overlay)
+    Expand {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
+        /// Ordered intermediate step labels, comma-separated (one INT node per label)
+        #[arg(long)]
+        steps: String,
+    },
+    /// Promote a reservation to a direct atomic edge, migrating its assumptions
+    Promote {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
     },
 }
 
@@ -1698,6 +1740,50 @@ fn main() {
             } => {
                 let output =
                     execute_macro_assume_list(&storage, &tree, &macro_link, status.as_deref());
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+        },
+        Commands::Macro { action } => match action {
+            MacroAction::Add {
+                tree,
+                from,
+                to,
+                label,
+            } => {
+                let capture = history_begin(&storage);
+                let output = execute_macro_add(&storage, &tree, &from, &to, &label);
+                if output.success {
+                    history_commit(capture, "macro_add", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            MacroAction::Expand {
+                tree,
+                macro_link,
+                steps,
+            } => {
+                let capture = history_begin(&storage);
+                let output = execute_macro_expand(&storage, &tree, &macro_link, &steps);
+                if output.success {
+                    history_commit(capture, "macro_expand", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            MacroAction::Promote { tree, macro_link } => {
+                let capture = history_begin(&storage);
+                let output = execute_macro_promote(&storage, &tree, &macro_link);
+                if output.success {
+                    history_commit(capture, "macro_promote", &full_command);
+                }
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

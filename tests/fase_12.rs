@@ -333,7 +333,7 @@ fn test_tools_list_complete() {
 
     assert!(resp["error"].is_null());
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 67);
+    assert_eq!(tools.len(), 70);
 
     // Verify key tools exist
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -349,6 +349,9 @@ fn test_tools_list_complete() {
     assert!(tool_names.contains(&"ltp/macro_assume_add"));
     assert!(tool_names.contains(&"ltp/macro_assume_rm"));
     assert!(tool_names.contains(&"ltp/macro_assume_list"));
+    assert!(tool_names.contains(&"ltp/macro_add"));
+    assert!(tool_names.contains(&"ltp/macro_expand"));
+    assert!(tool_names.contains(&"ltp/macro_promote"));
 
     // Verify each tool has inputSchema
     for tool in tools {
@@ -516,5 +519,5 @@ fn test_tools_list_standalone() {
     assert!(resp["error"].is_null());
     assert_eq!(resp["id"], 42);
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 67);
+    assert_eq!(tools.len(), 70);
 }
