@@ -10,9 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::link::{Assumption, AssumptionStatus};
-use crate::output::{CommandOutput, GraphHealth, OutputError};
-use crate::storage::Storage;
-use crate::tree::{MacroEdge, Tree};
+use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
+use crate::storage::{LockOutcome, Storage};
+use crate::tree::{MacroAssumption, MacroEdge, Tree};
 
 /// Recolecta las assumptions de los `interior_links` de una long arrow, agrupadas por link.
 ///
@@ -207,6 +207,481 @@ pub fn execute_macro_assume_gather(
             macro_link: macro_link.to_string(),
             interior,
             diff,
+        },
+    )
+}
+
+// --- M3: autoría del resumen (add / rm / list) ---
+
+/// Data devuelta por `macro-assume add`.
+#[derive(Debug, Serialize)]
+pub struct MacroAssumeAddData {
+    /// ID del `MacroAssumption` recién creado (`MASM-xxx`).
+    pub created_assumption_id: String,
+    /// Long arrow sobre la que se autoró.
+    pub macro_link: String,
+    /// Refs de proyección resueltas (ordenadas, sin duplicados).
+    pub projection_refs: Vec<String>,
+}
+
+/// Data devuelta por `macro-assume rm`.
+#[derive(Debug, Serialize)]
+pub struct MacroAssumeRmData {
+    /// ID del `MacroAssumption` removido.
+    pub removed_assumption: String,
+    /// Long arrow de la que se removió.
+    pub macro_link: String,
+}
+
+/// Data devuelta por `macro-assume list`.
+#[derive(Debug, Serialize)]
+pub struct MacroAssumeListData {
+    /// Long arrow inspeccionada.
+    pub macro_link: String,
+    /// Supuestos-resumen almacenados (tras aplicar el filtro de estado).
+    pub assumptions: Vec<MacroAssumption>,
+    /// Número de supuestos devueltos.
+    pub count: usize,
+}
+
+/// Advertencia por lock obsoleto retirado (paridad con el resto de comandos mutadores).
+fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
+    match outcome {
+        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
+            "STALE_LOCK_REMOVED",
+            format!("Stale lock from PID {pid} was removed"),
+        )),
+        LockOutcome::Acquired => None,
+    }
+}
+
+/// Parsea un filtro de estado textual al enum. `None` = filtro ausente o no reconocido.
+fn parse_status(s: &str) -> Option<AssumptionStatus> {
+    match s.to_lowercase().as_str() {
+        "valid" => Some(AssumptionStatus::Valid),
+        "invalid" => Some(AssumptionStatus::Invalid),
+        "needs_review" => Some(AssumptionStatus::NeedsReview),
+        _ => None,
+    }
+}
+
+/// Resuelve y valida las `projection_refs` de un `add` contra el interior vivo de la macro.
+///
+/// Cada ref debe apuntar a un `LINK-xxx` ∈ `interior_links` vivo o a un `ASM-xxx` de esos
+/// links (set vivo R3, reutiliza [`gather_interior_assumptions`]). Un `MASM-xxx` (auto/lateral)
+/// es `PROJECTION_REF_INVALID`; cualquier otra ref fuera del interior es
+/// `PROJECTION_REF_NOT_IN_INTERIOR`. Deduplica y ordena canónicamente (`BTreeSet`).
+fn resolve_projection_refs(
+    tree: &Tree,
+    macro_edge: &MacroEdge,
+    refs: &[String],
+) -> Result<Vec<String>, OutputError> {
+    let grouped = gather_interior_assumptions(tree, macro_edge);
+    let mut live: BTreeSet<&str> = BTreeSet::new();
+    for (link_id, asms) in &grouped {
+        live.insert(link_id.as_str());
+        for a in asms {
+            live.insert(a.id.as_str());
+        }
+    }
+
+    let mut resolved: BTreeSet<String> = BTreeSet::new();
+    for r in refs {
+        if r.starts_with("MASM-") {
+            return Err(OutputError::new(
+                "PROJECTION_REF_INVALID",
+                format!(
+                    "Projection ref '{r}' points to a macro-assumption; refs must target the interior chain"
+                ),
+            )
+            .with_context("ref", r.as_str()));
+        }
+        if live.contains(r.as_str()) {
+            resolved.insert(r.clone());
+        } else {
+            return Err(OutputError::new(
+                "PROJECTION_REF_NOT_IN_INTERIOR",
+                format!(
+                    "Projection ref '{r}' is not part of the interior of macro-edge '{}'",
+                    macro_edge.id
+                ),
+            )
+            .with_context("ref", r.as_str()));
+        }
+    }
+    Ok(resolved.into_iter().collect())
+}
+
+/// Construye una salida de fallo para `add` con `MacroAssumeAddData` vacío.
+fn add_failure(
+    ws_name: &str,
+    macro_link: &str,
+    error: OutputError,
+) -> CommandOutput<MacroAssumeAddData> {
+    CommandOutput {
+        success: false,
+        action: "macro_assume_add".to_string(),
+        workspace: ws_name.to_string(),
+        data: MacroAssumeAddData {
+            created_assumption_id: String::new(),
+            macro_link: macro_link.to_string(),
+            projection_refs: vec![],
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    }
+}
+
+/// Construye una salida de fallo para `rm` con `MacroAssumeRmData` vacío.
+fn rm_failure(
+    ws_name: &str,
+    macro_link: &str,
+    asm_id: &str,
+    error: OutputError,
+) -> CommandOutput<MacroAssumeRmData> {
+    CommandOutput {
+        success: false,
+        action: "macro_assume_rm".to_string(),
+        workspace: ws_name.to_string(),
+        data: MacroAssumeRmData {
+            removed_assumption: asm_id.to_string(),
+            macro_link: macro_link.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    }
+}
+
+/// Construye una salida de fallo para `list` con `MacroAssumeListData` vacío.
+fn list_failure(
+    ws_name: &str,
+    macro_link: &str,
+    error: OutputError,
+) -> CommandOutput<MacroAssumeListData> {
+    CommandOutput {
+        success: false,
+        action: "macro_assume_list".to_string(),
+        workspace: ws_name.to_string(),
+        data: MacroAssumeListData {
+            macro_link: macro_link.to_string(),
+            assumptions: vec![],
+            count: 0,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    }
+}
+
+/// Ejecuta `macro-assume add`: autora un supuesto-resumen sobre una long arrow.
+///
+/// Muta bajo lock (participa en undo/redo vía el `history_*` del llamador). Valida texto no
+/// vacío (`TEXT_REQUIRED`) y resuelve las `projection_refs` contra el interior. Advertencia
+/// `MACRO_ASSUMPTION_UNGROUNDED` (no bloqueante) si el resumen queda sin refs teniendo interior.
+pub fn execute_macro_assume_add(
+    storage: &dyn Storage,
+    tree_id: &str,
+    macro_link: &str,
+    text: &str,
+    projection_refs: &[String],
+) -> CommandOutput<MacroAssumeAddData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let lock_outcome = match storage.acquire_lock("macro-assume add") {
+        Ok(o) => o,
+        Err(e) => {
+            return add_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new("LOCK_ERROR", e.to_string()),
+            );
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = storage.release_lock();
+            return add_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+            );
+        }
+    };
+
+    let macro_idx = match tree.macro_edges.iter().position(|m| m.id == macro_link) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return add_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new(
+                    "MACRO_EDGE_NOT_FOUND",
+                    format!("Macro-edge '{macro_link}' not found in tree '{tree_id}'"),
+                ),
+            );
+        }
+    };
+
+    if text.trim().is_empty() {
+        let _ = storage.release_lock();
+        return add_failure(
+            &ws_name,
+            macro_link,
+            OutputError::new("TEXT_REQUIRED", "Assumption text must not be empty"),
+        );
+    }
+
+    // Validación de refs + estado del interior con borrows inmutables (se sueltan antes de mutar).
+    let (resolved_refs, interior_empty) = {
+        let macro_edge = &tree.macro_edges[macro_idx];
+        let resolved = match resolve_projection_refs(&tree, macro_edge, projection_refs) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = storage.release_lock();
+                return add_failure(&ws_name, macro_link, e);
+            }
+        };
+        let empty = gather_interior_assumptions(&tree, macro_edge).is_empty();
+        (resolved, empty)
+    };
+
+    let masm_id = match storage.next_id("MASM") {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return add_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new("ID_GENERATION_ERROR", e.to_string()),
+            );
+        }
+    };
+
+    tree.macro_edges[macro_idx]
+        .assumptions
+        .push(MacroAssumption {
+            id: masm_id.clone(),
+            status: AssumptionStatus::Valid,
+            text: text.to_string(),
+            projection_refs: resolved_refs.clone(),
+        });
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return add_failure(
+            &ws_name,
+            macro_link,
+            OutputError::new("IO_ERROR", e.to_string()),
+        );
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+    if resolved_refs.is_empty() && !interior_empty {
+        warnings.push(
+            OutputWarning::new(
+                "MACRO_ASSUMPTION_UNGROUNDED",
+                format!(
+                    "Macro-assumption '{masm_id}' has no projection_refs while the interior is non-empty"
+                ),
+            )
+            .with_context("macro_link", macro_link)
+            .with_context("assumption_id", masm_id.as_str()),
+        );
+    }
+
+    CommandOutput {
+        success: true,
+        action: "macro_assume_add".to_string(),
+        workspace: ws_name,
+        data: MacroAssumeAddData {
+            created_assumption_id: masm_id,
+            macro_link: macro_link.to_string(),
+            projection_refs: resolved_refs,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Ejecuta `macro-assume rm`: remueve un supuesto-resumen de una long arrow.
+///
+/// Muta bajo lock (participa en undo/redo vía el llamador). No es idempotente: remover un
+/// `MASM` inexistente es `MACRO_ASSUMPTION_NOT_FOUND` (paridad con `assume rm`).
+pub fn execute_macro_assume_rm(
+    storage: &dyn Storage,
+    tree_id: &str,
+    macro_link: &str,
+    asm_id: &str,
+) -> CommandOutput<MacroAssumeRmData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let lock_outcome = match storage.acquire_lock("macro-assume rm") {
+        Ok(o) => o,
+        Err(e) => {
+            return rm_failure(
+                &ws_name,
+                macro_link,
+                asm_id,
+                OutputError::new("LOCK_ERROR", e.to_string()),
+            );
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = storage.release_lock();
+            return rm_failure(
+                &ws_name,
+                macro_link,
+                asm_id,
+                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+            );
+        }
+    };
+
+    let macro_idx = match tree.macro_edges.iter().position(|m| m.id == macro_link) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return rm_failure(
+                &ws_name,
+                macro_link,
+                asm_id,
+                OutputError::new(
+                    "MACRO_EDGE_NOT_FOUND",
+                    format!("Macro-edge '{macro_link}' not found in tree '{tree_id}'"),
+                ),
+            );
+        }
+    };
+
+    let macro_edge = &mut tree.macro_edges[macro_idx];
+    let before = macro_edge.assumptions.len();
+    macro_edge.assumptions.retain(|a| a.id != asm_id);
+    if macro_edge.assumptions.len() == before {
+        let _ = storage.release_lock();
+        return rm_failure(
+            &ws_name,
+            macro_link,
+            asm_id,
+            OutputError::new(
+                "MACRO_ASSUMPTION_NOT_FOUND",
+                format!("Macro-assumption '{asm_id}' not found in macro-edge '{macro_link}'"),
+            ),
+        );
+    }
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return rm_failure(
+            &ws_name,
+            macro_link,
+            asm_id,
+            OutputError::new("IO_ERROR", e.to_string()),
+        );
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "macro_assume_rm".to_string(),
+        workspace: ws_name,
+        data: MacroAssumeRmData {
+            removed_assumption: asm_id.to_string(),
+            macro_link: macro_link.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Ejecuta `macro-assume list`: lista los supuestos-resumen de una long arrow (solo lectura).
+///
+/// Filtrable por estado (`valid`/`invalid`/`needs_review`); un filtro no reconocido se ignora.
+pub fn execute_macro_assume_list(
+    storage: &dyn Storage,
+    tree_id: &str,
+    macro_link: &str,
+    status_filter: Option<&str>,
+) -> CommandOutput<MacroAssumeListData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+    let action = "macro_assume_list";
+
+    let tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(_) => {
+            return list_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+            );
+        }
+    };
+
+    let macro_edge = match tree.macro_edges.iter().find(|m| m.id == macro_link) {
+        Some(m) => m,
+        None => {
+            return list_failure(
+                &ws_name,
+                macro_link,
+                OutputError::new(
+                    "MACRO_EDGE_NOT_FOUND",
+                    format!("Macro-edge '{macro_link}' not found in tree '{tree_id}'"),
+                ),
+            );
+        }
+    };
+
+    let filter = status_filter.and_then(parse_status);
+    let assumptions: Vec<MacroAssumption> = macro_edge
+        .assumptions
+        .iter()
+        .filter(|a| filter.is_none_or(|f| a.status == f))
+        .cloned()
+        .collect();
+    let count = assumptions.len();
+
+    CommandOutput::ok(
+        action,
+        &ws_name,
+        MacroAssumeListData {
+            macro_link: macro_link.to_string(),
+            assumptions,
+            count,
         },
     )
 }

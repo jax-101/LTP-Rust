@@ -28,7 +28,10 @@ use ltp_engine::link::commands::{
     execute_link_connect, execute_link_disconnect, execute_link_feedback,
     execute_link_feedback_list, execute_link_feedback_rm,
 };
-use ltp_engine::macro_assume::execute_macro_assume_gather;
+use ltp_engine::macro_assume::{
+    execute_macro_assume_add, execute_macro_assume_gather, execute_macro_assume_list,
+    execute_macro_assume_rm,
+};
 use ltp_engine::nbr::{execute_nbr_add, execute_nbr_inspect, execute_nbr_list, execute_nbr_rm};
 use ltp_engine::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
@@ -494,6 +497,36 @@ enum MacroAssumeAction {
         tree: String,
         #[arg(long)]
         macro_link: String,
+    },
+    /// Author a summary assumption on a long arrow, mapping it to the interior chain
+    Add {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
+        #[arg(long)]
+        text: String,
+        /// Interior refs (LINK-xxx / ASM-xxx) this summary projects onto (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        projection: Vec<String>,
+    },
+    /// Remove a summary assumption from a long arrow
+    Rm {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
+        #[arg(long)]
+        asm: String,
+    },
+    /// List a long arrow's summary assumptions, optionally filtered by status (read-only)
+    List {
+        #[arg(long)]
+        tree: String,
+        #[arg(long)]
+        macro_link: String,
+        #[arg(long)]
+        status: Option<String>,
     },
 }
 
@@ -1621,6 +1654,50 @@ fn main() {
         Commands::MacroAssume { action } => match action {
             MacroAssumeAction::Gather { tree, macro_link } => {
                 let output = execute_macro_assume_gather(&storage, &tree, &macro_link);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            MacroAssumeAction::Add {
+                tree,
+                macro_link,
+                text,
+                projection,
+            } => {
+                let capture = history_begin(&storage);
+                let output =
+                    execute_macro_assume_add(&storage, &tree, &macro_link, &text, &projection);
+                if output.success {
+                    history_commit(capture, "macro_assume_add", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            MacroAssumeAction::Rm {
+                tree,
+                macro_link,
+                asm,
+            } => {
+                let capture = history_begin(&storage);
+                let output = execute_macro_assume_rm(&storage, &tree, &macro_link, &asm);
+                if output.success {
+                    history_commit(capture, "macro_assume_rm", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            MacroAssumeAction::List {
+                tree,
+                macro_link,
+                status,
+            } => {
+                let output =
+                    execute_macro_assume_list(&storage, &tree, &macro_link, status.as_deref());
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

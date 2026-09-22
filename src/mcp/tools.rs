@@ -503,6 +503,50 @@ pub fn all_tools() -> Vec<ToolDefinition> {
             "required": ["tree", "macro_link"]
         }),
     ));
+    tools.push(tool(
+        "ltp/macro_assume_add",
+        "Author a summary assumption on a long arrow, mapping it to interior refs (LINK/ASM)",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" },
+                "text": { "type": "string", "description": "Summary assumption text" },
+                "projection": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Interior refs (LINK-xxx / ASM-xxx) this summary projects onto"
+                }
+            },
+            "required": ["tree", "macro_link", "text"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/macro_assume_rm",
+        "Remove a summary assumption from a long arrow",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" },
+                "asm": { "type": "string", "description": "Macro-assumption ID (MASM-xxx)" }
+            },
+            "required": ["tree", "macro_link", "asm"]
+        }),
+    ));
+    tools.push(tool(
+        "ltp/macro_assume_list",
+        "List a long arrow's summary assumptions, optionally filtered by status (read-only)",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Tree ID" },
+                "macro_link": { "type": "string", "description": "Macro-edge (long arrow) ID" },
+                "status": { "type": "string", "description": "Filter by status (valid, invalid, needs_review)" }
+            },
+            "required": ["tree", "macro_link"]
+        }),
+    ));
 
     // --- Invalidate ---
     tools.push(tool(

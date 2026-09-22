@@ -91,11 +91,10 @@ fn collapse(dir: &std::path::Path, tree_id: &str, from: &str, to: &str, label: &
     json["data"]["macro_edge_id"].as_str().unwrap().to_string()
 }
 
-/// Build a linear chain A → B → C → D → E and collapse it into a single long arrow.
+/// Build a linear chain A → B → C → D → E.
 ///
-/// Returns `(tree_id, links[L1..L4], macro_edge_id)`. Interior links = all 4 edges
-/// (collapse is non-destructive: interior edges stay in `tree.edges`).
-fn collapsed_chain(dir: &std::path::Path) -> (String, Vec<String>, String) {
+/// Returns `(tree_id, nodes[A..E], links[L1..L4])`. Nothing is collapsed.
+fn linear_chain(dir: &std::path::Path) -> (String, Vec<String>, Vec<String>) {
     setup_workspace(dir);
     let a = add_node(dir, "Node A", "RC");
     let b = add_node(dir, "Node B", "INT");
@@ -110,8 +109,17 @@ fn collapsed_chain(dir: &std::path::Path) -> (String, Vec<String>, String) {
     let l2 = connect(dir, &tree, &b, &c);
     let l3 = connect(dir, &tree, &c, &d);
     let l4 = connect(dir, &tree, &d, &e);
-    let macro_id = collapse(dir, &tree, &a, &e, "Cadena lógica");
-    (tree, vec![l1, l2, l3, l4], macro_id)
+    (tree, vec![a, b, c, d, e], vec![l1, l2, l3, l4])
+}
+
+/// Build a linear chain and collapse it whole (A → E) into a single long arrow.
+///
+/// Returns `(tree_id, links[L1..L4], macro_edge_id)`. Interior links = all 4 edges
+/// (collapse is non-destructive: interior edges stay in `tree.edges`).
+fn collapsed_chain(dir: &std::path::Path) -> (String, Vec<String>, String) {
+    let (tree, nodes, links) = linear_chain(dir);
+    let macro_id = collapse(dir, &tree, &nodes[0], &nodes[4], "Cadena lógica");
+    (tree, links, macro_id)
 }
 
 fn string_array(v: &Value) -> Vec<String> {
@@ -222,4 +230,319 @@ fn uat_c2_gather_tree_not_found() {
     assert_eq!(code, 1, "expected failure exit code: {json:?}");
     assert!(!json["success"].as_bool().unwrap());
     assert_eq!(json["errors"][0]["code"], "TREE_NOT_FOUND");
+}
+
+// ============================================================================
+// Phase M3: add / rm / list
+// ============================================================================
+
+fn macro_add(
+    dir: &std::path::Path,
+    tree: &str,
+    macro_link: &str,
+    text: &str,
+    projection: Option<&str>,
+) -> (Value, i32) {
+    let mut args = vec![
+        "macro-assume",
+        "add",
+        "--tree",
+        tree,
+        "--macro-link",
+        macro_link,
+        "--text",
+        text,
+    ];
+    if let Some(p) = projection {
+        args.push("--projection");
+        args.push(p);
+    }
+    run_ltp(dir, &args)
+}
+
+fn macro_rm(dir: &std::path::Path, tree: &str, macro_link: &str, asm: &str) -> (Value, i32) {
+    run_ltp(
+        dir,
+        &[
+            "macro-assume",
+            "rm",
+            "--tree",
+            tree,
+            "--macro-link",
+            macro_link,
+            "--asm",
+            asm,
+        ],
+    )
+}
+
+fn macro_list(dir: &std::path::Path, tree: &str, macro_link: &str) -> (Value, i32) {
+    run_ltp(
+        dir,
+        &[
+            "macro-assume",
+            "list",
+            "--tree",
+            tree,
+            "--macro-link",
+            macro_link,
+        ],
+    )
+}
+
+/// Read the single tree file in `trees/` as JSON (for on-disk serialization assertions).
+fn read_only_tree(dir: &std::path::Path) -> Value {
+    let trees_dir = dir.join("trees");
+    let entry = std::fs::read_dir(&trees_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .expect("exactly one tree file expected");
+    let content = std::fs::read_to_string(entry.path()).unwrap();
+    serde_json::from_str(&content).unwrap()
+}
+
+fn warning_codes(json: &Value) -> Vec<String> {
+    json["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["code"].as_str().unwrap().to_string())
+        .collect()
+}
+
+// --- UAT H2: add with 2 valid projection refs => MASM-001, canonical order ---
+#[test]
+fn uat_h2_add_with_projections() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "interior 1");
+    let asm2 = add_assumption(dir.path(), &tree, &links[1], "interior 2");
+
+    // Refs given out of order; engine must dedup+sort canonically.
+    let projection = format!("{asm2},{asm1}");
+    let (json, code) = macro_add(
+        dir.path(),
+        &tree,
+        &macro_id,
+        "Resumen causal",
+        Some(&projection),
+    );
+    assert_eq!(code, 0, "add failed: {json:?}");
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["action"], "macro_assume_add");
+    assert_eq!(json["data"]["created_assumption_id"], "MASM-001");
+    assert_eq!(json["data"]["macro_link"], macro_id);
+    assert_eq!(
+        string_array(&json["data"]["projection_refs"]),
+        vec![asm1, asm2]
+    );
+    // Grounded => no ungrounded warning.
+    assert!(!warning_codes(&json).contains(&"MACRO_ASSUMPTION_UNGROUNDED".to_string()));
+}
+
+// --- UAT H3: list after 2 adds => 2 items in insertion order ---
+#[test]
+fn uat_h3_list_after_two_adds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "interior 1");
+
+    let (_, c1) = macro_add(dir.path(), &tree, &macro_id, "Resumen A", Some(&asm1));
+    assert_eq!(c1, 0);
+    // Second summary grounded on an interior LINK ref.
+    let (_, c2) = macro_add(dir.path(), &tree, &macro_id, "Resumen B", Some(&links[1]));
+    assert_eq!(c2, 0);
+
+    let (json, code) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(code, 0, "list failed: {json:?}");
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["data"]["count"], 2);
+    let asms = json["data"]["assumptions"].as_array().unwrap();
+    assert_eq!(asms.len(), 2);
+    assert_eq!(asms[0]["id"], "MASM-001");
+    assert_eq!(asms[1]["id"], "MASM-002");
+    assert_eq!(asms[0]["status"], "valid");
+}
+
+// --- UAT H4: add without projection on an empty interior => no ungrounded warning ---
+#[test]
+fn uat_h4_add_no_projection_empty_interior() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+
+    // Dismantle every interior link so the macro's live interior becomes empty.
+    let (_, dc) = run_ltp(
+        dir.path(),
+        &[
+            "link",
+            "disconnect",
+            "--tree",
+            &tree,
+            "--links",
+            &links.join(","),
+        ],
+    );
+    assert_eq!(dc, 0, "disconnect failed");
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen degenerado", None);
+    assert_eq!(code, 0, "add failed: {json:?}");
+    assert!(json["success"].as_bool().unwrap());
+    assert!(json["data"]["projection_refs"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    // Empty interior => nothing to ground against => NO ungrounded warning.
+    assert!(!warning_codes(&json).contains(&"MACRO_ASSUMPTION_UNGROUNDED".to_string()));
+}
+
+// --- UAT B1: add with empty text => TEXT_REQUIRED, MASM counter not consumed ---
+#[test]
+fn uat_b1_add_empty_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "interior 1");
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "", Some(&asm1));
+    assert_eq!(code, 1, "expected failure: {json:?}");
+    assert!(!json["success"].as_bool().unwrap());
+    assert_eq!(json["errors"][0]["code"], "TEXT_REQUIRED");
+
+    // Counter must not have advanced: the next valid add is still MASM-001.
+    let (json2, code2) = macro_add(dir.path(), &tree, &macro_id, "Resumen válido", Some(&asm1));
+    assert_eq!(code2, 0, "valid add failed: {json2:?}");
+    assert_eq!(json2["data"]["created_assumption_id"], "MASM-001");
+}
+
+// --- UAT B2: duplicate projection refs => deduped to one ---
+#[test]
+fn uat_b2_add_duplicate_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, links, macro_id) = collapsed_chain(dir.path());
+    let asm1 = add_assumption(dir.path(), &tree, &links[0], "interior 1");
+
+    let projection = format!("{asm1},{asm1}");
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&projection));
+    assert_eq!(code, 0, "add failed: {json:?}");
+    assert_eq!(string_array(&json["data"]["projection_refs"]), vec![asm1]);
+}
+
+// --- UAT B4: non-empty interior, no projection => ungrounded warning but success ---
+#[test]
+fn uat_b4_add_ungrounded_warns_but_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, macro_id) = collapsed_chain(dir.path());
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen sin anclar", None);
+    assert_eq!(code, 0, "add should still succeed: {json:?}");
+    assert!(json["success"].as_bool().unwrap());
+    let warnings = json["warnings"].as_array().unwrap();
+    let ungrounded = warnings
+        .iter()
+        .find(|w| w["code"] == "MACRO_ASSUMPTION_UNGROUNDED")
+        .expect("ungrounded warning expected");
+    assert_eq!(ungrounded["macro_link"], macro_id);
+    assert_eq!(ungrounded["assumption_id"], "MASM-001");
+}
+
+// --- UAT B5: rm the last MASM => assumptions omitted from stored JSON ---
+#[test]
+fn uat_b5_rm_last_masm_omits_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, macro_id) = collapsed_chain(dir.path());
+
+    // Add without projection (ungrounded warning is harmless) then remove it.
+    let (add_json, _) = macro_add(dir.path(), &tree, &macro_id, "Resumen efímero", None);
+    let masm = add_json["data"]["created_assumption_id"].as_str().unwrap();
+    let (rm_json, rc) = macro_rm(dir.path(), &tree, &macro_id, masm);
+    assert_eq!(rc, 0, "rm failed: {rm_json:?}");
+    assert_eq!(rm_json["data"]["removed_assumption"], masm);
+
+    // list is empty...
+    let (list_json, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(list_json["data"]["count"], 0);
+
+    // ...and the stored macro_edge omits the `assumptions` key (skip_serializing_if).
+    let tree_json = read_only_tree(dir.path());
+    let macro_edge = tree_json["macro_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == *macro_id)
+        .expect("macro edge on disk");
+    assert!(
+        macro_edge.get("assumptions").is_none(),
+        "empty assumptions must be omitted: {macro_edge:?}"
+    );
+}
+
+// --- UAT C1 (add/rm variants): non-existent macro-link => MACRO_EDGE_NOT_FOUND ---
+#[test]
+fn uat_c1_add_rm_macro_edge_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, _macro_id) = collapsed_chain(dir.path());
+
+    let (add_json, ac) = macro_add(dir.path(), &tree, "MACRO-999", "Resumen", None);
+    assert_eq!(ac, 1, "add: {add_json:?}");
+    assert_eq!(add_json["errors"][0]["code"], "MACRO_EDGE_NOT_FOUND");
+
+    let (rm_json, rc) = macro_rm(dir.path(), &tree, "MACRO-999", "MASM-001");
+    assert_eq!(rc, 1, "rm: {rm_json:?}");
+    assert_eq!(rm_json["errors"][0]["code"], "MACRO_EDGE_NOT_FOUND");
+}
+
+// --- UAT C3: projection ref not in interior => PROJECTION_REF_NOT_IN_INTERIOR, no mutation ---
+#[test]
+fn uat_c3_add_projection_not_in_interior() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, macro_id) = collapsed_chain(dir.path());
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some("LINK-999"));
+    assert_eq!(code, 1, "expected failure: {json:?}");
+    assert_eq!(json["errors"][0]["code"], "PROJECTION_REF_NOT_IN_INTERIOR");
+    assert_eq!(json["errors"][0]["ref"], "LINK-999");
+
+    // No mutation: nothing was authored.
+    let (list_json, _) = macro_list(dir.path(), &tree, &macro_id);
+    assert_eq!(list_json["data"]["count"], 0);
+}
+
+// --- UAT C4: projection ref on a PERIPHERAL (non-interior) link => PROJECTION_REF_NOT_IN_INTERIOR ---
+#[test]
+fn uat_c4_add_projection_peripheral_asm() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, nodes, links) = linear_chain(dir.path());
+    // Collapse only A..D; the D->E link (links[3]) stays peripheral.
+    let macro_id = collapse(dir.path(), &tree, &nodes[0], &nodes[3], "Cadena parcial");
+
+    // Assumption on the peripheral link D->E.
+    let peripheral = add_assumption(dir.path(), &tree, &links[3], "supuesto periférico");
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some(&peripheral));
+    assert_eq!(code, 1, "expected failure: {json:?}");
+    assert_eq!(json["errors"][0]["code"], "PROJECTION_REF_NOT_IN_INTERIOR");
+    assert_eq!(json["errors"][0]["ref"], peripheral);
+}
+
+// --- UAT C5: projection ref pointing at a MASM (self/lateral) => PROJECTION_REF_INVALID ---
+#[test]
+fn uat_c5_add_projection_masm_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, macro_id) = collapsed_chain(dir.path());
+
+    let (json, code) = macro_add(dir.path(), &tree, &macro_id, "Resumen", Some("MASM-001"));
+    assert_eq!(code, 1, "expected failure: {json:?}");
+    assert_eq!(json["errors"][0]["code"], "PROJECTION_REF_INVALID");
+    assert_eq!(json["errors"][0]["ref"], "MASM-001");
+}
+
+// --- UAT C6: rm of a non-existent MASM => MACRO_ASSUMPTION_NOT_FOUND ---
+#[test]
+fn uat_c6_rm_nonexistent_masm() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, _links, macro_id) = collapsed_chain(dir.path());
+
+    let (json, code) = macro_rm(dir.path(), &tree, &macro_id, "MASM-999");
+    assert_eq!(code, 1, "expected failure: {json:?}");
+    assert_eq!(json["errors"][0]["code"], "MACRO_ASSUMPTION_NOT_FOUND");
 }
