@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::link::{Edge, FeedbackEdge};
+use crate::link::{AssumptionStatus, Edge, FeedbackEdge};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -27,6 +27,29 @@ pub struct NodeRef {
     pub role: Option<String>,
 }
 
+/// Supuesto-resumen destilado que cuelga de una long arrow (`MacroEdge`).
+///
+/// Mapea (via `projection_refs`) a elementos de la cadena causa-efecto interior
+/// (`LINK-xxx` y/o `ASM-xxx`). Es una entidad de primer nivel direccionable por ID
+/// (`MASM-xxx`), replicando el patrón de `Assumption` (ADR-005) pero como tipo propio
+/// para no contaminar los edges normales con un campo siempre vacío.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroAssumption {
+    /// Identificador secuencial (`MASM-xxx`).
+    pub id: String,
+    /// Estado del supuesto (reutiliza el enum de `Assumption`).
+    pub status: AssumptionStatus,
+    /// Texto destilado del supuesto-resumen.
+    pub text: String,
+    /// IDs interiores mapeados (`LINK-xxx` y/o `ASM-xxx`), ordenados y sin duplicados.
+    #[serde(default)]
+    pub projection_refs: Vec<String>,
+}
+
+/// Long arrow: resume una cadena causa-efecto colapsada (`path collapse`).
+///
+/// Coexiste de forma no-destructiva con la cadena interior. Sus `assumptions` son el
+/// resumen autorado (opcional) de los supuestos interiores.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroEdge {
     pub id: String,
@@ -36,6 +59,13 @@ pub struct MacroEdge {
     pub interior_nodes: Vec<String>,
     pub interior_links: Vec<String>,
     pub status: String,
+    /// Supuestos-resumen autorados que cuelgan de esta long arrow.
+    ///
+    /// `#[serde(default)]` permite que los `macro_edges` previos (sin el campo)
+    /// deserialicen con un `Vec` vacío; `skip_serializing_if` mantiene limpio el JSON
+    /// de las macros sin resumen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assumptions: Vec<MacroAssumption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

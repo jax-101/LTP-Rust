@@ -3,6 +3,7 @@ pub mod errors;
 pub mod history;
 pub mod knowledge;
 pub mod link;
+pub mod macro_assume;
 pub mod mcp;
 pub mod nbr;
 pub mod node;

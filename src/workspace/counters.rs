@@ -10,7 +10,7 @@ use crate::output::OutputWarning;
 /// All entity types tracked by the counter system.
 const ENTITY_TYPES: &[&str] = &[
     "UDE", "RC", "INJ", "NC", "GOAL", "OBJ", "WANT", "OBS", "IO", "INT", "DE", "REQ", "PRE",
-    "TREE", "LINK", "ASM", "NBR", "MACRO", "KN",
+    "TREE", "LINK", "ASM", "NBR", "MACRO", "KN", "MASM",
 ];
 
 /// Sequential counter state for all entity types in the workspace.

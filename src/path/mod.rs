@@ -362,6 +362,7 @@ pub fn execute_path_collapse(
         interior_nodes: interior_nodes.clone(),
         interior_links: interior_links.clone(),
         status: "active".to_string(),
+        assumptions: Vec::new(),
     };
 
     tree.macro_edges.push(macro_edge);
