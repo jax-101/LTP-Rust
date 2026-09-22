@@ -13,7 +13,7 @@
 use serde::Serialize;
 
 use crate::errors::LtpError;
-use crate::link::{Edge, EdgeStatus, Logic, Operator};
+use crate::link::{Assumption, Edge, EdgeStatus, Logic, Operator};
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
@@ -550,6 +550,277 @@ pub fn execute_macro_expand(
             created_nodes,
             created_links,
             status: MacroEdgeStatus::Overlay,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+// --- M4: macro promote (promover a edge atómico) ---
+
+/// Data devuelta por `macro promote`.
+#[derive(Debug, Serialize)]
+pub struct MacroPromoteData {
+    /// Long arrow consumida (eliminada del árbol).
+    pub macro_link: String,
+    /// ID del edge atómico creado (`LINK-xxx`).
+    pub created_link: String,
+    /// IDs de las `Assumption` migradas al edge, en orden (`ASM-xxx`).
+    pub migrated_assumptions: Vec<String>,
+    /// Nodo origen del edge atómico.
+    pub from: String,
+    /// Nodo destino del edge atómico.
+    pub to: String,
+}
+
+/// Construye una salida de fallo para `macro promote` con `MacroPromoteData` vacío.
+///
+/// `valid_dag` es un parámetro por el mismo motivo que en [`expand_failure`]: el fallo por
+/// ciclo (D9) reporta `valid_dag: false`; el resto no toca el DAG.
+fn promote_failure(
+    ws_name: &str,
+    macro_link: &str,
+    valid_dag: bool,
+    error: OutputError,
+) -> CommandOutput<MacroPromoteData> {
+    CommandOutput {
+        success: false,
+        action: "macro_promote".to_string(),
+        workspace: ws_name.to_string(),
+        data: MacroPromoteData {
+            macro_link: macro_link.to_string(),
+            created_link: String::new(),
+            migrated_assumptions: vec![],
+            from: String::new(),
+            to: String::new(),
+        },
+        graph_health: GraphHealth {
+            valid_dag,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    }
+}
+
+/// Ejecuta `macro promote`: acepta el salto como causalidad directa y consume la reserva.
+///
+/// Transición `Reservation → (edge atómico + macro eliminada)` (ADR-013): crea un edge
+/// `from → to` (`Operator::Single`, lógica derivada del árbol) y migra los `MacroAssumption` de
+/// la reserva a `Assumption` del edge (preservando `status`/`text`; se descartan las
+/// `projection_refs` porque el interior estaba vacío). La long arrow se elimina (espeja
+/// `path replace`).
+///
+/// El edge es real ⇒ **bloquea ciclos** (D9): pre-valida el DAG **antes** de mintear los IDs de
+/// los `Assumption` migrados (para no quemar contadores en el caso bloqueado, mismo orden que
+/// `link connect`); si cerraría un ciclo devuelve `CIRCULAR_DEPENDENCY_DETECTED` con `cycle_path`,
+/// sin consumir la reserva ni escribir nada. Muta bajo lock; el historial lo captura el llamador.
+///
+/// Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (usar `path replace`
+/// para consumir un `Overlay`), `NODE_NOT_IN_TREE` (extremo desatachado), `ID_GENERATION_ERROR`,
+/// `CIRCULAR_DEPENDENCY_DETECTED`, `IO_ERROR`.
+pub fn execute_macro_promote(
+    storage: &dyn Storage,
+    tree_id: &str,
+    macro_link: &str,
+) -> CommandOutput<MacroPromoteData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    let lock_outcome = match storage.acquire_lock("macro promote") {
+        Ok(o) => o,
+        Err(e) => {
+            return promote_failure(
+                &ws_name,
+                macro_link,
+                true,
+                OutputError::new("LOCK_ERROR", e.to_string()),
+            );
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = storage.release_lock();
+            return promote_failure(
+                &ws_name,
+                macro_link,
+                true,
+                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+            );
+        }
+    };
+
+    let macro_idx = match tree.macro_edges.iter().position(|m| m.id == macro_link) {
+        Some(i) => i,
+        None => {
+            let _ = storage.release_lock();
+            return promote_failure(
+                &ws_name,
+                macro_link,
+                true,
+                OutputError::new(
+                    "MACRO_EDGE_NOT_FOUND",
+                    format!("Macro-edge '{macro_link}' not found in tree '{tree_id}'"),
+                ),
+            );
+        }
+    };
+
+    if tree.macro_edges[macro_idx].status != MacroEdgeStatus::Reservation {
+        let _ = storage.release_lock();
+        return promote_failure(
+            &ws_name,
+            macro_link,
+            true,
+            OutputError::new(
+                "NOT_A_RESERVATION",
+                format!(
+                    "Macro-edge '{macro_link}' is not a reservation (status is overlay); use `path replace`"
+                ),
+            )
+            .with_context("macro_link", macro_link),
+        );
+    }
+
+    let from = tree.macro_edges[macro_idx].from.clone();
+    let to = tree.macro_edges[macro_idx].to.clone();
+
+    // Re-validar extremos attached (defensivo).
+    if !tree.nodes.iter().any(|nr| nr.node_ref == from) {
+        let _ = storage.release_lock();
+        return promote_failure(
+            &ws_name,
+            macro_link,
+            true,
+            OutputError::new(
+                "NODE_NOT_IN_TREE",
+                format!("Node '{from}' is not attached to tree '{tree_id}'"),
+            )
+            .with_context("node_id", from.as_str()),
+        );
+    }
+    if !tree.nodes.iter().any(|nr| nr.node_ref == to) {
+        let _ = storage.release_lock();
+        return promote_failure(
+            &ws_name,
+            macro_link,
+            true,
+            OutputError::new(
+                "NODE_NOT_IN_TREE",
+                format!("Node '{to}' is not attached to tree '{tree_id}'"),
+            )
+            .with_context("node_id", to.as_str()),
+        );
+    }
+
+    let link_id = match storage.next_id("LINK") {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return promote_failure(
+                &ws_name,
+                macro_link,
+                true,
+                OutputError::new("ID_GENERATION_ERROR", e.to_string()),
+            );
+        }
+    };
+
+    let mut edge = Edge {
+        id: link_id.clone(),
+        from: vec![from.clone()],
+        to: to.clone(),
+        operator: Operator::Single,
+        weight: None,
+        status: EdgeStatus::Active,
+        logic: edge_logic(tree.logic),
+        assumptions: vec![],
+    };
+
+    // Pre-validar DAG (D9) ANTES de mintear los ASM migrados: si cierra un ciclo, se bloquea sin
+    // consumir la reserva ni quemar contadores de ASM (solo el LINK, como `link connect`).
+    let mut all_edges: Vec<Edge> = tree.edges.clone();
+    all_edges.push(edge.clone());
+    if let Err(e) = check_dag(&all_edges, tree_id) {
+        let _ = storage.release_lock();
+        let err = match &e {
+            LtpError::CircularDependencyDetected { cycle_path, .. } => {
+                OutputError::new("CIRCULAR_DEPENDENCY_DETECTED", e.to_string()).with_context(
+                    "cycle_path",
+                    serde_json::Value::Array(
+                        cycle_path
+                            .iter()
+                            .map(|n| serde_json::Value::String(n.clone()))
+                            .collect(),
+                    ),
+                )
+            }
+            _ => OutputError::new("VALIDATION_ERROR", e.to_string()),
+        };
+        // La reserva no se consume; nada se persiste (I7).
+        return promote_failure(&ws_name, macro_link, false, err);
+    }
+
+    // DAG válido: migrar los MacroAssumption (en orden) a Assumption del edge.
+    let mut migrated_assumptions: Vec<String> = Vec::new();
+    let macro_assumptions = tree.macro_edges[macro_idx].assumptions.clone();
+    for ma in &macro_assumptions {
+        let asm_id = match storage.next_id("ASM") {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = storage.release_lock();
+                return promote_failure(
+                    &ws_name,
+                    macro_link,
+                    true,
+                    OutputError::new("ID_GENERATION_ERROR", e.to_string()),
+                );
+            }
+        };
+        edge.assumptions.push(Assumption {
+            id: asm_id.clone(),
+            status: ma.status,
+            text: ma.text.clone(),
+        });
+        migrated_assumptions.push(asm_id);
+    }
+
+    // Consumir la reserva y añadir el edge atómico (espeja `path replace`).
+    tree.macro_edges.remove(macro_idx);
+    tree.edges.push(edge);
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return promote_failure(
+            &ws_name,
+            macro_link,
+            true,
+            OutputError::new("IO_ERROR", e.to_string()),
+        );
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "macro_promote".to_string(),
+        workspace: ws_name,
+        data: MacroPromoteData {
+            macro_link: macro_link.to_string(),
+            created_link: link_id,
+            migrated_assumptions,
+            from,
+            to,
         },
         graph_health: GraphHealth {
             valid_dag: true,
