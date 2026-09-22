@@ -16,8 +16,8 @@ use crate::tree::{MacroEdgeStatus, Tree};
 /// El comportamiento se ramifica por [`MacroEdgeStatus`] (`match` exhaustivo: añadir un estado
 /// obliga a decidir su auditoría):
 ///
-/// - `Reservation`: interior vacío por construcción ⇒ la higiene de resumen no aplica. La
-///   M5 emite aquí `LONG_ARROW_RESERVATION_PENDING`.
+/// - `Reservation`: interior vacío por construcción ⇒ la higiene de resumen no aplica; emite
+///   `LONG_ARROW_RESERVATION_PENDING` (CLR#1: salto pendiente de expand/promote).
 /// - `Overlay`: higiene del resumen de Slice 1:
 ///   - `LONG_ARROW_UNSUMMARIZED`: overlay sin resumen pese a tener supuestos interiores
 ///     (`interior_asm_count > 0`).
@@ -31,8 +31,21 @@ pub fn check_macro_edges(tree: &Tree) -> Vec<OutputWarning> {
     for me in &tree.macro_edges {
         match me.status {
             MacroEdgeStatus::Reservation => {
-                // Interior vacío ⇒ ni UNSUMMARIZED ni UNGROUNDED aplican.
-                // (M5 añade aquí `LONG_ARROW_RESERVATION_PENDING`.)
+                // CLR#1: salto lógico declarado top-down con pasos intermedios no expresados,
+                // pendiente de `macro expand` (materializar) o `macro promote` (edge atómico).
+                // Interior vacío ⇒ ni UNSUMMARIZED ni UNGROUNDED aplican (no bloqueante, ADR-010).
+                warnings.push(
+                    OutputWarning::new(
+                        "LONG_ARROW_RESERVATION_PENDING",
+                        format!(
+                            "Long arrow '{}' is a reservation pending expansion or promotion",
+                            me.id
+                        ),
+                    )
+                    .with_context("macro_link", me.id.as_str())
+                    .with_context("from", me.from.as_str())
+                    .with_context("to", me.to.as_str()),
+                );
             }
             MacroEdgeStatus::Overlay => {
                 let grouped = gather_interior_assumptions(tree, me);
@@ -230,14 +243,17 @@ mod tests {
     }
 
     #[test]
-    fn reservation_is_skipped_for_summary_hygiene() {
-        // Una reserva (interior vacío) no participa en la higiene de resumen de overlays.
-        // (M5 le añade `LONG_ARROW_RESERVATION_PENDING`; aquí solo se verifica que la rama
-        // `Overlay` no la audita como si tuviera resumen que reconciliar.)
+    fn reservation_emits_pending_and_skips_summary_hygiene() {
+        // Una reserva (interior vacío) emite exactamente RESERVATION_PENDING y NO participa en
+        // la higiene de resumen de overlays (nada de UNSUMMARIZED/STALE/UNGROUNDED).
         let edges = vec![edge("LINK-001", "A", "B", vec![asm("ASM-001")])];
         let mut me = macro_edge("MACRO-001", vec![], vec![]);
         me.status = MacroEdgeStatus::Reservation;
         let tree = tree_with(edges, vec![me]);
-        assert!(check_macro_edges(&tree).is_empty());
+        let warnings = check_macro_edges(&tree);
+        assert_eq!(codes(&warnings), vec!["LONG_ARROW_RESERVATION_PENDING"]);
+        assert_eq!(warnings[0].context["macro_link"], "MACRO-001");
+        assert_eq!(warnings[0].context["from"], "RC-001");
+        assert_eq!(warnings[0].context["to"], "UDE-001");
     }
 }

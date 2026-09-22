@@ -15,7 +15,7 @@ use tracing::{debug, info};
 
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
-use crate::tree::types::TreeType;
+use crate::tree::types::{MacroEdgeStatus, TreeType};
 
 /// Per-tree validation results.
 #[derive(Debug, Serialize)]
@@ -198,8 +198,17 @@ pub fn execute_validate<S: Storage>(
         // CLR#5: MAG weights normalization
         tree_warnings.extend(clr::lint_clr5_mag_weights(&tree.edges));
 
-        // Orphan nodes in tree
-        let orphan_warnings = orphans::check_orphans(&tree.nodes, &tree.edges, &tree.id);
+        // Orphan nodes in tree. D6: los extremos de reservas (long arrows Reservation) están
+        // conectados lógicamente aunque aún no tengan edge real, así que se siembran para no
+        // reportarlos como huérfanos (los Overlay ya están conectados por su interior real).
+        let reserved_endpoints: Vec<&str> = tree
+            .macro_edges
+            .iter()
+            .filter(|m| m.status == MacroEdgeStatus::Reservation)
+            .flat_map(|m| [m.from.as_str(), m.to.as_str()])
+            .collect();
+        let orphan_warnings =
+            orphans::check_orphans(&tree.nodes, &tree.edges, &reserved_endpoints, &tree.id);
         total_orphans += orphan_warnings.len();
         tree_warnings.extend(orphan_warnings);
 

@@ -5,7 +5,18 @@ use crate::output::OutputWarning;
 use crate::tree::types::NodeRef;
 
 /// Detect nodes that are attached to a tree but have no edges (orphans within the tree).
-pub fn check_orphans(nodes: &[NodeRef], edges: &[Edge], tree_id: &str) -> Vec<OutputWarning> {
+///
+/// `reserved_endpoints` son extremos de long arrows en estado `Reservation` (D6): un salto
+/// declarado top-down conecta lógicamente sus extremos aunque todavía no exista un edge real,
+/// por lo que se siembran como conectados y **no** se reportan como huérfanos. El parámetro es
+/// deliberadamente un `&[&str]` (no `&[MacroEdge]`) para no acoplar este módulo al modelo de
+/// long arrows; el caller (`validate`) calcula el set. Nunca emite errores (ADR-010).
+pub fn check_orphans(
+    nodes: &[NodeRef],
+    edges: &[Edge],
+    reserved_endpoints: &[&str],
+    tree_id: &str,
+) -> Vec<OutputWarning> {
     let mut connected: HashSet<&str> = HashSet::new();
 
     for edge in edges {
@@ -13,6 +24,10 @@ pub fn check_orphans(nodes: &[NodeRef], edges: &[Edge], tree_id: &str) -> Vec<Ou
             connected.insert(from_id.as_str());
         }
         connected.insert(edge.to.as_str());
+    }
+
+    for endpoint in reserved_endpoints {
+        connected.insert(endpoint);
     }
 
     let mut warnings = Vec::new();
@@ -69,7 +84,7 @@ mod tests {
     fn connected_nodes_no_orphans() {
         let nodes = vec![node_ref("A"), node_ref("B")];
         let edges = vec![make_edge("L1", vec!["A"], "B")];
-        let warnings = check_orphans(&nodes, &edges, "test-tree");
+        let warnings = check_orphans(&nodes, &edges, &[], "test-tree");
         assert!(warnings.is_empty());
     }
 
@@ -77,7 +92,27 @@ mod tests {
     fn orphan_detected() {
         let nodes = vec![node_ref("A"), node_ref("B"), node_ref("C")];
         let edges = vec![make_edge("L1", vec!["A"], "B")];
-        let warnings = check_orphans(&nodes, &edges, "test-tree");
+        let warnings = check_orphans(&nodes, &edges, &[], "test-tree");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "ORPHAN_NODE_IN_TREE");
+        assert!(warnings[0].detail.contains("C"));
+    }
+
+    #[test]
+    fn reserved_endpoints_are_not_orphans() {
+        // D6: dos nodos sin edges reales pero conectados por una reserva (A→B) no son huérfanos.
+        let nodes = vec![node_ref("A"), node_ref("B")];
+        let edges: Vec<Edge> = vec![];
+        let warnings = check_orphans(&nodes, &edges, &["A", "B"], "test-tree");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn non_reserved_orphan_still_detected_with_reservations_present() {
+        // Con una reserva A→B viva, C sigue siendo huérfano (no es extremo de ninguna reserva).
+        let nodes = vec![node_ref("A"), node_ref("B"), node_ref("C")];
+        let edges: Vec<Edge> = vec![];
+        let warnings = check_orphans(&nodes, &edges, &["A", "B"], "test-tree");
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "ORPHAN_NODE_IN_TREE");
         assert!(warnings[0].detail.contains("C"));
