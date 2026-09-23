@@ -9,6 +9,7 @@
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
 | **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
+| **Último release** | v0.2.0 (2026-09-23) — versionado + provenance de build |
 | **Último bugfix** | insert-between assumptions preservation |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 191/191 |
@@ -17,7 +18,8 @@
 | **Tests F14** | 6/6 |
 | **Tests Slice 1 (macro-assume)** | 40/40 |
 | **Tests Slice 2 (macro lifecycle)** | 36/36 |
-| **Tests totales** | 516 |
+| **Tests versión/provenance** | 4/4 |
+| **Tests totales** | 520 |
 
 ---
 
@@ -63,6 +65,13 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Release v0.2.0] — Política de versionado + provenance de build (infra)
+**Fecha**: 2026-09-23
+**Naturaleza**: Infraestructura de release. **No** altera el % del motor ni el factor de escala.
+**Avance**: `build.rs` (cero deps) embebe SHA de git + flag `dirty`; `ltp --version` ≡ MCP `serverInfo.version` = `MAJOR.MINOR.PATCH+<sha>[.dirty]`. 4 UATs nuevos (`tests/version_provenance.rs`): forma SemVer+provenance, `core == CARGO_PKG_VERSION` y CLI↔MCP idénticos.
+**Tests totales**: 516 → 520
+**Docs**: `RELEASE_POLICY.md` (nuevo), `CHANGELOG.md` (nuevo — log canónico por versión), tag `v0.2.0`. El detalle por versión vive en el CHANGELOG, no aquí.
 
 ### [Slice 2] — Long Arrow Lifecycle (`macro add` / `macro expand` / `macro promote`)
 **Fecha**: 2026-09-22
@@ -745,4 +754,5 @@ Análisis Six Thinking Hats → regla: "el edge que conserva las causas original
 | — | Plan inicial | 14 paquetes, 128 UATs | 100% baseline |
 | 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global sigue 58% (pesos por fase sin cambio; fases completadas mantienen 100% de su peso). |
 | 2026-09-22 | Slice 2 — Long Arrow Lifecycle (ADR-013) | +36 tests (31 E2E `macro_lifecycle` + 5 unit). Enriquecimiento sobre el motor base ya completo (no altera % del motor base ni del Knowledge Pool). | 480 → 516 tests. Factor de escala 1.0x. |
+| 2026-09-23 | Release v0.2.0 — versionado + provenance (infra) | +4 UATs (`version_provenance`). Infraestructura de release; no altera % del motor ni factor de escala. | 516 → 520 tests. |
 
