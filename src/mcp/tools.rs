@@ -653,14 +653,14 @@ pub fn all_tools() -> Vec<ToolDefinition> {
     ));
     tools.push(tool(
         "ltp/path_explode",
-        "Explode a macro-link back to its original sub-graph",
+        "Explode an edge's assumption into an explicit intermediate node (INT), splitting the edge in two",
         json!({
             "type": "object",
             "properties": {
                 "tree": { "type": "string", "description": "Tree ID" },
-                "link": { "type": "string", "description": "Macro-link ID" },
-                "asm": { "type": "string", "description": "Assumption ID" },
-                "label": { "type": "string", "description": "Label" }
+                "link": { "type": "string", "description": "Link (edge) ID whose assumption will be exploded" },
+                "asm": { "type": "string", "description": "Assumption ID to convert into the intermediate node" },
+                "label": { "type": "string", "description": "Label for the new intermediate node" }
             },
             "required": ["tree", "link", "asm", "label"]
         }),
