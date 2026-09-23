@@ -53,7 +53,7 @@ use ltp_engine::workspace::FsStorage;
 #[derive(Parser)]
 #[command(name = "ltp")]
 #[command(about = "Deterministic engine for Dettmer's Logical Thinking Process")]
-#[command(version)]
+#[command(version = ltp_engine::FULL_VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

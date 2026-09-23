@@ -87,7 +87,7 @@ fn handle_initialize() -> Result<Value, JsonRpcError> {
         },
         server_info: ServerInfo {
             name: "ltp-engine".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: crate::FULL_VERSION.to_string(),
         },
     };
     serde_json::to_value(&result)
