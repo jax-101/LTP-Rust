@@ -1,0 +1,23 @@
+{
+  "action": "macro_add",
+  "data": {
+    "from": "RC-001",
+    "label": "Self loop",
+    "macro_edge_id": "",
+    "to": "RC-001"
+  },
+  "errors": [
+    {
+      "code": "RESERVATION_SELF_LOOP",
+      "detail": "Reservation cannot loop node 'RC-001' onto itself",
+      "node_id": "RC-001"
+    }
+  ],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": false,
+  "warnings": [],
+  "workspace": "<WORKSPACE>"
+}

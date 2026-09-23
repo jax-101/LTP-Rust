@@ -37,6 +37,7 @@ cargo fmt --all -- --check
 
 **Contrato / especificación**
 - [ENGINE_SPEC.md](ENGINE_SPEC.md) — comandos, argumentos, esquemas JSON y contrato de salida.
+- [contract/](contract/) — golden fixtures del `CommandOutput`: ejemplos reales que fijan el shape de salida por máquina (snapshot test que rompe ante cualquier deriva).
 - [CLR_SPEC.md](CLR_SPEC.md) — las 8 Categorías de Legitimación Lógica (validación / linting).
 - [KNOWLEDGE_SPEC.md](KNOWLEDGE_SPEC.md) — Knowledge Pool: schema, comandos y workflow epistémico.
 

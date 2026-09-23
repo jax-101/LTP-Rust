@@ -1,0 +1,24 @@
+{
+  "action": "tree_list",
+  "data": {
+    "count": 1,
+    "trees": [
+      {
+        "edge_count": 3,
+        "id": "tree-crt-contract-crt",
+        "logic": "sufficiency",
+        "name": "Contract CRT",
+        "node_count": 4,
+        "tree_type": "crt"
+      }
+    ]
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [],
+  "workspace": "<WORKSPACE>"
+}

@@ -46,7 +46,7 @@ Detalles del contrato que un consumidor CLI debe conocer para no trabajar de mem
 - **`errors[]` y `warnings[]` son objetos, no strings**: `{ "code", "detail", ...contexto }`. El contexto va **aplanado al nivel raíz del objeto** (no anidado bajo `context`). Ej.: `{ "code": "NODE_NOT_IN_TREE", "detail": "...", "node_id": "UDE-001", "tree_id": "tree-crt-x" }`. Las claves de contexto varían según el `code`.
 - **Enums en minúscula**: p. ej. `tree_type` → `crt|ec|frt|prt` (el campo es `tree_type`, **no** `type`); `logic` → `sufficiency|necessity`.
 - **Campos opcionales vacíos se omiten** (no salen como `null`): su ausencia no es un error (p. ej. `knowledge` en `tree walk` solo aparece con `--show-knowledge`).
-- Los **shapes de `data` por comando** (p. ej. la forma de cada nodo en `tree walk`, o de `tree list`) viven en [ENGINE_SPEC.md](ENGINE_SPEC.md) — no se duplican aquí.
+- Los **shapes de `data` por comando** (p. ej. la forma de cada nodo en `tree walk`, o de `tree list`) viven en [ENGINE_SPEC.md](ENGINE_SPEC.md) — no se duplican aquí. Y están **fijados por máquina** como golden fixtures en [`contract/`](contract/): ejemplos reales del `CommandOutput` que un snapshot test regenera y compara, de modo que cualquier deriva de shape rompe el build antes de llegarte (RELEASE_POLICY §1). Léelos como muestras siempre-verdaderas de lo que parseas.
 
 ## 2B. Integración por MCP (IA headless)
 

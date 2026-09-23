@@ -1,0 +1,30 @@
+{
+  "action": "validate",
+  "data": {
+    "details": [
+      {
+        "errors": [],
+        "tree_id": "tree-crt-contract-crt",
+        "warnings": [
+          {
+            "code": "CLR4_INSUFFICIENT_CAUSE",
+            "detail": "Node 'UDE-001' has only 1 incoming SINGLE edge — candidate for insufficiency (CLR#4)",
+            "edge_id": "LINK-003",
+            "node_id": "UDE-001"
+          }
+        ]
+      }
+    ],
+    "total_errors": 0,
+    "total_warnings": 1,
+    "trees_validated": 1
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [],
+  "workspace": "<WORKSPACE>"
+}

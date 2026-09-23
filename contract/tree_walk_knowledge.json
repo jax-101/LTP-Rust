@@ -1,0 +1,72 @@
+{
+  "action": "tree_walk",
+  "data": {
+    "nodes": [
+      {
+        "id": "RC-001",
+        "incoming_edges": [],
+        "knowledge": {
+          "contextualizes": 0,
+          "contradicts": 0,
+          "supports": 0
+        },
+        "outgoing_edges": [
+          "LINK-001"
+        ],
+        "role": null
+      },
+      {
+        "id": "RC-002",
+        "incoming_edges": [],
+        "knowledge": {
+          "contextualizes": 0,
+          "contradicts": 0,
+          "supports": 0
+        },
+        "outgoing_edges": [
+          "LINK-002"
+        ],
+        "role": null
+      },
+      {
+        "id": "INT-001",
+        "incoming_edges": [
+          "LINK-001",
+          "LINK-002"
+        ],
+        "knowledge": {
+          "contextualizes": 0,
+          "contradicts": 0,
+          "supports": 1
+        },
+        "outgoing_edges": [
+          "LINK-003"
+        ],
+        "role": null
+      },
+      {
+        "id": "UDE-001",
+        "incoming_edges": [
+          "LINK-003"
+        ],
+        "knowledge": {
+          "contextualizes": 0,
+          "contradicts": 0,
+          "supports": 0
+        },
+        "outgoing_edges": [],
+        "role": null
+      }
+    ],
+    "order": "topological",
+    "tree_id": "tree-crt-contract-crt"
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [],
+  "workspace": "<WORKSPACE>"
+}
