@@ -1,2 +1,13 @@
 /target
 .mcp.json
+
+# Basura de macOS
+.DS_Store
+**/.DS_Store
+
+# Estado interno del motor y workspace LTP de pruebas generado en la raíz
+# (ver CLAUDE.md: .ltp/ es estado interno y va en .gitignore)
+/.ltp/
+/nodes/
+/trees/
+/ltp.config.json
