@@ -67,9 +67,10 @@ La "API pública" del motor es el **contrato MCP/CLI**: nombres de tools, sus pa
 3. Decidir el incremento (MAJOR/MINOR/PATCH) según el diff de contrato.
 4. Actualizar `version` en `Cargo.toml`.
 5. Mover `[Unreleased]` → `[X.Y.Z] - AAAA-MM-DD` en `CHANGELOG.md`.
-6. Commit `chore(release): vX.Y.Z`.
-7. Tag anotado: `git tag -a vX.Y.Z -m "vX.Y.Z — <resumen>"`.
-8. `git push --follow-tags`.
+6. Si el cambio afecta a **cómo conecta un consumidor** (config, versión mínima, tools que espera) o al estado **estable/WIP**, actualizar `INTEGRATION.md` (§3 versión mínima soportada, §5 estable vs WIP).
+7. Commit `chore(release): vX.Y.Z`.
+8. Tag anotado: `git tag -a vX.Y.Z -m "vX.Y.Z — <resumen>"`.
+9. `git push --follow-tags`.
 
 **Un build `dirty` nunca es un release.**
 
