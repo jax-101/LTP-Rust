@@ -45,7 +45,7 @@ Detalles del contrato que un consumidor CLI debe conocer para no trabajar de mem
 
 - **`errors[]` y `warnings[]` son objetos, no strings**: `{ "code", "detail", ...contexto }`. El contexto va **aplanado al nivel raíz del objeto** (no anidado bajo `context`). Ej.: `{ "code": "NODE_NOT_IN_TREE", "detail": "...", "node_id": "UDE-001", "tree_id": "tree-crt-x" }`. Las claves de contexto varían según el `code`.
 - **Enums en minúscula**: p. ej. `tree_type` → `crt|ec|frt|prt` (el campo es `tree_type`, **no** `type`); `logic` → `sufficiency|necessity`.
-- **Campos opcionales vacíos se omiten** (no salen como `null`): su ausencia no es un error (p. ej. `knowledge` en `tree walk` solo aparece con `--show-knowledge`).
+- **Campos opcionales: dos convenciones distintas, no las confundas.** Un campo *gated por flag* se **omite** por completo cuando el flag no está (p. ej. `knowledge` en `tree walk` solo aparece con `--show-knowledge`) → compruébalo con presencia de clave. Un campo *de valor* sin asignar sí sale, como `null` (p. ej. `role: null` en un nodo sin rol) → compruébalo contra `null`, no contra ausencia. Los goldens en [`contract/`](contract/) fijan ambos casos por máquina.
 - Los **shapes de `data` por comando** (p. ej. la forma de cada nodo en `tree walk`, o de `tree list`) viven en [ENGINE_SPEC.md](ENGINE_SPEC.md) — no se duplican aquí. Y están **fijados por máquina** como golden fixtures en [`contract/`](contract/): ejemplos reales del `CommandOutput` que un snapshot test regenera y compara, de modo que cualquier deriva de shape rompe el build antes de llegarte (RELEASE_POLICY §1). Léelos como muestras siempre-verdaderas de lo que parseas.
 
 ## 2B. Integración por MCP (IA headless)

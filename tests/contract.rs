@@ -169,15 +169,19 @@ fn build_fixture(dir: &Path) -> String {
 //     inicial no las expone, pero se redactan por nombre de clave para blindar
 //     goldens futuros (p. ej. un `node inspect` con `created_at`, o el contexto
 //     `timestamp` de un error de lock).
-// Redacta el **valor**, nunca la clave: la presencia y el tipo del campo siguen
-// siendo parte del contrato verificado.
+// Redacta el **valor**, nunca la clave: la presencia del campo sigue siendo parte
+// del contrato verificado. Solo redacta cuando el valor **ya es un string**: si el
+// tipo de un campo volátil derivara (p. ej. `timestamp` string → objeto), esa deriva
+// de contrato debe aflorar como diff, no quedar enmascarada por el placeholder.
 fn redact_volatile(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, val) in map.iter_mut() {
                 match key.as_str() {
-                    "workspace" => *val = Value::String("<WORKSPACE>".to_string()),
-                    "created_at" | "updated_at" | "timestamp" => {
+                    "workspace" if val.is_string() => {
+                        *val = Value::String("<WORKSPACE>".to_string())
+                    }
+                    "created_at" | "updated_at" | "timestamp" if val.is_string() => {
                         *val = Value::String("<TIMESTAMP>".to_string())
                     }
                     _ => redact_volatile(val),
@@ -230,59 +234,107 @@ fn check_or_update_golden(name: &str, live: &Value, update: bool) -> Result<(), 
     }
 }
 
-// ─── Test ─────────────────────────────────────────────────────────────────────
+// Regeneración solo con valor explícito truthy (`UPDATE_GOLDEN=1` o `=true`), no por
+// mera presencia: así `UPDATE_GOLDEN=0` no reescribe goldens por sorpresa.
+fn update_mode() -> bool {
+    matches!(
+        std::env::var("UPDATE_GOLDEN").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+// Ejecuta un caso, asserta el **exit code** (parte del contrato CLI: 0 éxito / 1 error)
+// y compara/regenera el golden del stdout redactado. Acumula fallos en `failures` en
+// vez de abortar, para reportar todas las derivas de una pasada.
+fn capture(
+    dir: &Path,
+    name: &str,
+    expected_code: i32,
+    args: &[&str],
+    update: bool,
+    failures: &mut Vec<String>,
+) {
+    let (mut live, code) = run_ltp(dir, args);
+    if code != expected_code {
+        failures.push(format!(
+            "── EXIT CODE en {name} ──\nesperado {expected_code}, obtenido {code} (args {args:?})"
+        ));
+        return;
+    }
+    redact_volatile(&mut live);
+    if let Err(msg) = check_or_update_golden(name, &live, update) {
+        failures.push(msg);
+    }
+}
 
 #[test]
 fn contract_output_snapshots() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let dir = tmp.path();
-    let tree = build_fixture(dir);
-
-    // Conjunto inicial de casos (crecer bajo demanda). Los read-only y el error
-    // atómico (self-loop: falla y libera el lock sin escribir) no mutan el fixture,
-    // así que comparten un único workspace.
-    let cases: [(&str, Vec<&str>); 5] = [
-        // nodos {id, role, incoming_edges[], outgoing_edges[]}; SIN feedback_edges.
-        ("tree_walk", vec!["tree", "walk", &tree]),
-        // + campo opcional knowledge{supports,contradicts,contextualizes}.
-        (
-            "tree_walk_knowledge",
-            vec!["tree", "walk", &tree, "--show-knowledge"],
-        ),
-        // tree_type (no `type`), enums minúscula, node_count/edge_count, logic.
-        ("tree_list", vec!["tree", "list"]),
-        // graph_health + warnings CLR anidados en data.details[] (contexto aplanado).
-        ("validate", vec!["validate"]),
-        // errors[] = {code, detail, ...contexto aplanado} (aquí node_id, al nivel raíz).
-        // Self-loop de reserva: falla de forma atómica (libera el lock antes de
-        // escribir) y con contenido determinista — no como cycle_path, cuya
-        // rotación no es determinista entre ejecuciones (ver contract/README.md).
-        (
-            "error_flattened_context",
-            vec![
-                "macro",
-                "add",
-                "--tree",
-                &tree,
-                "--from",
-                "RC-001",
-                "--to",
-                "RC-001",
-                "--label",
-                "Self loop",
-            ],
-        ),
-    ];
-
-    let update = std::env::var_os("UPDATE_GOLDEN").is_some();
+    let update = update_mode();
     let mut failures: Vec<String> = Vec::new();
 
-    for (name, args) in &cases {
-        let (mut live, _code) = run_ltp(dir, args);
-        redact_volatile(&mut live);
-        if let Err(msg) = check_or_update_golden(name, &live, update) {
-            failures.push(msg);
+    // Grupo A — casos que NO mutan el grafo: read-only + el error atómico (self-loop:
+    // falla y libera el lock antes de escribir). Comparten un único workspace; el
+    // orden es irrelevante porque ninguno persiste cambios.
+    {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let tree = build_fixture(dir);
+        let cases: [(&str, i32, Vec<&str>); 5] = [
+            // nodos {id, role, incoming_edges[], outgoing_edges[]}; SIN feedback_edges.
+            ("tree_walk", 0, vec!["tree", "walk", &tree]),
+            // + campo opcional knowledge{supports,contradicts,contextualizes}.
+            (
+                "tree_walk_knowledge",
+                0,
+                vec!["tree", "walk", &tree, "--show-knowledge"],
+            ),
+            // tree_type (no `type`), enums minúscula, node_count/edge_count, logic.
+            ("tree_list", 0, vec!["tree", "list"]),
+            // graph_health + warnings CLR anidados en data.details[] (contexto aplanado).
+            ("validate", 0, vec!["validate"]),
+            // errors[] = {code, detail, ...contexto aplanado} (aquí node_id, al raíz);
+            // exit 1. Self-loop de reserva: falla atómica y contenido determinista —
+            // no como cycle_path, cuya rotación no lo es (ver contract/README.md).
+            (
+                "error_flattened_context",
+                1,
+                vec![
+                    "macro",
+                    "add",
+                    "--tree",
+                    &tree,
+                    "--from",
+                    "RC-001",
+                    "--to",
+                    "RC-001",
+                    "--label",
+                    "Self loop",
+                ],
+            ),
+        ];
+        for (name, expected_code, args) in &cases {
+            capture(dir, name, *expected_code, args, update, &mut failures);
         }
+    }
+
+    // Grupo B — casos que SÍ mutan el grafo: cada uno en su propio workspace hermético,
+    // para que la mutación nunca contamine otro golden (aislamiento explícito, no por
+    // convención de orden).
+    {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        build_fixture(dir);
+        // warnings[] a NIVEL RAÍZ, poblado y con contexto aplanado. `node edit` que
+        // promueve INT-001 a `fact` teniendo causas upstream en hipótesis emite
+        // EPISTEMIC_UNBOUNDED_FACT (no bloqueante: success:true, exit 0).
+        capture(
+            dir,
+            "warning_root",
+            0,
+            &["node", "edit", "INT-001", "--epistemic", "fact"],
+            update,
+            &mut failures,
+        );
     }
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));

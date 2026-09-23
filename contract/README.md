@@ -49,11 +49,14 @@ llegar al consumidor.
 | `tree_walk_knowledge.json` | `tree walk <crt> --show-knowledge` | campo opcional `knowledge{supports,contradicts,contextualizes}` |
 | `tree_list.json` | `tree list` | `tree_type` (no `type`), enums minúscula, `logic`, `node_count`/`edge_count` |
 | `validate.json` | `validate` | `graph_health` + warnings CLR anidados en `data.details[]` (contexto aplanado: `edge_id`, `node_id`) |
+| `warning_root.json` | `node edit INT-001 --epistemic fact` | `warnings[]` **poblado a nivel raíz** (`EPISTEMIC_UNBOUNDED_FACT`, contexto aplanado); no bloqueante (`success:true`) |
 | `error_flattened_context.json` | `macro add` con `--from X --to X` (self-loop) | `errors[]` = `{code, detail, ...contexto aplanado}` (aquí `node_id` al nivel raíz); `success:false` |
 
 > El shape de `warnings[]`/`errors[]` (`OutputWarning`/`OutputError`: `code`, `detail`
-> y contexto **aplanado** al nivel raíz) es idéntico a nivel superior o anidado; los
-> goldens `validate` y `error_circular_dependency` lo fijan por ambas vías.
+> y contexto **aplanado** al nivel raíz) es idéntico esté el objeto a nivel raíz o
+> anidado. Los goldens lo fijan en las tres posiciones: `warning_root` (warning
+> poblado a nivel raíz), `error_flattened_context` (error a nivel raíz) y `validate`
+> (warnings CLR anidados en `data.details[]`).
 
 El conjunto crece **bajo demanda**: al añadir un golden de un comando que exponga
 timestamps u otros campos volátiles, amplía `redact_volatile` en `tests/contract.rs`.

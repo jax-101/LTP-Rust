@@ -1,0 +1,36 @@
+{
+  "action": "node_edit",
+  "data": {
+    "epistemic": "fact",
+    "id": "INT-001",
+    "label": "Intermediate effect",
+    "node_type": "INT",
+    "observable": true,
+    "tags": []
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [
+    {
+      "code": "EPISTEMIC_UNBOUNDED_FACT",
+      "detail": "Node 'INT-001' promoted to Fact but upstream cause 'RC-001' is Hypothesis",
+      "node_id": "INT-001",
+      "tree_id": "tree-crt-contract-crt",
+      "upstream_epistemic": "Hypothesis",
+      "upstream_node": "RC-001"
+    },
+    {
+      "code": "EPISTEMIC_UNBOUNDED_FACT",
+      "detail": "Node 'INT-001' promoted to Fact but upstream cause 'RC-002' is Hypothesis",
+      "node_id": "INT-001",
+      "tree_id": "tree-crt-contract-crt",
+      "upstream_epistemic": "Hypothesis",
+      "upstream_node": "RC-002"
+    }
+  ],
+  "workspace": "<WORKSPACE>"
+}
