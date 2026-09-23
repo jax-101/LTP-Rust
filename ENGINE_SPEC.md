@@ -113,6 +113,8 @@ Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al pr
 
 #### `ltp tree list`
 
+Lista todos los trees del workspace. `data`: `{ "trees": [ { "id", "name", "tree_type", "logic", "node_count", "edge_count" } ], "count" }`. El campo se llama **`tree_type`** (no `type`) y su valor es un string en minúscula: `crt` | `ec` | `frt` | `prt`. `logic` es `sufficiency` | `necessity`.
+
 #### `ltp tree rm <TREE_ID>`
 
 #### `ltp tree attach --tree <TREE_ID> --node <ID> [--role "<role>"]`
@@ -131,16 +133,23 @@ Crea una copia del tree con nuevo ID. Los nodos son referencias compartidas al p
 
 Reporta diferencias entre dos trees: nodos añadidos/quitados, edges añadidos/quitados/modificados, cambios de operador.
 
-#### `ltp tree walk <TREE_ID> [--order topological|reverse] [--show-origin] [--expand-nbr] [--json]`
+#### `ltp tree walk <TREE_ID> [--order topological|reverse] [--show-knowledge]`
 
-Recorrido ordenado del árbol completo para auditoría sistemática. Devuelve cada nodo con su contexto inmediato (edges entrantes/salientes, operator, assumptions) en orden de recorrido:
+Recorrido ordenado del árbol completo para auditoría sistemática (JSON por defecto; `--human` para texto).
 
-- `--order topological` (default en árboles de suficiencia): desde causas raíz hacia efectos (bottom-up).
-- `--order reverse` (default en árboles de necesidad): desde objetivo hacia prerrequisitos (top-down).
-- `--show-origin`: añade al output de cada nodo en qué otros trees participa y con qué rol.
-- `--expand-nbr`: expande nbr_branches inline en vez de mostrarlas colapsadas.
+`data`: `{ "tree_id", "order", "nodes": [ ... ] }`. Cada nodo:
 
-Incluye feedback_edges al final como sección separada.
+```json
+{ "id": "UDE-001", "role": "core_problem", "incoming_edges": ["LINK-003"], "outgoing_edges": ["LINK-004", "LINK-005"] }
+```
+
+- `role` puede ser `null` (solo obligatorio en EC).
+- `incoming_edges` / `outgoing_edges` son arrays de **IDs de edge (LINK)**, no objetos. Para operator/assumptions/from/to de un edge concreto: `ltp link inspect <id>`. Un mismo edge AND aparece en el `outgoing_edges` de cada causa.
+- `--order topological` (default en árboles de suficiencia): desde causas raíz hacia efectos. `--order reverse` (default en necesidad): desde objetivo hacia prerrequisitos.
+- `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**.
+- **No incluye feedback edges** (viven en `feedback_edges`, fuera del DAG): obtenlas con `ltp link feedback-list`.
+
+> Flags reservados **sin efecto actual** (se parsean pero se ignoran en el dispatch): `--show-origin`, `--expand-nbr`.
 
 ---
 
