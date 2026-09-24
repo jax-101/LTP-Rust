@@ -27,7 +27,7 @@ El motor `ltp-engine` NO intenta adivinar flujos de trabajo ni empaquetar comand
 │    Contexto:    status, tree list, nbr inspect                         │
 │                                                                        │
 │  CAPA DE MANIPULACIÓN (determinista, muta estado)                      │
-│    Entidades:   node add/edit/rm/split, tree new/rm/clone              │
+│    Entidades:   node add/edit/rm/split, tree new/rm/clone/rename       │
 │    Vistas:      tree attach/detach                                     │
 │    Enlaces:     link connect/disconnect/reverse/move/insert-between    │
 │    Agrupación:  link group/dissolve/split/reoperator/add-cause/rm-cause│
@@ -128,6 +128,12 @@ Quita un nodo de una vista (y sus edges en ese tree), pero lo preserva en el poo
 #### `ltp tree clone <TREE_ID> --name "<nuevo_nombre>"`
 
 Crea una copia del tree con nuevo ID. Los nodos son referencias compartidas al pool (mismo ref). Los edges son independientes — se puede reorganizar sin afectar el original. Para exploración "what-if".
+
+#### `ltp tree rename <TREE_ID> --name "<nuevo_nombre>"`
+
+Renombra el `name` (label) de una instancia de tree existente. Muta **solo** el nombre: el `id` y el fichero `trees/<id>.json` permanecen estables, preservando la integridad referencial (`attach`, refs, consumidores externos). Es el análogo de `node edit` sobre `node.label`. `data`: `{ "id", "old_name", "new_name" }`. Errores: `TREE_NOT_FOUND` (id inexistente), `INVALID_TREE_NAME` (nombre vacío o de solo espacios; el nombre válido se almacena verbatim, sin trim). Renombrar al mismo nombre es un no-op idempotente exitoso.
+
+> **Interacción conocida**: como el `id` se deriva del slug del nombre en `tree new`, tras renombrar el slug original sigue ocupado por ese `id`. Un `tree new` posterior con el nombre original chocará con `TREE_ALREADY_EXISTS` (no hay sobrescritura silenciosa).
 
 #### `ltp tree diff <TREE_A> <TREE_B>`
 

@@ -44,7 +44,7 @@ use ltp_engine::storage::Storage;
 use ltp_engine::trace::{execute_link_find, execute_link_inspect, execute_trace};
 use ltp_engine::tree::commands::{
     execute_tree_attach, execute_tree_clone, execute_tree_detach, execute_tree_diff,
-    execute_tree_list, execute_tree_new, execute_tree_rm, execute_tree_walk,
+    execute_tree_list, execute_tree_new, execute_tree_rename, execute_tree_rm, execute_tree_walk,
 };
 use ltp_engine::tree::Tree;
 use ltp_engine::validate::{check_dag, execute_validate};
@@ -294,6 +294,11 @@ enum TreeAction {
         node: String,
     },
     Clone {
+        tree_id: String,
+        #[arg(long)]
+        name: String,
+    },
+    Rename {
         tree_id: String,
         #[arg(long)]
         name: String,
@@ -1369,6 +1374,17 @@ fn main() {
                 let output = execute_tree_clone(&storage, &tree_id, &name);
                 if output.success {
                     history_commit(capture, "tree_clone", &full_command);
+                }
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Rename { tree_id, name } => {
+                let capture = history_begin(&storage);
+                let output = execute_tree_rename(&storage, &tree_id, &name);
+                if output.success {
+                    history_commit(capture, "tree_rename", &full_command);
                 }
                 render_output(&output, cli.human);
                 if !output.success {

@@ -11,15 +11,16 @@
 | **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
 | **Último release** | v0.2.0 (2026-09-23) — versionado + provenance de build |
 | **Último bugfix** | insert-between assumptions preservation |
+| **Último añadido** | `tree rename` (renombra el label de instancia; `id` estable) |
 | **Factor de escala (velocity)** | 1.0x |
-| **UATs motor base** | 191/191 |
+| **UATs motor base** | 199/199 |
 | **UATs Knowledge Pool** | 220/239 |
 | **Tests F13** | 11/11 |
 | **Tests F14** | 6/6 |
 | **Tests Slice 1 (macro-assume)** | 40/40 |
 | **Tests Slice 2 (macro lifecycle)** | 36/36 |
 | **Tests versión/provenance** | 4/4 |
-| **Tests totales** | 520 |
+| **Tests totales** | 531 |
 
 ---
 
@@ -46,7 +47,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 |------|---------|:----:|--------|------|
 | F1 | Fundación (workspace, traits, IDs, pipeline) | 10% | ✅ | 6/6 |
 | F2a | Nodos standalone (add/edit/list/search) | 4% | ✅ | 9/9 |
-| F3 | Vistas (trees) | 8% | ✅ | 11/11 |
+| F3 | Vistas (trees) | 8% | ✅ | 19/19 |
 | F4 | Enlaces básicos (connect/disconnect/feedback/feedback-list/feedback-rm) | 9% | ✅ | 17/17 |
 | F2b | Nodos cross-tree (rm/split/inspect) | 5% | ✅ | 7/7 |
 | F5 | Validación completa | 8% | ✅ | 14/14 |
@@ -57,7 +58,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | F10 | NBR | 5% | ✅ | 17/17 |
 | F11 | Historial (undo/redo) | 6% | ✅ | 22/22 |
 | E2E | Tests end-to-end | 4% | ✅ | 19/19 |
-| F12 | MCP Server | 7% | ✅ | 16/16 |
+| F12 | MCP Server | 7% | ✅ | 18/18 |
 | F13 | Validation Enrichments | — | ✅ | 11/11 |
 | F14 | Feedback Edge Primitives | — | ✅ | 6/6 |
 | | **TOTAL** | **100%** | **✅** | **211/211** |

@@ -364,3 +364,188 @@ fn uat_3_11_tree_rm() {
     // Node still in pool
     assert!(dir.join(format!("nodes/{}.json", node_id)).is_file());
 }
+
+/// UAT 3.12: tree rename cambia el name en disco manteniendo id y fichero estables.
+#[test]
+fn uat_3_12_tree_rename_happy_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+
+    let (json, code) = run_ltp(dir, &["tree", "rename", tree_id, "--name", "CRT What-If"]);
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["action"], "tree_rename");
+    assert_eq!(json["data"]["id"], tree_id);
+    assert_eq!(json["data"]["old_name"], "Original");
+    assert_eq!(json["data"]["new_name"], "CRT What-If");
+
+    // El fichero y el id NO cambian; solo el name.
+    let path = dir.join(format!("trees/{}.json", tree_id));
+    assert!(path.is_file());
+    let content: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(content["id"], tree_id);
+    assert_eq!(content["name"], "CRT What-If");
+}
+
+/// UAT 3.13: tree rename sobre un árbol inexistente falla con TREE_NOT_FOUND.
+#[test]
+fn uat_3_13_tree_rename_not_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let (json, code) = run_ltp(dir, &["tree", "rename", "tree-crt-ghost", "--name", "X"]);
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "TREE_NOT_FOUND");
+}
+
+/// UAT 3.14: tree rename con nombre vacío o de solo espacios falla y no toca el fichero.
+#[test]
+fn uat_3_14_tree_rename_empty_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+
+    for blank in ["", "   "] {
+        let (json, code) = run_ltp(dir, &["tree", "rename", tree_id, "--name", blank]);
+        assert_eq!(code, 1);
+        assert_eq!(json["success"], false);
+        assert_eq!(json["errors"][0]["code"], "INVALID_TREE_NAME");
+    }
+
+    // Nombre original intacto.
+    let content: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(format!("trees/{}.json", tree_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(content["name"], "Original");
+}
+
+/// UAT 3.15: renombrar al mismo nombre es un no-op válido (idempotente).
+#[test]
+fn uat_3_15_tree_rename_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+
+    let (json, code) = run_ltp(dir, &["tree", "rename", tree_id, "--name", "Original"]);
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["old_name"], "Original");
+    assert_eq!(json["data"]["new_name"], "Original");
+}
+
+/// UAT 3.16: el nuevo nombre se almacena verbatim (unicode y símbolos) sin re-slug del id.
+#[test]
+fn uat_3_16_tree_rename_unicode_verbatim() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+    let fancy = "Análisis 你好 <flujo>";
+
+    let (json, code) = run_ltp(dir, &["tree", "rename", tree_id, "--name", fancy]);
+
+    assert_eq!(code, 0);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["new_name"], fancy);
+
+    let content: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(format!("trees/{}.json", tree_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(content["id"], tree_id); // id estable, sin re-slug
+    assert_eq!(content["name"], fancy);
+}
+
+/// UAT 3.17: rename preserva las referencias attach y el nodo persiste.
+#[test]
+fn uat_3_17_tree_rename_preserves_refs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let node_id = add_node(dir, "Shared node", "UDE");
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+    run_ltp(
+        dir,
+        &["tree", "attach", "--tree", tree_id, "--node", &node_id],
+    );
+
+    let (_, code) = run_ltp(dir, &["tree", "rename", tree_id, "--name", "Renamed"]);
+    assert_eq!(code, 0);
+
+    let content: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join(format!("trees/{}.json", tree_id))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(content["name"], "Renamed");
+    assert_eq!(content["nodes"][0]["ref"], node_id);
+    assert!(dir.join(format!("nodes/{}.json", node_id)).is_file());
+}
+
+/// UAT 3.18: el slug viejo sigue ocupado tras rename; reutilizar el nombre colisiona.
+#[test]
+fn uat_3_18_tree_rename_slug_reuse_collision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+    run_ltp(dir, &["tree", "rename", tree_id, "--name", "Foo"]);
+
+    // El id de "Original" seguiría siendo tree-crt-original, que sigue ocupado.
+    let (json, code) = run_ltp(dir, &["tree", "new", "crt", "Original"]);
+
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "TREE_ALREADY_EXISTS");
+}
+
+/// UAT 3.19: undo revierte el rename; redo lo reaplica.
+#[test]
+fn uat_3_19_tree_rename_undo_redo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["tree", "new", "crt", "Original"]);
+    let tree_id = "tree-crt-original";
+    run_ltp(dir, &["tree", "rename", tree_id, "--name", "Renamed"]);
+
+    let read_name = |dir: &std::path::Path| -> String {
+        let content: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join(format!("trees/{}.json", tree_id))).unwrap(),
+        )
+        .unwrap();
+        content["name"].as_str().unwrap().to_string()
+    };
+
+    assert_eq!(read_name(dir), "Renamed");
+
+    let (_, code) = run_ltp(dir, &["undo"]);
+    assert_eq!(code, 0);
+    assert_eq!(read_name(dir), "Original");
+
+    let (_, code) = run_ltp(dir, &["redo"]);
+    assert_eq!(code, 0);
+    assert_eq!(read_name(dir), "Renamed");
+}

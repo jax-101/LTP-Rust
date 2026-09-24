@@ -184,6 +184,18 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         }),
     ));
     tools.push(tool(
+        "ltp/tree_rename",
+        "Rename a tree (changes only its name; the id stays stable)",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree_id": { "type": "string", "description": "Tree ID" },
+                "name": { "type": "string", "description": "New name for the tree" }
+            },
+            "required": ["tree_id", "name"]
+        }),
+    ));
+    tools.push(tool(
         "ltp/tree_diff",
         "Compare two trees",
         json!({

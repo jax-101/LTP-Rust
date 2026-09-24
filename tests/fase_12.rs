@@ -333,11 +333,12 @@ fn test_tools_list_complete() {
 
     assert!(resp["error"].is_null());
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 70);
+    assert_eq!(tools.len(), 71);
 
     // Verify key tools exist
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(tool_names.contains(&"ltp/node_add"));
+    assert!(tool_names.contains(&"ltp/tree_rename"));
     assert!(tool_names.contains(&"ltp/link_connect"));
     assert!(tool_names.contains(&"ltp/validate"));
     assert!(tool_names.contains(&"ltp/trace"));
@@ -519,5 +520,61 @@ fn test_tools_list_standalone() {
     assert!(resp["error"].is_null());
     assert_eq!(resp["id"], 42);
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 70);
+    assert_eq!(tools.len(), 71);
+}
+
+// --- UAT 12.17: ltp/tree_rename via MCP renombra manteniendo id estable ---
+#[test]
+fn test_mcp_tree_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    init_workspace(dir.path());
+
+    // Crea un árbol vía CLI para tener algo que renombrar.
+    Command::new(ltp_bin())
+        .args(["tree", "new", "crt", "Original"])
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to create tree");
+
+    let resp = mcp_request(
+        dir.path(),
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "ltp/tree_rename",
+                "arguments": { "tree_id": "tree-crt-original", "name": "Renamed via MCP" }
+            }
+        }),
+    );
+
+    assert!(resp["error"].is_null());
+    assert_eq!(resp["result"]["isError"], false);
+
+    let output: Value =
+        serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(output["success"], true);
+    assert_eq!(output["action"], "tree_rename");
+    assert_eq!(output["data"]["id"], "tree-crt-original");
+    assert_eq!(output["data"]["old_name"], "Original");
+    assert_eq!(output["data"]["new_name"], "Renamed via MCP");
+}
+
+// --- UAT 12.18: ltp/tree_rename sin argumento `name` → invalid_params ---
+#[test]
+fn test_mcp_tree_rename_missing_arg() {
+    let dir = tempfile::tempdir().unwrap();
+    init_workspace(dir.path());
+
+    let resp = mcp_request(
+        dir.path(),
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "ltp/tree_rename",
+                "arguments": { "tree_id": "tree-crt-original" }
+            }
+        }),
+    );
+
+    assert_eq!(resp["error"]["code"], -32602);
 }

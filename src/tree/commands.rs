@@ -129,6 +129,14 @@ pub struct TreeCloneData {
     pub edges_cloned: usize,
 }
 
+/// Data returned by `tree rename`.
+#[derive(Debug, Serialize)]
+pub struct TreeRenameData {
+    pub id: String,
+    pub old_name: String,
+    pub new_name: String,
+}
+
 /// A single diff entry.
 #[derive(Debug, Serialize)]
 pub struct DiffEntry {
@@ -832,6 +840,139 @@ pub fn execute_tree_clone(
             new_id,
             new_name: new_name.to_string(),
             edges_cloned,
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![],
+        warnings,
+    }
+}
+
+/// Execute `tree rename`.
+///
+/// Renombra el `name` de un árbol existente **sin** tocar su `id` ni el fichero
+/// `trees/<id>.json`, preservando la integridad referencial (`attach`, refs). Análogo a
+/// `node edit` sobre `node.label`: el slug del `id` puede quedar desincronizado del nombre,
+/// consecuencia aceptada por diseño (el `id` es la clave estable, no el nombre).
+pub fn execute_tree_rename(
+    storage: &dyn Storage,
+    tree_id: &str,
+    new_name: &str,
+) -> CommandOutput<TreeRenameData> {
+    let ws_name = storage.workspace_name().unwrap_or_default();
+
+    // El nombre no puede quedar vacío; `trim()` solo valida, el nombre se almacena verbatim.
+    if new_name.trim().is_empty() {
+        return CommandOutput {
+            success: false,
+            action: "tree_rename".to_string(),
+            workspace: ws_name,
+            data: TreeRenameData {
+                id: tree_id.to_string(),
+                old_name: String::new(),
+                new_name: String::new(),
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new(
+                "INVALID_TREE_NAME",
+                "el nombre no puede estar vacío",
+            )],
+            warnings: vec![],
+        };
+    }
+
+    let lock_outcome = match storage.acquire_lock("tree rename") {
+        Ok(o) => o,
+        Err(e) => {
+            return CommandOutput {
+                success: false,
+                action: "tree_rename".to_string(),
+                workspace: ws_name,
+                data: TreeRenameData {
+                    id: tree_id.to_string(),
+                    old_name: String::new(),
+                    new_name: String::new(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("LOCK_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
+
+    let mut tree = match storage.load_tree(tree_id) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = storage.release_lock();
+            let err = match &e {
+                LtpError::TreeNotFound(_) => OutputError::new("TREE_NOT_FOUND", e.to_string()),
+                _ => OutputError::new("IO_ERROR", e.to_string()),
+            };
+            return CommandOutput {
+                success: false,
+                action: "tree_rename".to_string(),
+                workspace: ws_name,
+                data: TreeRenameData {
+                    id: tree_id.to_string(),
+                    old_name: String::new(),
+                    new_name: String::new(),
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![err],
+                warnings: vec![],
+            };
+        }
+    };
+
+    // Muta solo el nombre sin copia extra; `id` y fichero permanecen estables.
+    let old_name = std::mem::replace(&mut tree.name, new_name.to_string());
+
+    if let Err(e) = storage.save_tree(&tree) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "tree_rename".to_string(),
+            workspace: ws_name,
+            data: TreeRenameData {
+                id: tree.id,
+                old_name,
+                new_name: tree.name,
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+            warnings: vec![],
+        };
+    }
+
+    let _ = storage.release_lock();
+
+    let mut warnings = vec![];
+    if let Some(w) = stale_lock_warning(&lock_outcome) {
+        warnings.push(w);
+    }
+
+    CommandOutput {
+        success: true,
+        action: "tree_rename".to_string(),
+        workspace: ws_name,
+        data: TreeRenameData {
+            id: tree.id,
+            old_name,
+            new_name: tree.name,
         },
         graph_health: GraphHealth {
             valid_dag: true,

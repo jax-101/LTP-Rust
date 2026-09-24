@@ -44,7 +44,7 @@ use crate::storage::Storage;
 use crate::trace::{execute_link_find, execute_link_inspect, execute_trace};
 use crate::tree::commands::{
     execute_tree_attach, execute_tree_clone, execute_tree_detach, execute_tree_diff,
-    execute_tree_list, execute_tree_new, execute_tree_rm, execute_tree_walk,
+    execute_tree_list, execute_tree_new, execute_tree_rename, execute_tree_rm, execute_tree_walk,
 };
 use crate::validate::execute_validate;
 use crate::workspace::FsStorage;
@@ -83,6 +83,7 @@ pub fn dispatch_tool(
         "ltp/tree_attach" => dispatch_tree_attach(args, storage),
         "ltp/tree_detach" => dispatch_tree_detach(args, storage),
         "ltp/tree_clone" => dispatch_tree_clone(args, storage),
+        "ltp/tree_rename" => dispatch_tree_rename(args, storage),
         "ltp/tree_diff" => dispatch_tree_diff(args, storage),
         "ltp/tree_walk" => dispatch_tree_walk(args, storage),
         "ltp/link_connect" => dispatch_link_connect(args, storage),
@@ -603,6 +604,21 @@ fn dispatch_tree_clone(
     let output = execute_tree_clone(storage, tree_id, name);
     if output.success {
         history_commit(capture, "tree_clone", "mcp:ltp/tree_clone");
+    }
+    to_result(&output)
+}
+
+fn dispatch_tree_rename(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree_id = get_str(args, "tree_id")?;
+    let name = get_str(args, "name")?;
+
+    let capture = history_begin(storage);
+    let output = execute_tree_rename(storage, tree_id, name);
+    if output.success {
+        history_commit(capture, "tree_rename", "mcp:ltp/tree_rename");
     }
     to_result(&output)
 }
