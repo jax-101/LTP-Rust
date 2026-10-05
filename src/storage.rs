@@ -30,6 +30,9 @@ pub trait Storage {
     fn list_node_ids(&self) -> Result<Vec<String>>;
 
     /// Load a tree by its ID.
+    ///
+    /// Implementations must return the tree normalized via `Tree::normalize_logic`
+    /// (ADR-014), without writing back to storage.
     fn load_tree(&self, id: &str) -> Result<Tree>;
 
     /// Persist a tree atomically.

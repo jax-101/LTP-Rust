@@ -24,14 +24,6 @@ fn slugify(name: &str) -> String {
         .join("-")
 }
 
-/// Determine the logic type for a given tree type.
-fn logic_for_type(tree_type: TreeType) -> TreeLogic {
-    match tree_type {
-        TreeType::Gt | TreeType::Crt | TreeType::Frt | TreeType::Tt => TreeLogic::Sufficiency,
-        TreeType::Ec | TreeType::Prt => TreeLogic::Necessity,
-    }
-}
-
 /// Parse a tree type string (case-insensitive).
 fn parse_tree_type(s: &str) -> Result<TreeType> {
     match s.to_lowercase().as_str() {
@@ -226,7 +218,7 @@ pub fn execute_tree_new(
                     id: String::new(),
                     name: String::new(),
                     tree_type,
-                    logic: logic_for_type(tree_type),
+                    logic: tree_type.logic(),
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -240,7 +232,7 @@ pub fn execute_tree_new(
 
     let slug = slugify(name);
     let id = format!("tree-{}-{}", tree_type_str(tree_type), slug);
-    let logic = logic_for_type(tree_type);
+    let logic = tree_type.logic();
 
     if storage.load_tree(&id).is_ok() {
         let _ = storage.release_lock();

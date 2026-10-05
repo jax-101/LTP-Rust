@@ -113,9 +113,11 @@ Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al pr
 
 #### `ltp tree new <gt|crt|ec|frt|prt|tt> "<nombre>"`
 
+La lógica del árbol se deriva del tipo (CLR_SPEC §1.2, ADR-014): `necessity` en GT/EC/PRT y `sufficiency` en CRT/FRT/TT. No es configurable.
+
 #### `ltp tree list`
 
-Lista todos los trees del workspace. `data`: `{ "trees": [ { "id", "name", "tree_type", "logic", "node_count", "edge_count" } ], "count" }`. El campo se llama **`tree_type`** (no `type`) y su valor es un string en minúscula: `crt` | `ec` | `frt` | `prt`. `logic` es `sufficiency` | `necessity`.
+Lista todos los trees del workspace. `data`: `{ "trees": [ { "id", "name", "tree_type", "logic", "node_count", "edge_count" } ], "count" }`. El campo se llama **`tree_type`** (no `type`) y su valor es un string en minúscula: `gt` | `crt` | `ec` | `frt` | `prt` | `tt`. `logic` es `sufficiency` | `necessity`.
 
 #### `ltp tree rm <TREE_ID>`
 
@@ -323,7 +325,7 @@ Errores: `TREE_NOT_FOUND`, `LABEL_REQUIRED` (label vacío), `RESERVATION_SELF_LO
 
 #### `ltp macro expand --tree <ID> --macro-link <MACRO_ID> --steps "<s1,s2,…>"`
 
-Materializa una reserva en una cadena `INT` explícita (transición `reservation → overlay`, ADR-013): crea `n` nodos `INT` (uno por label separada por comas; labels duplicadas permitidas, IDs distintos) y `n+1` edges encadenando `from → INT₁ → … → INTₙ → to`, con la lógica derivada del árbol contenedor (`SUFFICIENCY` en GT/CRT/FRT/TT; `NECESSITY` en EC/PRT). Los `macro_assume` de la reserva se conservan (ahora proyectables sobre el interior real).
+Materializa una reserva en una cadena `INT` explícita (transición `reservation → overlay`, ADR-013): crea `n` nodos `INT` (uno por label separada por comas; labels duplicadas permitidas, IDs distintos) y `n+1` edges encadenando `from → INT₁ → … → INTₙ → to`, con la lógica derivada del árbol contenedor (`SUFFICIENCY` en CRT/FRT/TT; `NECESSITY` en GT/EC/PRT). Los `macro_assume` de la reserva se conservan (ahora proyectables sobre el interior real).
 
 Los edges son reales ⇒ **bloquea ciclos**: pre-valida el DAG antes de persistir; si la cadena cerraría un ciclo devuelve `CIRCULAR_DEPENDENCY_DETECTED` (contexto `cycle_path`, `valid_dag: false`) sin crear ningún `INT`/`LINK` ni mutar el estado en disco (mismo contrato que `link connect`).
 
@@ -652,6 +654,8 @@ Vocabulario de `status`: `active | draft | invalidated | superseded`
 Vocabulario de `status` en edges: `active | broken | superseded | needs_review`
 
 Vocabulario de `logic` en tree: `sufficiency | necessity`
+
+Se deriva de `tree_type` (ADR-014): `necessity` en GT/EC/PRT, `sufficiency` en CRT/FRT/TT. Los edges del tronco llevan la misma lógica (`NECESSITY`/`SUFFICIENCY`); los edges de `nbr_branches` son siempre `SUFFICIENCY`. Un fichero legacy inconsistente se normaliza al leer y se persiste corregido en la siguiente mutación.
 
 Vocabulario de `status` en assumptions: `valid | invalid | needs_review`
 

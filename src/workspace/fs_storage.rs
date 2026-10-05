@@ -142,7 +142,10 @@ impl Storage for FsStorage {
             return Err(LtpError::TreeNotFound(id.to_string()));
         }
         let content = fs::read_to_string(&path)?;
-        let tree: Tree = serde_json::from_str(&content)?;
+        let mut tree: Tree = serde_json::from_str(&content)?;
+        // ADR-014: logic is derived from the tree type. Legacy files are fixed in memory
+        // only; the corrected tree reaches disk on the next mutation (never on a read).
+        tree.normalize_logic();
         Ok(tree)
     }
 

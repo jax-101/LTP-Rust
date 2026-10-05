@@ -300,3 +300,36 @@ Justificación
 Consecuencias
 - Positivas: el flujo top-down de Dettmer (declarar el salto, luego resolverlo) tiene representación de primer nivel. `expand` y `promote` ofrecen las dos salidas canónicas (articular vs. aceptar). Los ciclos quedan cerrados con el mismo contrato que el resto de creadores de edges (sin agujero de integridad). Huérfanos reinterpretados: un CRT en construcción con saltos pendientes ya no genera ruido de `ORPHAN_NODE_IN_TREE`. Retrocompatibilidad total con workspaces existentes vía alias serde (cero migraciones manuales).
 - Negativas: dos rutas de nacimiento para un `macro_edge` (`path collapse` → `Overlay`; `macro add` → `Reservation`) que el consumidor debe distinguir por `status`. El `MacroAssumption` "envejece" al expandir (un resumen sin `projection_refs` pasa de válido sobre interior vacío a `MACRO_ASSUMPTION_UNGROUNDED` sobre interior poblado) — comportamiento correcto pero sutil, cubierto por UAT I6. Contadores `INT`/`LINK`/`ASM` pueden quemarse en un `expand`/`promote` bloqueado por ciclo (idéntico a `link connect`; los IDs no retroceden, ADR-009).
+
+ADR-014: Lógica de Árbol Derivada del Tipo (Normalización al Leer, Persistencia Perezosa)
+
+Contexto
+
+CLR_SPEC §1.2 fija la lógica de cada árbol: necesidad en GT, EC y PRT ("para lograr X, necesitamos Y"); suficiencia en CRT, FRT y TT ("si X, entonces Y"). El motor derivaba mal esa lógica: `tree new gt` creaba el árbol como suficiencia, y todos los creadores de edges (`link connect`, `insert-between`, `group`, `path replace`) escribían `SUFFICIENCY` fijo, incluso dentro de un EC o un PRT. Consecuencias observadas sobre datos reales: `validate` emitía falsos positivos de CLR #4 en árboles de necesidad (un GT con `CLR4_5_IMPLICIT_OR_REVIEW` ×5; un EC con `CLR4_INSUFFICIENT_CAUSE` ×2 + `CLR4_5_IMPLICIT_OR_REVIEW` ×1), y `tree walk` sin `--order` recorría siempre en `topological`, en contra del default por lógica que ENGINE_SPEC ya documentaba. Además existen borradores GT en disco guardados como suficiencia.
+
+Se evaluaron cinco opciones para los árboles ya guardados:
+- A. Corregir solo hacia delante: los árboles existentes quedan mixtos para siempre.
+- B. Warning de lógica inconsistente en `validate`: con la opción C nunca se dispararía (código muerto).
+- C. Normalizar al leer, en memoria, y persistir de forma perezosa en la siguiente mutación.
+- D. Comando de migración explícito: añade el tool MCP nº 72; YAGNI para borradores no críticos.
+- E. Reescribir el fichero al leer: una escritura fuera del historial rompe el undo (ADR-009, `UNDO_STATE_DIVERGED`).
+
+Decisión
+
+Se adopta C. La lógica deja de ser un dato independiente y pasa a derivarse del tipo:
+- Invariante: `tree.logic == tree_type.logic()`; los edges del tronco llevan `Logic::from(tree.logic)`; los edges de `nbr_branches` son siempre `SUFFICIENCY` (una NBR es una rama "si-entonces" en cualquier árbol).
+- `TreeType::logic()` es la única fuente de verdad. Todos los creadores de edges heredan la lógica del árbol.
+- `Tree::normalize_logic()` (dominio puro, idempotente) se invoca desde `Storage::load_tree`, el único punto de deserialización. Las lecturas nunca escriben; el árbol corregido llega a disco con la siguiente mutación, dentro del historial. "Siguiente mutación" significa cualquier comando que guarde ese árbol, aunque no vaya dirigido a él (p. ej. un comando de nodo que reescribe varios árboles): la normalización viaja en esa misma entrada de undo, que es correcta porque ambos shells capturan el workspace completo (`snapshot_workspace_paths`), pero cuyo diff incluye los cambios de lógica.
+- CLR #4 (`CLR4_INSUFFICIENT_CAUSE`, `CLR4_5_IMPLICIT_OR_REVIEW`, `CLR4_5_EXCESSIVE_AND_INPUTS`) solo se evalúa en árboles de suficiencia.
+- `tree walk` sin `--order` usa `reverse` en necesidad y `topological` en suficiencia; `--order` explícito manda.
+
+Justificación
+- CLR_SPEC §1.2 es la fuente de verdad semántica; el motor solo la aplica de forma determinista (ADR-001).
+- ADR-009: normalizar en memoria preserva los checksums del undo; el primer undo tras la mutación restaura el fichero legacy byte a byte.
+- ADR-010: CLR #4 es semántica no bloqueante; aplicarla donde no corresponde solo genera ruido.
+- Precedente ADR-013: migración retrocompatible en la deserialización, sin migraciones manuales.
+- Arquitectura de dos velocidades: la regla vive en el dominio (`Tree`), no en `FsStorage`; un backend futuro solo tiene que llamar a `normalize_logic` en su `load_tree`.
+
+Consecuencias
+- Positivas: invariante total (ningún camino de lectura entrega un árbol inconsistente); ningún tool MCP nuevo; cero falsos positivos de CLR #4 en GT/EC/PRT; los borradores legacy se arreglan solos al primer uso.
+- Negativas: el disco conserva el contenido legacy hasta la siguiente mutación, y esa primera mutación produce un ruido puntual en el `git diff` (todos los edges cambian de lógica). Coste O(E) por cada `load_tree`. El campo almacenado `edge.logic` se mantiene como deuda (redundante con `tree_type`; su eliminación es RFC-002 Capa 1 y sería MAJOR). El cambio de default de `tree walk` es visible para consumidores que no pasan `--order` en GT/EC/PRT (mitigación: pasar `--order topological` explícito).
