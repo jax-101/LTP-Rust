@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> Estado: **propuesto** (RPI, fase Plan). Pendiente de aprobación antes de implementar.
+> Estado: **aprobado** (2026-10-06) — ejecución **Subagent-driven** (`superpowers:subagent-driven-development`), empezando por la Tarea 1.
 
 **Objetivo:** añadir `CSF` (Critical Success Factor) al pool de tipos de nodo y hacer que la lógica de cada árbol (y de sus edges) se derive siempre de su tipo — GT/EC/PRT = necesidad, CRT/FRT/TT = suficiencia —, con lo que se corrigen los falsos positivos CLR #4 y el orden por defecto de `tree walk`.
 
@@ -51,7 +51,7 @@ Los cinco modos de fallo que la spec implica y que un usuario encontraría antes
 - **GT ya guardados en disco** (borradores, no críticos): opción **C** — normalizar al leer en memoria y persistir de forma perezosa en la siguiente mutación. Descartadas: **A** (solo hacia delante → árboles mixtos para siempre), **B** (warning de lógica inconsistente en `validate` → con C nunca se dispara: código muerto), **D** (comando de migración → tool MCP nº 72; YAGNI para borradores), **E** (reescribir al leer → rompe el undo, ADR-009).
 - **CLR #4** (`CLR4_INSUFFICIENT_CAUSE`, `CLR4_5_IMPLICIT_OR_REVIEW`, `CLR4_5_EXCESSIVE_AND_INPUTS`) solo en árboles de suficiencia.
 - **`tree walk`** sin `--order`: `reverse` en necesidad y `topological` en suficiencia (lo que ENGINE_SPEC ya documenta). `--order` explícito manda.
-- **Diferido** (fuera de alcance): re-tipar los OBJ/REQ de los borradores a CSF/NC (`node edit` no tiene `--type`); rechazar valores inválidos de `--order` (hoy se aceptan en silencio); eliminar el campo almacenado `edge.logic` (RFC-002 Capa 1, sería MAJOR); el `.expect` preexistente de `link/commands.rs:339`; CLR #5/MAG en árboles de necesidad; la redacción de ENGINE_SPEC sobre DAG (:363).
+- **Diferido** (fuera de alcance): re-tipar los OBJ/REQ de los borradores a CSF/NC (`node edit` no tiene `--type`); rechazar valores inválidos de `--order` (hoy se aceptan en silencio); eliminar el campo almacenado `edge.logic` (RFC-002 Capa 1, sería MAJOR); el `.expect` preexistente de `link/commands.rs:339`; CLR #5/MAG en árboles de necesidad; CLR #4 sobre los edges de `nbr_branches` (hoy `validate/mod.rs:184-190` solo lintea `tree.edges`, así que una rama NBR, que siempre es suficiencia, nunca se audita por CLR #4, ni antes ni después de este plan); la redacción de ENGINE_SPEC sobre DAG (:363).
 
 ## Mapa de ficheros
 
@@ -284,6 +284,37 @@ git commit -m "feat(F2a): tipo de nodo CSF (Critical Success Factor del Goal Tre
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+- [ ] **Step 8: Actualizar el skill consumidor `ltp-mcp`** (fuera del repo: `~/.claude/skills/ltp-mcp/`; **no** se commitea). Hoy el skill enseña al agente LLM a construir el GT con `OBJ`/`REQ`; si no se cambia, `CSF` nunca se usará. Tres reemplazos exactos:
+
+`~/.claude/skills/ltp-mcp/SKILL.md:130`:
+```markdown
+| GT | Necesidad | GOAL -> OBJ -> REQ | Definir norma |
+```
+→
+```markdown
+| GT | Necesidad | GOAL <- CSF <- NC | Definir norma |
+```
+
+`~/.claude/skills/ltp-mcp/SKILL.md:164`:
+```markdown
+| GT | `tree_new(gt)` -> `node_add(GOAL,OBJ,REQ)` -> `tree_attach` -> `link_connect` -> `validate` |
+```
+→
+```markdown
+| GT | `tree_new(gt)` -> `node_add(GOAL,CSF,NC)` -> `tree_attach` -> `link_connect(NC->CSF, CSF->GOAL)` -> `validate` |
+```
+
+`~/.claude/skills/ltp-mcp/trees-reference.md:7`:
+```markdown
+- **Estructura:** 1 GOAL (cuspide) -> 3-5 OBJ (CSFs) -> multiples REQ (NCs).
+```
+→
+```markdown
+- **Estructura:** 1 GOAL (cuspide) <- 3-5 CSF <- multiples NC (tipos de nodo `GOAL`, `CSF`, `NC`; los edges van hijo -> padre). La logica (`necessity`) la fija el motor (ADR-014).
+```
+
+La línea `:166` del EC (`node_add(REQ×2,PRE×2)`) **no cambia**: REQ/PRE son los tipos correctos del Evaporating Cloud. Verificación: `rg -n "OBJ" ~/.claude/skills/ltp-mcp/` → sin resultados.
 
 ---
 
@@ -826,7 +857,7 @@ Decisión
 Se adopta C. La lógica deja de ser un dato independiente y pasa a derivarse del tipo:
 - Invariante: `tree.logic == tree_type.logic()`; los edges del tronco llevan `Logic::from(tree.logic)`; los edges de `nbr_branches` son siempre `SUFFICIENCY` (una NBR es una rama "si-entonces" en cualquier árbol).
 - `TreeType::logic()` es la única fuente de verdad. Todos los creadores de edges heredan la lógica del árbol.
-- `Tree::normalize_logic()` (dominio puro, idempotente) se invoca desde `Storage::load_tree`, el único punto de deserialización. Las lecturas nunca escriben; el árbol corregido llega a disco con la siguiente mutación, dentro del historial.
+- `Tree::normalize_logic()` (dominio puro, idempotente) se invoca desde `Storage::load_tree`, el único punto de deserialización. Las lecturas nunca escriben; el árbol corregido llega a disco con la siguiente mutación, dentro del historial. "Siguiente mutación" significa cualquier comando que guarde ese árbol, aunque no vaya dirigido a él (p. ej. un comando de nodo que reescribe varios árboles): la normalización viaja en esa misma entrada de undo, que es correcta porque ambos shells capturan el workspace completo (`snapshot_workspace_paths`), pero cuyo diff incluye los cambios de lógica.
 - CLR #4 (`CLR4_INSUFFICIENT_CAUSE`, `CLR4_5_IMPLICIT_OR_REVIEW`, `CLR4_5_EXCESSIVE_AND_INPUTS`) solo se evalúa en árboles de suficiencia.
 - `tree walk` sin `--order` usa `reverse` en necesidad y `topological` en suficiencia; `--order` explícito manda.
 
