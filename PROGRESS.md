@@ -10,8 +10,8 @@
 | **Fase actual** | Completado |
 | **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
 | **Último release** | v0.2.0 (2026-09-23) — versionado + provenance de build |
-| **Último bugfix** | insert-between assumptions preservation |
-| **Último añadido** | `tree rename` (renombra el label de instancia; `id` estable) |
+| **Último bugfix** | Lógica de árbol derivada del tipo: GT = necesidad, edges heredan, CLR #4 y walk por lógica (ADR-014) |
+| **Último añadido** | Tipo de nodo `CSF` (Critical Success Factor del Goal Tree) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
 | **UATs Knowledge Pool** | 220/239 |
@@ -20,7 +20,8 @@
 | **Tests Slice 1 (macro-assume)** | 40/40 |
 | **Tests Slice 2 (macro lifecycle)** | 36/36 |
 | **Tests versión/provenance** | 4/4 |
-| **Tests totales** | 531 |
+| **Tests CSF + lógica de árbol** | 30/30 |
+| **Tests totales** | 561 |
 
 ---
 
@@ -66,6 +67,29 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Bugfix + CSF] — Lógica de árbol derivada del tipo + `NodeType::Csf` (ADR-014)
+**Fecha**: 2026-10-06
+**Naturaleza**: Bugfix + tipo de nodo aditivo sobre el motor ya completo. **No** altera el % del motor ni del Knowledge Pool.
+**Avance**: 8 paquetes completados, 30 tests nuevos ✅ (5 UATs CSF en `fase_02a`, 5 unit en `tree/types.rs`, 20 E2E en `tests/tree_logic.rs`).
+**Tests totales**: 531 → 561 (conteo real verificado con `cargo test --workspace`; coincide con el esperado)
+**Plan**: `PLAN_csf-and-tree-logic.md` | **Specs**: ENGINE_SPEC §2.2/§2.3/§2.4/§2.12/validate, ADR-014 (nuevo), ADR-009/010/013, CLR_SPEC §1.2
+**Factor de escala**: 1.0x (8 paquetes, esfuerzo ≈ estimado; las 7 tareas de código sin rondas de corrección)
+**Origen**: el GT de Dettmer (`GOAL ← CSF ← NC`) no tenía tipo `CSF`, y el motor trataba el GT como árbol de suficiencia; además todos los creadores de edges escribían `SUFFICIENCY` fijo. Resultado: falsos positivos de CLR #4 en GT/EC y `tree walk` en orden contrario al documentado.
+
+#### Entregables
+- **`NodeType::Csf`** (T1): prefijo `CSF`, aceptado en CLI y MCP, contadores retrocompatibles.
+- **Lógica derivada del tipo** (T2–T3): `TreeType::logic()` como única fuente de verdad; `Tree::normalize_logic()` llamado en `load_tree` (normalización al leer, persistencia perezosa, undo intacto).
+- **Creadores de edges** (T4–T5): `link connect`, `insert-between`, `group` y `path replace` heredan la lógica del árbol; NBR siempre `SUFFICIENCY`. Eliminadas las dos funciones duplicadas (`logic_for_type`, `macro_edge::edge_logic`).
+- **CLR #4 por lógica** (T6): solo en CRT/FRT/TT.
+- **`tree walk`** (T7): default por lógica en CLI y MCP; `--order` explícito manda.
+
+#### Decisiones
+- Opción C para los borradores GT legacy (normalizar al leer + persistir en la siguiente mutación). Descartadas A, B, D y E: ver ADR-014.
+- Ningún tool MCP nuevo (siguen 71). Goldens `contract/` sin cambios.
+
+#### Siguiente
+- Diferido: re-tipar los OBJ/REQ de los borradores a CSF/NC; validar valores de `--order`; eliminar `edge.logic` almacenado (RFC-002 Capa 1, MAJOR).
 
 ### [Release v0.2.0] — Política de versionado + provenance de build (infra)
 **Fecha**: 2026-09-23
@@ -756,4 +780,4 @@ Análisis Six Thinking Hats → regla: "el edge que conserva las causas original
 | 2026-08-13 | Expansión de UATs (ADR-010) | +42 UATs en F7–F12+E2E (error paths, edge cases, nbr rm, trace broken, invalidate idempotente) | 128 → 170 UATs. Avance global sigue 58% (pesos por fase sin cambio; fases completadas mantienen 100% de su peso). |
 | 2026-09-22 | Slice 2 — Long Arrow Lifecycle (ADR-013) | +36 tests (31 E2E `macro_lifecycle` + 5 unit). Enriquecimiento sobre el motor base ya completo (no altera % del motor base ni del Knowledge Pool). | 480 → 516 tests. Factor de escala 1.0x. |
 | 2026-09-23 | Release v0.2.0 — versionado + provenance (infra) | +4 UATs (`version_provenance`). Infraestructura de release; no altera % del motor ni factor de escala. | 516 → 520 tests. |
-
+| 2026-10-06 | CSF + lógica de árbol derivada del tipo (ADR-014) | +30 tests (5 UATs CSF + 5 unit + 20 E2E `tree_logic`). Bugfix + tipo aditivo sobre el motor completo (no altera % del motor base ni del Knowledge Pool). | 531 → 561 tests. Factor de escala 1.0x. |
