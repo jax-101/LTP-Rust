@@ -9,6 +9,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### Added
 
 - **`tree rename`**: renombra el `name` (label) de una instancia de tree existente sin tocar su `id` ni el fichero `trees/<id>.json`, preservando la integridad referencial (`attach`, refs, consumidores externos). Análogo a `node edit` sobre `node.label`. Expuesto en CLI (`ltp tree rename <TREE_ID> --name "<nuevo>"`) y MCP (`ltp/tree_rename`) — 71 tools MCP en total. Errores tipados `TREE_NOT_FOUND` e `INVALID_TREE_NAME` (nombre vacío); idempotente al renombrar al mismo nombre.
+- **Tipo de nodo `CSF`** (Critical Success Factor), nivel intermedio del Goal Tree (`GOAL ← CSF ← NC`): `ltp node add --type CSF` / `ltp/node_add`, IDs `CSF-xxx`. Los workspaces previos (sin la clave `CSF` en `counters.json`) arrancan en `CSF-001` sin migración. Valor de enum nuevo ⇒ MINOR (RELEASE_POLICY §1).
 
 ## [0.2.0] - 2026-09-23
 

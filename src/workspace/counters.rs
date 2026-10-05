@@ -9,7 +9,7 @@ use crate::output::OutputWarning;
 
 /// All entity types tracked by the counter system.
 const ENTITY_TYPES: &[&str] = &[
-    "UDE", "RC", "INJ", "NC", "GOAL", "OBJ", "WANT", "OBS", "IO", "INT", "DE", "REQ", "PRE",
+    "UDE", "RC", "INJ", "NC", "GOAL", "OBJ", "WANT", "OBS", "IO", "INT", "DE", "REQ", "PRE", "CSF",
     "TREE", "LINK", "ASM", "NBR", "MACRO", "KN", "MASM",
 ];
 

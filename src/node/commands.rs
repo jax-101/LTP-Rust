@@ -73,6 +73,7 @@ fn parse_node_type(s: &str) -> Result<NodeType> {
         "DE" => Ok(NodeType::De),
         "REQ" => Ok(NodeType::Req),
         "PRE" => Ok(NodeType::Pre),
+        "CSF" => Ok(NodeType::Csf),
         other => Err(LtpError::EcValidation(format!(
             "Unknown node type: {}",
             other

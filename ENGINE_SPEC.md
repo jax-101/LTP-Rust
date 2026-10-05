@@ -75,7 +75,9 @@ Diagnóstico de salud determinista del workspace:
 
 #### `ltp node add "<label>" --type <TYPE> [--tags t1,t2] [--observable true|false]`
 
-Tipos: `UDE | RC | INJ | NC | GOAL | OBJ | WANT | OBS | IO | INT | DE | REQ | PRE`
+Tipos: `UDE | RC | INJ | NC | GOAL | OBJ | WANT | OBS | IO | INT | DE | REQ | PRE | CSF`
+
+`CSF` (Critical Success Factor) es el nivel intermedio del Goal Tree: `GOAL ← CSF ← NC`. Como el resto de tipos, el motor no le impone reglas de rol ni semántica (ADR-001).
 
 "Con Dientes": ejecuta un linter sintáctico suave. Advierte si el texto contiene conjunciones causales prohibidas por CLR #2 (`because`, `in order to`, `para`), sugiriendo dividir la idea.
 

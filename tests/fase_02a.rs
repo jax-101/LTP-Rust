@@ -298,3 +298,111 @@ fn uat_2a_9_node_search() {
     let matches = json["data"]["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 2);
 }
+
+/// UAT 2a.10: node add --type CSF creates CSF-001 (Critical Success Factor, GT middle level).
+#[test]
+fn uat_2a_10_node_add_csf() {
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let (json, code) = run_ltp(dir, &["node", "add", "Entregas fiables", "--type", "CSF"]);
+    assert_eq!(code, 0, "{json:?}");
+    assert_eq!(json["data"]["id"], "CSF-001");
+    assert_eq!(json["data"]["node_type"], "CSF");
+
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("nodes/CSF-001.json")).unwrap())
+            .unwrap();
+    assert_eq!(on_disk["type"], "CSF");
+
+    // Case-insensitive, like every other node type.
+    let (json, code) = run_ltp(dir, &["node", "add", "Costes controlados", "--type", "csf"]);
+    assert_eq!(code, 0, "{json:?}");
+    assert_eq!(json["data"]["id"], "CSF-002");
+}
+
+/// UAT 2a.11: node list --type CSF returns only CSF nodes.
+#[test]
+fn uat_2a_11_node_list_filter_csf() {
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    for (label, ty) in [
+        ("Meta", "GOAL"),
+        ("Entregas fiables", "CSF"),
+        ("Hay transporte suficiente", "NC"),
+        ("Costes controlados", "CSF"),
+    ] {
+        let (json, code) = run_ltp(dir, &["node", "add", label, "--type", ty]);
+        assert_eq!(code, 0, "{json:?}");
+    }
+
+    let (json, code) = run_ltp(dir, &["node", "list", "--type", "CSF"]);
+    assert_eq!(code, 0, "{json:?}");
+    assert_eq!(json["data"]["count"], 2);
+    assert!(json["data"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|n| n["node_type"] == "CSF"));
+}
+
+/// UAT 2a.12: legacy workspace whose counters.json predates CSF (no "CSF" key):
+/// node add CSF starts at CSF-001 and persists the new key.
+#[test]
+fn uat_2a_12_csf_legacy_counters_without_key() {
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let counters_path = dir.join(".ltp/counters.json");
+    let mut counters: Value =
+        serde_json::from_str(&std::fs::read_to_string(&counters_path).unwrap()).unwrap();
+    counters.as_object_mut().unwrap().remove("CSF");
+    std::fs::write(
+        &counters_path,
+        serde_json::to_string_pretty(&counters).unwrap(),
+    )
+    .unwrap();
+
+    let (json, code) = run_ltp(dir, &["node", "add", "Entregas fiables", "--type", "CSF"]);
+    assert_eq!(code, 0, "{json:?}");
+    assert_eq!(json["data"]["id"], "CSF-001");
+
+    let after: Value =
+        serde_json::from_str(&std::fs::read_to_string(&counters_path).unwrap()).unwrap();
+    assert_eq!(after["CSF"], 1);
+}
+
+/// UAT 2a.13: lost counters.json — the rebuild scan recognises the CSF prefix and never
+/// reuses an existing ID.
+#[test]
+fn uat_2a_13_csf_counter_rebuild_from_scan() {
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    run_ltp(dir, &["node", "add", "CSF uno", "--type", "CSF"]);
+    run_ltp(dir, &["node", "add", "CSF dos", "--type", "CSF"]);
+    std::fs::remove_file(dir.join(".ltp/counters.json")).unwrap();
+
+    let (json, code) = run_ltp(dir, &["node", "add", "CSF tres", "--type", "CSF"]);
+    assert_eq!(code, 0, "{json:?}");
+    assert_eq!(json["data"]["id"], "CSF-003");
+}
+
+/// UAT 2a.14: parser boundary — a near-miss type is still rejected and creates nothing.
+#[test]
+fn uat_2a_14_unknown_type_near_csf_rejected() {
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let dir = tmp.path();
+    setup_workspace(dir);
+
+    let (json, code) = run_ltp(dir, &["node", "add", "X", "--type", "CSFX"]);
+    assert_eq!(code, 1);
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errors"][0]["code"], "INVALID_NODE_TYPE");
+    assert_eq!(std::fs::read_dir(dir.join("nodes")).unwrap().count(), 0);
+}

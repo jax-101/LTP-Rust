@@ -31,7 +31,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
             "type": "object",
             "properties": {
                 "label": { "type": "string", "description": "Node label text" },
-                "type": { "type": "string", "description": "Node type (UDE, RC, INJ, NC, GOAL, OBJ, WANT, OBS, IO, INT, DE, REQ, PRE)" },
+                "type": { "type": "string", "description": "Node type (UDE, RC, INJ, NC, GOAL, OBJ, WANT, OBS, IO, INT, DE, REQ, PRE, CSF)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional tags" },
                 "observable": { "type": "boolean", "description": "Whether the node is observable" },
                 "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status (default: hypothesis)" }

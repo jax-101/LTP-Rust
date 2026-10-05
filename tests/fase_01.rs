@@ -202,7 +202,7 @@ fn uat_1_6_counters_initialized() {
 
     let expected_types = [
         "UDE", "RC", "INJ", "NC", "GOAL", "OBJ", "WANT", "OBS", "IO", "INT", "DE", "REQ", "PRE",
-        "TREE", "LINK", "ASM", "NBR", "MACRO",
+        "CSF", "TREE", "LINK", "ASM", "NBR", "MACRO",
     ];
 
     for entity_type in expected_types {

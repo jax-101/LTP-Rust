@@ -51,6 +51,8 @@ pub enum NodeType {
     De,
     Req,
     Pre,
+    /// Critical Success Factor: nivel intermedio del Goal Tree (`GOAL ← CSF ← NC`).
+    Csf,
 }
 
 impl NodeType {
@@ -70,6 +72,7 @@ impl NodeType {
             Self::De => "DE",
             Self::Req => "REQ",
             Self::Pre => "PRE",
+            Self::Csf => "CSF",
         }
     }
 }
