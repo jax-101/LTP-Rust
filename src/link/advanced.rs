@@ -557,8 +557,9 @@ fn insert_between_error(
     }
 }
 
-/// A freshly minted SINGLE edge with no operator-specific metadata.
-fn single_edge(id: String, from: String, to: String) -> Edge {
+/// A freshly minted SINGLE edge with no operator-specific metadata, carrying the
+/// tree's edge logic (ADR-014).
+fn single_edge(id: String, from: String, to: String, logic: Logic) -> Edge {
     Edge {
         id,
         from: vec![from],
@@ -566,7 +567,7 @@ fn single_edge(id: String, from: String, to: String) -> Edge {
         operator: Operator::Single,
         weight: None,
         status: EdgeStatus::Active,
-        logic: Logic::Sufficiency,
+        logic,
         assumptions: vec![],
     }
 }
@@ -633,6 +634,9 @@ pub fn execute_link_insert_between(
             return insert_between_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
         }
     };
+
+    // ADR-014: freshly minted edges inherit the tree's logic.
+    let edge_logic = Logic::from(tree.logic);
 
     let edge_idx = match tree.edges.iter().position(|e| e.id == link_id) {
         Some(i) => i,
@@ -729,10 +733,10 @@ pub fn execute_link_insert_between(
                 operator: Operator::Single,
                 weight: None,
                 status: EdgeStatus::Active,
-                logic: Logic::Sufficiency,
+                logic: edge_logic,
                 assumptions: inherited_assumptions.clone(),
             };
-            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), b);
+            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), b, edge_logic);
 
             let mut edges: Vec<Edge> = tree
                 .edges
@@ -774,7 +778,12 @@ pub fn execute_link_insert_between(
                 }
             };
 
-            let new_edge = single_edge(new_id.clone(), cause_id.to_string(), node_id.to_string());
+            let new_edge = single_edge(
+                new_id.clone(),
+                cause_id.to_string(),
+                node_id.to_string(),
+                edge_logic,
+            );
 
             let mut edges = tree.edges.clone();
             edges[edge_idx].from[pos] = node_id.to_string();
@@ -817,7 +826,7 @@ pub fn execute_link_insert_between(
                 logic: edge.logic,
                 assumptions: inherited_assumptions.clone(),
             };
-            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), edge.to);
+            let edge2 = single_edge(new2_id.clone(), node_id.to_string(), edge.to, edge_logic);
 
             let mut edges: Vec<Edge> = tree
                 .edges
@@ -1073,7 +1082,7 @@ pub fn execute_link_group(
         operator: op,
         weight: None,
         status: EdgeStatus::Active,
-        logic: Logic::Sufficiency,
+        logic: Logic::from(tree.logic),
         assumptions: vec![],
     };
 

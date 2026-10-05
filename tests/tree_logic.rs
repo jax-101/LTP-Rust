@@ -158,6 +158,19 @@ fn edge_logic_on_disk(dir: &Path, tree: &str, link: &str) -> String {
         .to_string()
 }
 
+/// Asserts that every link id in `links` (a JSON array) is stored as NECESSITY on disk.
+fn assert_all_necessity(dir: &Path, tree: &str, links: &Value, ctx: &str) {
+    let created = ids(links);
+    assert!(!created.is_empty(), "{ctx}: no links created");
+    for link in &created {
+        assert_eq!(
+            edge_logic_on_disk(dir, tree, link),
+            "NECESSITY",
+            "{ctx}: {link}"
+        );
+    }
+}
+
 /// T3.1: `tree new` derives the logic from the type, in the response and on disk.
 #[test]
 fn t3_1_tree_new_derives_logic_from_type() {
@@ -375,4 +388,159 @@ fn t4_3_connect_in_crt_writes_sufficiency() {
 
     let link = connect(dir, &tree, &rc, &ude);
     assert_eq!(edge_logic_on_disk(dir, &tree, &link), "SUFFICIENCY");
+}
+
+/// T5.1: the three `link insert-between` modes write NECESSITY in a GT.
+#[test]
+fn t5_1_insert_between_in_gt_writes_necessity_in_every_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let nc1 = add_node(dir, "Flota disponible", "NC");
+    let nc2 = add_node(dir, "Conductores formados", "NC");
+    let csf = add_node(dir, "Entregas fiables", "CSF");
+    let goal = add_node(dir, "Clientes satisfechos", "GOAL");
+    let x1 = add_node(dir, "Mantenimiento preventivo", "NC");
+    let x2 = add_node(dir, "Operación estable", "NC");
+    let x3 = add_node(dir, "Cumplimiento de plazos", "CSF");
+    let tree = create_tree(dir, "gt", "GT Insertar");
+    attach(dir, &tree, &[&nc1, &nc2, &csf, &goal, &x1, &x2, &x3]);
+
+    let from = format!("{nc1},{nc2}");
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &from,
+            "--to",
+            &csf,
+            "--operator",
+            "AND",
+        ],
+    );
+    let and = ids(&json["data"]["created_links"]).remove(0);
+    let single = connect(dir, &tree, &csf, &goal);
+
+    // AND edge, --insert-after-cause: mints `nc1 → x1`.
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &and,
+            "--node",
+            &x1,
+            "--insert-after-cause",
+            &nc1,
+        ],
+    );
+    assert_all_necessity(dir, &tree, &json["data"]["created_links"], "after-cause");
+
+    // Same AND edge, --insert-before-effect: mints `(x1, nc2) → x2` and `x2 → csf`.
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &and,
+            "--node",
+            &x2,
+            "--insert-before-effect",
+        ],
+    );
+    assert_all_necessity(dir, &tree, &json["data"]["created_links"], "before-effect");
+
+    // SINGLE edge: `csf → goal` becomes `csf → x3 → goal`.
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "insert-between",
+            "--tree",
+            &tree,
+            "--link",
+            &single,
+            "--node",
+            &x3,
+        ],
+    );
+    assert_all_necessity(dir, &tree, &json["data"]["created_links"], "single");
+}
+
+/// T5.2: `link group` mints the AND edge as NECESSITY in a GT.
+#[test]
+fn t5_2_group_in_gt_writes_necessity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let nc1 = add_node(dir, "Flota disponible", "NC");
+    let nc2 = add_node(dir, "Conductores formados", "NC");
+    let csf = add_node(dir, "Entregas fiables", "CSF");
+    let tree = create_tree(dir, "gt", "GT Agrupar");
+    attach(dir, &tree, &[&nc1, &nc2, &csf]);
+    let l1 = connect(dir, &tree, &nc1, &csf);
+    let l2 = connect(dir, &tree, &nc2, &csf);
+
+    let links = format!("{l1},{l2}");
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "group",
+            "--tree",
+            &tree,
+            "--links",
+            &links,
+            "--operator",
+            "AND",
+        ],
+    );
+    let grouped = json["data"]["created_link"].as_str().unwrap();
+    assert_eq!(edge_logic_on_disk(dir, &tree, grouped), "NECESSITY");
+}
+
+/// T5.3: `path replace` mints both new edges as NECESSITY in a GT.
+#[test]
+fn t5_3_path_replace_in_gt_writes_necessity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let by = add_node(dir, "Entregas trazables", "CSF");
+
+    let json = run_ok(
+        dir,
+        &[
+            "path", "collapse", "--tree", &gt.tree, "--from", &gt.nc, "--to", &gt.goal, "--label",
+            "Resumen",
+        ],
+    );
+    let macro_id = json["data"]["macro_edge_id"].as_str().unwrap().to_string();
+
+    let json = run_ok(
+        dir,
+        &[
+            "path",
+            "replace",
+            "--tree",
+            &gt.tree,
+            "--macro-link",
+            &macro_id,
+            "--by-node",
+            &by,
+        ],
+    );
+    let new_links = &json["data"]["new_links"];
+    assert_eq!(ids(new_links).len(), 2);
+    assert_all_necessity(dir, &gt.tree, new_links, "path replace");
 }

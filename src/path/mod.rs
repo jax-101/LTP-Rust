@@ -953,7 +953,7 @@ pub fn execute_path_replace(
         operator: Operator::Single,
         weight: None,
         status: EdgeStatus::Active,
-        logic: Logic::Sufficiency,
+        logic: Logic::from(tree.logic),
         assumptions: vec![],
     };
 
@@ -964,7 +964,7 @@ pub fn execute_path_replace(
         operator: Operator::Single,
         weight: None,
         status: EdgeStatus::Active,
-        logic: Logic::Sufficiency,
+        logic: Logic::from(tree.logic),
         assumptions: vec![],
     };
 

@@ -17,20 +17,8 @@ use crate::link::{Assumption, Edge, EdgeStatus, Logic, Operator};
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
-use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef, TreeLogic};
+use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef};
 use crate::validate::check_dag;
-
-/// Deriva la lógica de un edge (`Logic`) desde la lógica del árbol (`TreeLogic`).
-///
-/// Los INT/LINK materializados por `expand` (y el edge atómico de `promote`) heredan la lógica
-/// del árbol contenedor: árboles de suficiencia (GT/CRT/FRT/TT) ⇒ `Sufficiency`; de necesidad
-/// (EC/PRT) ⇒ `Necessity` (ver `tree::commands::logic_for_type`).
-fn edge_logic(tree_logic: TreeLogic) -> Logic {
-    match tree_logic {
-        TreeLogic::Sufficiency => Logic::Sufficiency,
-        TreeLogic::Necessity => Logic::Necessity,
-    }
-}
 
 /// Advertencia por lock obsoleto retirado (paridad con el resto de comandos mutadores).
 fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
@@ -302,7 +290,7 @@ fn expand_failure(
 ///
 /// Transición `Reservation → Overlay` (ADR-013): crea `n` nodos INT (uno por label en `steps`,
 /// separadas por comas) y `n+1` edges encadenando `from → INT₁ → … → INTₙ → to`, con la lógica
-/// derivada del árbol ([`edge_logic`]). La long arrow pasa a `Overlay` y sus `MacroAssumption`
+/// derivada del árbol (`Logic::from(tree.logic)`, ADR-014). La long arrow pasa a `Overlay` y sus `MacroAssumption`
 /// **se conservan** (ahora proyectables por `macro-assume`).
 ///
 /// Los edges son reales ⇒ **bloquea ciclos** (D9): pre-valida el DAG (`from→INT…→to` sumado a
@@ -401,7 +389,7 @@ pub fn execute_macro_expand(
     // Extremos de la reserva (se materializará from → INT₁ → … → INTₙ → to).
     let from = tree.macro_edges[macro_idx].from.clone();
     let to = tree.macro_edges[macro_idx].to.clone();
-    let logic = edge_logic(tree.logic);
+    let logic = Logic::from(tree.logic);
 
     // 1) Mintear todos los INT en orden (contadores). Se construyen en memoria; NO se persiste
     //    ningún fichero hasta después del pre-check DAG (D9), de modo que un ciclo bloqueado no
@@ -738,7 +726,7 @@ pub fn execute_macro_promote(
         operator: Operator::Single,
         weight: None,
         status: EdgeStatus::Active,
-        logic: edge_logic(tree.logic),
+        logic: Logic::from(tree.logic),
         assumptions: vec![],
     };
 
