@@ -15,7 +15,7 @@ use tracing::{debug, info};
 
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
-use crate::tree::types::{MacroEdgeStatus, TreeType};
+use crate::tree::types::{MacroEdgeStatus, TreeLogic, TreeType};
 
 /// Per-tree validation results.
 #[derive(Debug, Serialize)]
@@ -180,14 +180,19 @@ pub fn execute_validate<S: Storage>(
         // CLR#2: Conjunctions
         tree_warnings.extend(clr::lint_clr2(&nodes_for_clr2));
 
-        // CLR#4: Insufficiency
-        tree_warnings.extend(clr::lint_clr4_insufficiency(&tree.edges));
+        // CLR#4 and CLR#4/#5 only apply to sufficiency trees (CRT/FRT/TT). In necessity
+        // trees (GT/EC/PRT) each necessary condition is insufficient on its own by
+        // construction, so these lints would be pure noise (CLR_SPEC §1.2, ADR-014).
+        if tree.logic == TreeLogic::Sufficiency {
+            // CLR#4: Insufficiency
+            tree_warnings.extend(clr::lint_clr4_insufficiency(&tree.edges));
 
-        // CLR#4/#5: Implicit OR (multiple ungrouped SINGLE edges to same node)
-        tree_warnings.extend(clr::lint_clr4_5_implicit_or(&tree.edges));
+            // CLR#4/#5: Implicit OR (multiple ungrouped SINGLE edges to same node)
+            tree_warnings.extend(clr::lint_clr4_5_implicit_or(&tree.edges));
 
-        // CLR#4/#5: Excessive AND inputs
-        tree_warnings.extend(clr::lint_clr4_5_excessive_and(&tree.edges));
+            // CLR#4/#5: Excessive AND inputs
+            tree_warnings.extend(clr::lint_clr4_5_excessive_and(&tree.edges));
+        }
 
         // CLR#6: Type inversion
         tree_warnings.extend(clr::lint_clr6_type_inversion(&tree.edges, &node_map));

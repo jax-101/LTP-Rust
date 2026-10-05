@@ -544,3 +544,146 @@ fn t5_3_path_replace_in_gt_writes_necessity() {
     assert_eq!(ids(new_links).len(), 2);
     assert_all_necessity(dir, &gt.tree, new_links, "path replace");
 }
+
+// ---------------------------------------------------------------------------
+// Task 6: CLR #4 only applies to sufficiency trees
+// ---------------------------------------------------------------------------
+
+/// Warning codes from the root `warnings[]` and from validate's `data.details[].warnings[]`.
+fn warning_codes(json: &Value) -> Vec<String> {
+    let root = json["warnings"].as_array().into_iter().flatten();
+    let nested = json["data"]["details"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|d| d["warnings"].as_array().into_iter().flatten());
+    root.chain(nested)
+        .map(|w| w["code"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn validate_tree(dir: &Path, tree: &str) -> Value {
+    run_ok(dir, &["validate", "--tree", tree])
+}
+
+const CLR4_CODES: [&str; 3] = [
+    "CLR4_INSUFFICIENT_CAUSE",
+    "CLR4_5_IMPLICIT_OR_REVIEW",
+    "CLR4_5_EXCESSIVE_AND_INPUTS",
+];
+
+fn assert_no_clr4(json: &Value, ctx: &str) {
+    let codes = warning_codes(json);
+    for code in CLR4_CODES {
+        assert!(
+            !codes.iter().any(|c| c == code),
+            "{ctx}: unexpected {code} in {codes:?}"
+        );
+    }
+}
+
+/// `a → m`, `b → m`, `m → top`: an implicit OR on `m` and a lone SINGLE cause on `top`,
+/// i.e. both CLR #4 triggers if the tree were a sufficiency tree.
+fn fan_in_tree(dir: &Path, tree_type: &str, types: [&str; 4]) -> String {
+    let [ta, tb, tm, ttop] = types;
+    let a = add_node(dir, "Causa A", ta);
+    let b = add_node(dir, "Causa B", tb);
+    let m = add_node(dir, "Efecto intermedio", tm);
+    let top = add_node(dir, "Efecto final", ttop);
+    let tree = create_tree(dir, tree_type, &format!("Fan {tree_type}"));
+    attach(dir, &tree, &[&a, &b, &m, &top]);
+    connect(dir, &tree, &a, &m);
+    connect(dir, &tree, &b, &m);
+    connect(dir, &tree, &m, &top);
+    tree
+}
+
+/// T6.1: a GT with an implicit OR and a lone SINGLE cause emits no CLR #4.
+#[test]
+fn t6_1_gt_emits_no_clr4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let tree = fan_in_tree(dir, "gt", ["NC", "NC", "CSF", "GOAL"]);
+    assert_no_clr4(&validate_tree(dir, &tree), "GT");
+}
+
+/// T6.2: a PRT with a 5-input AND emits no CLR4_5_EXCESSIVE_AND_INPUTS.
+#[test]
+fn t6_2_prt_wide_and_emits_no_clr4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let obstacles: Vec<String> = (1..=5)
+        .map(|i| add_node(dir, &format!("Obstáculo {i}"), "OBS"))
+        .collect();
+    let io = add_node(dir, "Objetivo intermedio", "IO");
+    let tree = create_tree(dir, "prt", "PRT Ancho");
+    let mut nodes: Vec<&str> = obstacles.iter().map(String::as_str).collect();
+    nodes.push(&io);
+    attach(dir, &tree, &nodes);
+    let from = obstacles.join(",");
+    run_ok(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &from,
+            "--to",
+            &io,
+            "--operator",
+            "AND",
+        ],
+    );
+    assert_no_clr4(&validate_tree(dir, &tree), "PRT");
+}
+
+/// T6.3: control — the same shape in a CRT still emits both CLR #4 warnings.
+#[test]
+fn t6_3_crt_still_emits_clr4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let tree = fan_in_tree(dir, "crt", ["RC", "RC", "INT", "UDE"]);
+    let codes = warning_codes(&validate_tree(dir, &tree));
+    assert!(
+        codes.iter().any(|c| c == "CLR4_5_IMPLICIT_OR_REVIEW"),
+        "{codes:?}"
+    );
+    assert!(
+        codes.iter().any(|c| c == "CLR4_INSUFFICIENT_CAUSE"),
+        "{codes:?}"
+    );
+}
+
+/// T6.4: a legacy GT (stored as sufficiency) emits no CLR #4 either.
+#[test]
+fn t6_4_legacy_gt_emits_no_clr4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    write_legacy_sufficiency(dir, &gt.tree);
+    assert_no_clr4(&validate_tree(dir, &gt.tree), "legacy GT");
+}
+
+/// T6.5: the gate is CLR #4 only — CLR #2 (conjunctions) still runs on a GT.
+#[test]
+fn t6_5_gt_still_emits_clr2() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let nc = add_node(dir, "Bajamos costes porque subimos volumen", "NC");
+    let goal = add_node(dir, "Somos rentables", "GOAL");
+    let tree = create_tree(dir, "gt", "GT Conjuncion");
+    attach(dir, &tree, &[&nc, &goal]);
+    connect(dir, &tree, &nc, &goal);
+    let codes = warning_codes(&validate_tree(dir, &tree));
+    assert!(
+        codes.iter().any(|c| c == "CLR2_CONJUNCTION_DETECTED"),
+        "{codes:?}"
+    );
+}

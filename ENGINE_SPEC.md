@@ -372,9 +372,10 @@ Ejecuta validaciones en dos niveles:
 
 **Advertencias (warnings):**
 - Linter CLR #2: conjunciones causales prohibidas en labels (`because`, `in order to`, `para`, `y` como causal). Se ejecuta sobre todos los nodos del tree, no solo al crearlos.
-- Nodos con solo 1 entrada SINGLE: candidatos a insuficiencia (CLR #4).
-- Nodos con ≥2 entradas SINGLE sin operador declarado: OR implícito (CLR #4/#5). `CLR4_5_IMPLICIT_OR_REVIEW` advierte que se confirme que cada causa basta sola, o que se agrupe con AND/MAG si son co-dependientes.
-- Elipses AND con >4 entradas: posible mezcla de causas independientes (CLR #4/#5).
+- *(Solo suficiencia: CRT/FRT/TT.)* Nodos con solo 1 entrada SINGLE: candidatos a insuficiencia (CLR #4).
+- *(Solo suficiencia: CRT/FRT/TT.)* Nodos con ≥2 entradas SINGLE sin operador declarado: OR implícito (CLR #4/#5). `CLR4_5_IMPLICIT_OR_REVIEW` advierte que se confirme que cada causa basta sola, o que se agrupe con AND/MAG si son co-dependientes.
+- *(Solo suficiencia: CRT/FRT/TT.)* Elipses AND con >4 entradas: posible mezcla de causas independientes (CLR #4/#5).
+- En árboles de necesidad (GT/EC/PRT) los tres lints CLR #4 anteriores no se evalúan: cada condición necesaria es insuficiente por sí sola por construcción (CLR_SPEC §1.2, ADR-014). El resto de lints semánticos sí se aplican.
 - Nodos con `observable: false` y <2 edges salientes: candidatos a CLR #7 (causa intangible sin efecto predicho).
 - Inversión de tipos sospechosa (CLR #6): nodo de nivel alto (UDE, DE) en posición `from` apuntando a nodo de nivel bajo (RC, INT).
 - CLR #5 (MAG weights): `CLR5_MAG_WEIGHTS_NOT_NORMALIZED` si las weights de edges MAG al mismo nodo no suman ~1.0 (tolerancia ±0.01). `CLR5_MAG_WEIGHT_UNDEFINED` si un edge MAG no tiene weight definido.
