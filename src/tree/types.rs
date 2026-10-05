@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::link::{AssumptionStatus, Edge, FeedbackEdge};
+use crate::link::{AssumptionStatus, Edge, FeedbackEdge, Logic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -18,6 +18,29 @@ pub enum TreeType {
 pub enum TreeLogic {
     Sufficiency,
     Necessity,
+}
+
+impl TreeType {
+    /// Lógica canónica del tipo de árbol (CLR_SPEC §1.2).
+    ///
+    /// Necesidad: GT, EC, PRT ("para lograr X, necesitamos Y"). Suficiencia: CRT, FRT, TT
+    /// ("si X, entonces Y"). Única fuente de verdad: `Tree::logic` y la lógica de los edges
+    /// del tronco se derivan de aquí (ADR-014).
+    pub fn logic(self) -> TreeLogic {
+        match self {
+            Self::Gt | Self::Ec | Self::Prt => TreeLogic::Necessity,
+            Self::Crt | Self::Frt | Self::Tt => TreeLogic::Sufficiency,
+        }
+    }
+}
+
+impl From<TreeLogic> for Logic {
+    fn from(logic: TreeLogic) -> Self {
+        match logic {
+            TreeLogic::Sufficiency => Logic::Sufficiency,
+            TreeLogic::Necessity => Logic::Necessity,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +139,31 @@ pub struct Tree {
     pub nbr_branches: Vec<NbrBranch>,
 }
 
+impl Tree {
+    /// Re-deriva la lógica del árbol y de sus edges desde `tree_type` (ADR-014).
+    ///
+    /// Invariante: `logic == tree_type.logic()`, cada edge del tronco lleva esa lógica y los
+    /// edges de `nbr_branches` son siempre `Sufficiency` (una NBR es una rama "si-entonces").
+    /// Se aplica al leer (`Storage::load_tree`), en memoria: un fichero legacy (p. ej. un GT
+    /// guardado como suficiencia) se corrige al vuelo y se persiste corregido en la siguiente
+    /// mutación, sin reescrituras fuera del historial que romperían el undo (ADR-009).
+    /// Idempotente.
+    pub fn normalize_logic(&mut self) {
+        self.logic = self.tree_type.logic();
+        let trunk = Logic::from(self.logic);
+        for edge in &mut self.edges {
+            edge.logic = trunk;
+        }
+        for edge in self
+            .nbr_branches
+            .iter_mut()
+            .flat_map(|b| b.edges.iter_mut())
+        {
+            edge.logic = Logic::Sufficiency;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +224,117 @@ mod tests {
         );
         let back: MacroEdge = serde_json::from_str(&json).unwrap();
         assert_eq!(back.status, MacroEdgeStatus::Overlay);
+    }
+
+    use crate::link::{EdgeStatus, Operator};
+
+    fn edge(id: &str, logic: Logic) -> Edge {
+        Edge {
+            id: id.to_string(),
+            from: vec!["NC-001".to_string()],
+            to: "GOAL-001".to_string(),
+            operator: Operator::Single,
+            weight: None,
+            status: EdgeStatus::Active,
+            logic,
+            assumptions: vec![],
+        }
+    }
+
+    fn tree_with(
+        tree_type: TreeType,
+        logic: TreeLogic,
+        edges: Vec<Edge>,
+        nbr_edges: Vec<Edge>,
+    ) -> Tree {
+        Tree {
+            id: "tree-x".to_string(),
+            name: "x".to_string(),
+            tree_type,
+            logic,
+            nodes: vec![],
+            edges,
+            macro_edges: vec![],
+            feedback_edges: vec![],
+            nbr_branches: vec![NbrBranch {
+                id: "NBR-001".to_string(),
+                source_node: "INJ-001".to_string(),
+                edges: nbr_edges,
+                trim_injection: None,
+            }],
+        }
+    }
+
+    // ADR-014: la lógica canónica de cada tipo sigue CLR_SPEC §1.2.
+    #[test]
+    fn tree_type_logic_follows_clr_spec() {
+        for t in [TreeType::Gt, TreeType::Ec, TreeType::Prt] {
+            assert_eq!(t.logic(), TreeLogic::Necessity, "{t:?}");
+        }
+        for t in [TreeType::Crt, TreeType::Frt, TreeType::Tt] {
+            assert_eq!(t.logic(), TreeLogic::Sufficiency, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn tree_logic_maps_to_edge_logic() {
+        assert_eq!(Logic::from(TreeLogic::Sufficiency), Logic::Sufficiency);
+        assert_eq!(Logic::from(TreeLogic::Necessity), Logic::Necessity);
+    }
+
+    // Legacy: GT guardado como suficiencia (pre-ADR-014) ⇒ tronco a necesidad; la NBR no cambia.
+    #[test]
+    fn normalize_logic_fixes_legacy_gt() {
+        let mut t = tree_with(
+            TreeType::Gt,
+            TreeLogic::Sufficiency,
+            vec![
+                edge("LINK-001", Logic::Sufficiency),
+                edge("LINK-002", Logic::Sufficiency),
+            ],
+            vec![edge("LINK-003", Logic::Sufficiency)],
+        );
+        t.normalize_logic();
+        assert_eq!(t.logic, TreeLogic::Necessity);
+        assert!(t.edges.iter().all(|e| e.logic == Logic::Necessity));
+        assert_eq!(t.nbr_branches[0].edges[0].logic, Logic::Sufficiency);
+    }
+
+    // Bidireccional: un edge NECESSITY colado a mano en un CRT vuelve a SUFFICIENCY, y una rama
+    // NBR mal etiquetada vuelve a SUFFICIENCY aunque el árbol sea de necesidad.
+    #[test]
+    fn normalize_logic_is_bidirectional_and_forces_nbr_sufficiency() {
+        let mut crt = tree_with(
+            TreeType::Crt,
+            TreeLogic::Necessity,
+            vec![edge("LINK-001", Logic::Necessity)],
+            vec![],
+        );
+        crt.normalize_logic();
+        assert_eq!(crt.logic, TreeLogic::Sufficiency);
+        assert_eq!(crt.edges[0].logic, Logic::Sufficiency);
+
+        let mut prt = tree_with(
+            TreeType::Prt,
+            TreeLogic::Necessity,
+            vec![],
+            vec![edge("LINK-002", Logic::Necessity)],
+        );
+        prt.normalize_logic();
+        assert_eq!(prt.nbr_branches[0].edges[0].logic, Logic::Sufficiency);
+    }
+
+    #[test]
+    fn normalize_logic_is_idempotent() {
+        let mut t = tree_with(
+            TreeType::Ec,
+            TreeLogic::Sufficiency,
+            vec![edge("LINK-001", Logic::Sufficiency)],
+            vec![edge("LINK-002", Logic::Necessity)],
+        );
+        t.normalize_logic();
+        let first = serde_json::to_string(&t).unwrap();
+        t.normalize_logic();
+        assert_eq!(serde_json::to_string(&t).unwrap(), first);
     }
 }
