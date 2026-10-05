@@ -129,6 +129,35 @@ fn gt_chain(dir: &Path) -> GtChain {
     }
 }
 
+fn ids(links: &Value) -> Vec<String> {
+    links
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Logic of `link` exactly as stored on disk (trunk or NBR), bypassing the normalizing read.
+fn edge_logic_on_disk(dir: &Path, tree: &str, link: &str) -> String {
+    let raw = read_tree(dir, tree);
+    let nbr_edges = raw["nbr_branches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|b| b["edges"].as_array().into_iter().flatten());
+    raw["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(nbr_edges)
+        .find(|e| e["id"] == link)
+        .unwrap_or_else(|| panic!("{link} not found in {tree}"))["logic"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
 /// T3.1: `tree new` derives the logic from the type, in the response and on disk.
 #[test]
 fn t3_1_tree_new_derives_logic_from_type() {
@@ -233,4 +262,117 @@ fn t3_4_clone_of_legacy_gt_is_normalized() {
     let edges = clone["edges"].as_array().unwrap();
     assert_eq!(edges.len(), 2);
     assert!(edges.iter().all(|e| e["logic"] == "NECESSITY"), "{edges:?}");
+}
+
+/// T4.1: every `link connect` shape (SINGLE, multi-destination, AND) writes NECESSITY in a GT.
+#[test]
+fn t4_1_connect_in_gt_writes_necessity_for_every_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let nc1 = add_node(dir, "Flota disponible", "NC");
+    let nc2 = add_node(dir, "Conductores formados", "NC");
+    let nc3 = add_node(dir, "Rutas planificadas", "NC");
+    let csf1 = add_node(dir, "Entregas fiables", "CSF");
+    let csf2 = add_node(dir, "Entregas rápidas", "CSF");
+    let goal = add_node(dir, "Clientes satisfechos", "GOAL");
+    let tree = create_tree(dir, "gt", "GT Formas");
+    attach(dir, &tree, &[&nc1, &nc2, &nc3, &csf1, &csf2, &goal]);
+
+    let single = connect(dir, &tree, &csf1, &goal);
+    assert_eq!(
+        edge_logic_on_disk(dir, &tree, &single),
+        "NECESSITY",
+        "SINGLE"
+    );
+
+    let to = format!("{csf1},{csf2}");
+    let json = run_ok(
+        dir,
+        &[
+            "link", "connect", "--tree", &tree, "--from", &nc1, "--to", &to,
+        ],
+    );
+    let multi = ids(&json["data"]["created_links"]);
+    assert_eq!(multi.len(), 2);
+    for link in &multi {
+        assert_eq!(
+            edge_logic_on_disk(dir, &tree, link),
+            "NECESSITY",
+            "multi-dest {link}"
+        );
+    }
+
+    let from = format!("{nc2},{nc3}");
+    let json = run_ok(
+        dir,
+        &[
+            "link",
+            "connect",
+            "--tree",
+            &tree,
+            "--from",
+            &from,
+            "--to",
+            &csf2,
+            "--operator",
+            "AND",
+        ],
+    );
+    let and = ids(&json["data"]["created_links"]);
+    assert_eq!(and.len(), 1);
+    assert_eq!(edge_logic_on_disk(dir, &tree, &and[0]), "NECESSITY", "AND");
+}
+
+/// T4.2 (review focus): an NBR branch stays SUFFICIENCY even inside a necessity tree (PRT),
+/// while the trunk inherits NECESSITY.
+#[test]
+fn t4_2_nbr_edge_stays_sufficiency_in_prt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let obs = add_node(dir, "Falta de stock", "OBS");
+    let io = add_node(dir, "Inventario visible", "IO");
+    let inj = add_node(dir, "Kanban de reposición", "INJ");
+    let ude = add_node(dir, "Sobrecoste de almacén", "UDE");
+    let tree = create_tree(dir, "prt", "PRT Stock");
+    attach(dir, &tree, &[&obs, &io, &inj]);
+
+    let trunk = connect(dir, &tree, &obs, &io);
+    assert_eq!(edge_logic_on_disk(dir, &tree, &trunk), "NECESSITY", "trunk");
+
+    let json = run_ok(dir, &["nbr", "add", "--tree", &tree, "--source-node", &inj]);
+    let nbr = json["data"]["nbr_id"].as_str().unwrap().to_string();
+    let json = run_ok(
+        dir,
+        &[
+            "link", "connect", "--tree", &tree, "--nbr", &nbr, "--from", &inj, "--to", &ude,
+        ],
+    );
+    let nbr_link = ids(&json["data"]["created_links"]);
+    assert_eq!(
+        edge_logic_on_disk(dir, &tree, &nbr_link[0]),
+        "SUFFICIENCY",
+        "NBR edge"
+    );
+    assert_eq!(
+        edge_logic_on_disk(dir, &tree, &trunk),
+        "NECESSITY",
+        "trunk after NBR"
+    );
+}
+
+/// T4.3: control — a CRT keeps writing SUFFICIENCY.
+#[test]
+fn t4_3_connect_in_crt_writes_sufficiency() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let rc = add_node(dir, "Previsión manual", "RC");
+    let ude = add_node(dir, "Roturas de stock", "UDE");
+    let tree = create_tree(dir, "crt", "CRT Stock");
+    attach(dir, &tree, &[&rc, &ude]);
+
+    let link = connect(dir, &tree, &rc, &ude);
+    assert_eq!(edge_logic_on_disk(dir, &tree, &link), "SUFFICIENCY");
 }

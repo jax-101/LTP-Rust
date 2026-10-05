@@ -255,6 +255,12 @@ pub fn execute_link_connect(
     }
 
     // Build edges based on to[] cardinality
+    // ADR-014: trunk edges inherit the tree's logic; an NBR branch is always sufficiency.
+    let edge_logic = if nbr_id.is_some() {
+        Logic::Sufficiency
+    } else {
+        Logic::from(tree.logic)
+    };
     let mut new_edges: Vec<Edge> = Vec::new();
 
     if to.len() > 1 {
@@ -288,7 +294,7 @@ pub fn execute_link_connect(
                 operator: Operator::Single,
                 weight: None,
                 status: EdgeStatus::Active,
-                logic: Logic::Sufficiency,
+                logic: edge_logic,
                 assumptions: vec![],
             });
         }
@@ -322,7 +328,7 @@ pub fn execute_link_connect(
             operator: op,
             weight,
             status: EdgeStatus::Active,
-            logic: Logic::Sufficiency,
+            logic: edge_logic,
             assumptions: vec![],
         });
     }

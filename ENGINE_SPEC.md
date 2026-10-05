@@ -171,6 +171,7 @@ Establece una conexión causa-efecto en una vista:
 - Si `--from` recibe múltiples IDs con `--operator AND`, genera la elipse de suficiencia conjuntiva.
 - Si `--to` recibe múltiples IDs, crea un edge SINGLE de la causa hacia cada destino.
 - `--weight` solo aplica con operator MAG; warning si se omite con MAG.
+- La lógica del edge la hereda del árbol (ADR-014): `NECESSITY` en GT/EC/PRT, `SUFFICIENCY` en CRT/FRT/TT. Con `--nbr`, el edge es siempre `SUFFICIENCY` (una NBR es una rama "si-entonces").
 - Valida integridad referencial (falla si un nodo no existe en `/nodes/`).
 
 #### `ltp link disconnect --tree <TREE_ID> --links <LINK_ID>[,<LINK2>,<LINK3>]`

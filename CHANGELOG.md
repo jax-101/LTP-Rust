@@ -14,6 +14,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### Fixed
 
 - **Lógica de los Goal Trees** (ADR-014): `tree new gt` creaba el árbol con lógica `sufficiency`; ahora es `necessity`, como EC y PRT (CLR_SPEC §1.2). La lógica de un árbol se deriva siempre de su tipo. Los GT ya guardados se leen corregidos y se persisten así en su siguiente mutación (el `undo` posterior restaura el fichero original byte a byte).
+- **Lógica de los edges** (ADR-014): `link connect` escribía siempre `SUFFICIENCY`, incluso en GT/EC/PRT. Ahora el edge hereda la lógica del árbol; los edges de una rama NBR (`--nbr`) son siempre `SUFFICIENCY`.
 
 ## [0.2.0] - 2026-09-23
 
