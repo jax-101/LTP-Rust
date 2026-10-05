@@ -638,7 +638,7 @@ fn dispatch_tree_walk(
     storage: &FsStorage,
 ) -> Result<ToolCallResult, JsonRpcError> {
     let tree_id = get_str(args, "tree_id")?;
-    let order = get_str_opt(args, "order").unwrap_or("topological");
+    let order = get_str_opt(args, "order");
     let show_knowledge = get_bool(args, "show_knowledge");
     let output = execute_tree_walk(storage, tree_id, order, show_knowledge);
     to_result(&output)

@@ -155,7 +155,7 @@ Recorrido ordenado del árbol completo para auditoría sistemática (JSON por de
 
 - `role` puede ser `null` (solo obligatorio en EC).
 - `incoming_edges` / `outgoing_edges` son arrays de **IDs de edge (LINK)**, no objetos. Para operator/assumptions/from/to de un edge concreto: `ltp link inspect <id>`. Un mismo edge AND aparece en el `outgoing_edges` de cada causa.
-- `--order topological` (default en árboles de suficiencia): desde causas raíz hacia efectos. `--order reverse` (default en necesidad): desde objetivo hacia prerrequisitos.
+- Sin `--order`, el orden se deriva de la lógica del árbol (ADR-014): `topological` en suficiencia (CRT/FRT/TT), desde causas raíz hacia efectos; `reverse` en necesidad (GT/EC/PRT), desde el objetivo hacia los prerrequisitos. `--order` explícito siempre manda, y `data.order` informa siempre del orden aplicado.
 - `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**.
 - **No incluye feedback edges** (viven en `feedback_edges`, fuera del DAG): obtenlas con `ltp link feedback-list`.
 

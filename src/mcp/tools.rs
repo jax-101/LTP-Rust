@@ -214,7 +214,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
             "type": "object",
             "properties": {
                 "tree_id": { "type": "string", "description": "Tree ID" },
-                "order": { "type": "string", "description": "Walk order: topological or reverse" },
+                "order": { "type": "string", "description": "Walk order: topological or reverse (default: reverse for GT/EC/PRT, topological for CRT/FRT/TT)" },
                 "show_origin": { "type": "boolean", "description": "Show node origin info" },
                 "expand_nbr": { "type": "boolean", "description": "Expand NBR branches" },
                 "show_knowledge": { "type": "boolean", "description": "Include knowledge summary per node (supports/contradicts/contextualizes counts)" }

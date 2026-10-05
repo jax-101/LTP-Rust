@@ -1087,11 +1087,23 @@ pub fn execute_tree_diff(
     )
 }
 
+/// Default `tree walk` order for a tree logic (ENGINE_SPEC §2.3, ADR-014): necessity trees
+/// read top-down from the goal, sufficiency trees bottom-up from the root causes.
+fn default_walk_order(logic: TreeLogic) -> &'static str {
+    match logic {
+        TreeLogic::Sufficiency => "topological",
+        TreeLogic::Necessity => "reverse",
+    }
+}
+
 /// Execute `tree walk`.
+///
+/// `order: None` applies the tree's logic default (`reverse` for GT/EC/PRT, `topological`
+/// for CRT/FRT/TT); an explicit order always wins.
 pub fn execute_tree_walk(
     storage: &dyn Storage,
     tree_id: &str,
-    order: &str,
+    order: Option<&str>,
     show_knowledge: bool,
 ) -> CommandOutput<TreeWalkData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
@@ -1105,7 +1117,8 @@ pub fn execute_tree_walk(
                 workspace: ws_name,
                 data: TreeWalkData {
                     tree_id: tree_id.to_string(),
-                    order: order.to_string(),
+                    // Tree not found => logic unknown; keep the historical default.
+                    order: order.unwrap_or("topological").to_string(),
                     nodes: vec![],
                 },
                 graph_health: GraphHealth {
@@ -1117,6 +1130,7 @@ pub fn execute_tree_walk(
             };
         }
     };
+    let order = order.unwrap_or_else(|| default_walk_order(tree.logic));
 
     let node_ids: Vec<&str> = tree.nodes.iter().map(|n| n.node_ref.as_str()).collect();
     let roles: HashMap<&str, Option<&str>> = tree

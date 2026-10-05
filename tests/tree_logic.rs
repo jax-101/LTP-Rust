@@ -8,13 +8,51 @@
 //! edge creator: assertions about what a command wrote read the raw `trees/<id>.json`
 //! right after that command.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
 fn ltp_bin() -> String {
     env!("CARGO_BIN_EXE_ltp").to_string()
+}
+
+fn mcp_bin() -> String {
+    env!("CARGO_BIN_EXE_ltp-mcp").to_string()
+}
+
+/// One `tools/call` over a fresh `ltp-mcp` stdio session; returns the parsed CommandOutput.
+fn mcp_call(dir: &Path, tool: &str, arguments: Value) -> Value {
+    let mut child = Command::new(mcp_bin())
+        .arg("--workspace")
+        .arg(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ltp-mcp");
+    let request = json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": { "name": tool, "arguments": arguments }
+    });
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{request}").unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_else(|| {
+            panic!(
+                "no MCP response; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+    let response: Value = serde_json::from_str(line).unwrap();
+    serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
 fn run_ltp(dir: &Path, args: &[&str]) -> (Value, i32) {
@@ -219,10 +257,7 @@ fn t3_2_legacy_gt_reads_as_necessity_without_touching_disk() {
     assert_eq!(inspect["data"]["logic"], "necessity");
 
     let walk = run_ok(dir, &["tree", "walk", &gt.tree, "--order", "topological"]);
-    assert_eq!(
-        walk_ids(&walk),
-        [gt.nc.clone(), gt.csf.clone(), gt.goal.clone()]
-    );
+    assert_eq!(walk_ids(&walk), [gt.nc.clone(), gt.csf.clone(), gt.goal]);
 
     run_ok(dir, &["validate", "--tree", &gt.tree]);
 
@@ -686,4 +721,69 @@ fn t6_5_gt_still_emits_clr2() {
         codes.iter().any(|c| c == "CLR2_CONJUNCTION_DETECTED"),
         "{codes:?}"
     );
+}
+
+/// T7.1: a GT walks `reverse` by default (goal first).
+#[test]
+fn t7_1_gt_walk_defaults_to_reverse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let json = run_ok(dir, &["tree", "walk", &gt.tree]);
+    assert_eq!(json["data"]["order"], "reverse");
+    assert_eq!(walk_ids(&json), [gt.goal.clone(), gt.csf.clone(), gt.nc]);
+}
+
+/// T7.2: control — a CRT keeps walking `topological` by default.
+#[test]
+fn t7_2_crt_walk_defaults_to_topological() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let rc = add_node(dir, "Previsión manual", "RC");
+    let ude = add_node(dir, "Roturas de stock", "UDE");
+    let tree = create_tree(dir, "crt", "CRT Walk");
+    attach(dir, &tree, &[&rc, &ude]);
+    connect(dir, &tree, &rc, &ude);
+    let json = run_ok(dir, &["tree", "walk", &tree]);
+    assert_eq!(json["data"]["order"], "topological");
+    assert_eq!(walk_ids(&json), [rc, ude]);
+}
+
+/// T7.3: an explicit `--order` always wins over the logic default.
+#[test]
+fn t7_3_explicit_order_wins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let json = run_ok(dir, &["tree", "walk", &gt.tree, "--order", "topological"]);
+    assert_eq!(json["data"]["order"], "topological");
+    assert_eq!(walk_ids(&json), [gt.nc.clone(), gt.csf.clone(), gt.goal]);
+}
+
+/// T7.4 (review focus): the MCP shell applies the same default as the CLI.
+#[test]
+fn t7_4_mcp_walk_default_matches_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let mcp = mcp_call(dir, "ltp/tree_walk", json!({ "tree_id": gt.tree }));
+    assert_eq!(mcp["data"]["order"], "reverse");
+    let cli = run_ok(dir, &["tree", "walk", &gt.tree]);
+    assert_eq!(walk_ids(&mcp), walk_ids(&cli));
+}
+
+/// T7.5: a legacy GT (stored as sufficiency) also walks `reverse` by default.
+#[test]
+fn t7_5_legacy_gt_walk_defaults_to_reverse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    write_legacy_sufficiency(dir, &gt.tree);
+    let json = run_ok(dir, &["tree", "walk", &gt.tree]);
+    assert_eq!(json["data"]["order"], "reverse");
 }

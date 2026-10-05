@@ -309,8 +309,9 @@ enum TreeAction {
     },
     Walk {
         tree_id: String,
-        #[arg(long, default_value = "topological")]
-        order: String,
+        /// Walk order: topological | reverse (default: reverse for GT/EC/PRT, topological for CRT/FRT/TT)
+        #[arg(long)]
+        order: Option<String>,
         #[arg(long)]
         show_origin: bool,
         #[arg(long)]
@@ -1405,7 +1406,8 @@ fn main() {
                 expand_nbr: _,
                 show_knowledge,
             } => {
-                let output = execute_tree_walk(&storage, &tree_id, &order, show_knowledge);
+                let output =
+                    execute_tree_walk(&storage, &tree_id, order.as_deref(), show_knowledge);
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);
