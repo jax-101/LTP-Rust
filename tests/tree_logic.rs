@@ -787,3 +787,45 @@ fn t7_5_legacy_gt_walk_defaults_to_reverse() {
     let json = run_ok(dir, &["tree", "walk", &gt.tree]);
     assert_eq!(json["data"]["order"], "reverse");
 }
+
+/// T3.5: a mutation that does not target the tree (`node rm` of an attached node) still
+/// rewrites it normalized, and undo restores the legacy bytes without divergence.
+#[test]
+fn t3_5_non_targeted_mutation_persists_normalized_and_undo_restores_legacy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let extra = add_node(dir, "Flota mantenida", "NC");
+    attach(dir, &gt.tree, &[&extra]);
+    let legacy = write_legacy_sufficiency(dir, &gt.tree);
+
+    // Node-level mutation: the tree is never named on the command line.
+    run_ok(dir, &["node", "rm", &extra, "--force"]);
+
+    let raw = read_tree(dir, &gt.tree);
+    assert_ne!(
+        std::fs::read_to_string(tree_path(dir, &gt.tree)).unwrap(),
+        legacy,
+        "node rm must have rewritten the tree file"
+    );
+    assert_eq!(raw["logic"], "necessity");
+    let edges = raw["edges"].as_array().unwrap();
+    assert!(!edges.is_empty());
+    assert!(edges.iter().all(|e| e["logic"] == "NECESSITY"), "{edges:?}");
+
+    let undo = run_ok(dir, &["undo"]);
+    assert_eq!(
+        std::fs::read_to_string(tree_path(dir, &gt.tree)).unwrap(),
+        legacy,
+        "undo must restore the legacy bytes exactly"
+    );
+    for key in ["errors", "warnings"] {
+        let diverged = undo[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|e| e["code"] == "UNDO_STATE_DIVERGED");
+        assert!(!diverged, "{key} contains UNDO_STATE_DIVERGED: {undo}");
+    }
+}
