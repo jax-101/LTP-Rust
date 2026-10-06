@@ -9,7 +9,7 @@
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
 | **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
-| **Último release** | v0.2.0 (2026-09-23) — versionado + provenance de build |
+| **Último release** | v0.3.0 (2026-10-06) — CSF + lógica de árbol derivada del tipo (ADR-014) + `INVALID_ORDER` |
 | **Último bugfix** | Lógica de árbol derivada del tipo: GT = necesidad, edges heredan, CLR #4 y walk por lógica (ADR-014) |
 | **Último añadido** | Tipo de nodo `CSF` (Critical Success Factor del Goal Tree) |
 | **Factor de escala (velocity)** | 1.0x |
@@ -20,8 +20,8 @@
 | **Tests Slice 1 (macro-assume)** | 40/40 |
 | **Tests Slice 2 (macro lifecycle)** | 36/36 |
 | **Tests versión/provenance** | 4/4 |
-| **Tests CSF + lógica de árbol** | 30/30 |
-| **Tests totales** | 562 |
+| **Tests CSF + lógica de árbol** | 36/36 |
+| **Tests totales** | 567 |
 
 ---
 
@@ -67,6 +67,13 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Release v0.3.0] — `INVALID_ORDER` + contrato de `Storage::load_tree`
+**Fecha**: 2026-10-06
+**Naturaleza**: Cierre de diferidos del paquete ADR-014 + release MINOR (tipo `CSF` y error code nuevos). **No** altera el % del motor ni el factor de escala.
+**Avance**: `tree walk` valida `--order` con un `WalkOrder` tipado (`INVALID_ORDER` antes de buscar el árbol, CLI y MCP); `tests/storage_contract.rs` fija que `load_tree` normaliza los 6 tipos y las ramas NBR, reutilizable por futuros backends (Turso). Verificado por mutación: sin `normalize_logic` el contrato falla.
+**Tests totales**: 562 → 567
+**Docs**: CHANGELOG `[0.3.0]`, ENGINE_SPEC (`tree walk`), INTEGRATION (versión mínima `v0.3.0`), README, RELEASE_POLICY (feature-gating), tag `v0.3.0`.
 
 ### [Bugfix + CSF] — Lógica de árbol derivada del tipo + `NodeType::Csf` (ADR-014)
 **Fecha**: 2026-10-06
@@ -781,3 +788,4 @@ Análisis Six Thinking Hats → regla: "el edge que conserva las causas original
 | 2026-09-22 | Slice 2 — Long Arrow Lifecycle (ADR-013) | +36 tests (31 E2E `macro_lifecycle` + 5 unit). Enriquecimiento sobre el motor base ya completo (no altera % del motor base ni del Knowledge Pool). | 480 → 516 tests. Factor de escala 1.0x. |
 | 2026-09-23 | Release v0.2.0 — versionado + provenance (infra) | +4 UATs (`version_provenance`). Infraestructura de release; no altera % del motor ni factor de escala. | 516 → 520 tests. |
 | 2026-10-06 | CSF + lógica de árbol derivada del tipo (ADR-014) | +31 tests (5 UATs CSF + 5 unit + 21 E2E `tree_logic`). Bugfix + tipo aditivo sobre el motor completo (no altera % del motor base ni del Knowledge Pool). | 531 → 562 tests. Factor de escala 1.0x. |
+| 2026-10-06 | Release v0.3.0 — `INVALID_ORDER` + contrato `Storage` | +5 tests (3 E2E `tree_logic` + 2 `storage_contract`). Cierre de diferidos; no altera % del motor ni factor de escala. | 562 → 567 tests. |

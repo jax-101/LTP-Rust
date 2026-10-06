@@ -6,6 +6,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-06
+
 ### Added
 
 - **`tree rename`**: renombra el `name` (label) de una instancia de tree existente sin tocar su `id` ni el fichero `trees/<id>.json`, preservando la integridad referencial (`attach`, refs, consumidores externos). Análogo a `node edit` sobre `node.label`. Expuesto en CLI (`ltp tree rename <TREE_ID> --name "<nuevo>"`) y MCP (`ltp/tree_rename`) — 71 tools MCP en total. Errores tipados `TREE_NOT_FOUND` e `INVALID_TREE_NAME` (nombre vacío); idempotente al renombrar al mismo nombre.
