@@ -227,6 +227,17 @@ pub fn all_tools() -> Vec<ToolDefinition> {
         }),
     ));
 
+    tools.push(tool(
+        "ltp/tree_relation_list",
+        "List relations between trees (and NBR branches) inferred from node refs. Structural and untyped: each relation has neutral endpoints (referencing/referenced), the tree logic of each side and the refs that support it. Computed on the fly; nothing is persisted.",
+        json!({
+            "type": "object",
+            "properties": {
+                "tree": { "type": "string", "description": "Only relations with an endpoint in this tree" }
+            }
+        }),
+    ));
+
     // --- Link ---
     tools.push(tool(
         "ltp/link_connect",

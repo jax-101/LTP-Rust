@@ -279,6 +279,16 @@ enum NodeAction {
 }
 
 #[derive(Subcommand)]
+enum TreeRelationAction {
+    /// List relations between trees inferred from node refs (structural, untyped)
+    List {
+        /// Only relations with an endpoint in this tree
+        #[arg(long)]
+        tree: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum TreeAction {
     New {
         r#type: String,
@@ -328,6 +338,11 @@ enum TreeAction {
         /// Include knowledge counts per node
         #[arg(long)]
         show_knowledge: bool,
+    },
+    /// Meta-graph relations inferred from node refs (RFC-002)
+    Relation {
+        #[command(subcommand)]
+        action: TreeRelationAction,
     },
 }
 
@@ -1452,6 +1467,18 @@ fn main() {
             } => {
                 let output =
                     execute_tree_walk(&storage, &tree_id, order.as_deref(), show_knowledge);
+                render_output(&output, cli.human);
+                if !output.success {
+                    process::exit(1);
+                }
+            }
+            TreeAction::Relation {
+                action: TreeRelationAction::List { tree },
+            } => {
+                let output = ltp_engine::tree::relation::execute_tree_relation_list(
+                    &storage,
+                    tree.as_deref(),
+                );
                 render_output(&output, cli.human);
                 if !output.success {
                     process::exit(1);

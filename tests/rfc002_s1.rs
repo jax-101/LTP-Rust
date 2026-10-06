@@ -727,3 +727,244 @@ fn inspect_exposes_refs_and_referenced_by() {
     assert_eq!(out["data"]["referenced_by"], json!([]));
     assert_eq!(out["data"]["refs"].as_array().unwrap().len(), 2);
 }
+
+fn relations(dir: &Path, extra: &[&str]) -> Value {
+    let mut args = vec!["tree", "relation", "list"];
+    args.extend_from_slice(extra);
+    run_ok(dir, &args)["data"].clone()
+}
+
+// R1 — happy path: GT(NC) + CRT(UDE --ref NC) → exactly one untyped relation.
+#[test]
+fn r1_single_ref_infers_one_untyped_relation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, crt, nc, ude) = gt_crt(dir.path());
+    run_ok(dir.path(), &["node", "edit", &ude, "--add-ref", &nc]);
+    let data = relations(dir.path(), &[]);
+    assert_eq!(data["count"], 1);
+    let rel = &data["relations"][0];
+    assert_eq!(rel["referencing"], json!({"tree": crt, "nbr": null}));
+    assert_eq!(rel["referenced"], json!({"tree": gt, "nbr": null}));
+    assert_eq!(
+        rel["logic"],
+        json!({"referencing": "sufficiency", "referenced": "necessity"})
+    );
+    assert_eq!(rel["basis"], json!([{"node": ude, "ref": nc}]));
+    assert_eq!(rel["inferred"], true);
+    assert!(rel.get("relation_type").is_none(), "D-4: no type in S1");
+}
+
+// R8 — a ref inside the same tree is stored but yields no relation.
+#[test]
+fn r8_intra_tree_ref_is_stored_but_not_a_relation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, crt, _, ude) = gt_crt(dir.path());
+    let rc = add_node(dir.path(), "causa", "RC");
+    attach(dir.path(), &crt, &rc);
+    let out = run_ok(dir.path(), &["node", "edit", &ude, "--add-ref", &rc]);
+    assert_eq!(out["data"]["refs"], json!([{"node": rc, "tree": null}]));
+    assert_eq!(
+        relations(dir.path(), &[]),
+        json!({"relations": [], "count": 0})
+    );
+}
+
+// R6 — NC attached to 2 GT: unpinned ref fans out to 2 relations; pinned → 1.
+#[test]
+fn r6_multi_attach_fan_out_and_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, _, nc, ude) = gt_crt(dir.path());
+    let gt2 = new_tree(dir.path(), "gt", "otra meta");
+    attach(dir.path(), &gt2, &nc);
+    run_ok(dir.path(), &["node", "edit", &ude, "--add-ref", &nc]);
+    let data = relations(dir.path(), &[]);
+    assert_eq!(data["count"], 2, "{data}");
+    let mut targets: Vec<&str> = data["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["referenced"]["tree"].as_str().unwrap())
+        .collect();
+    targets.sort();
+    let mut expected = vec![gt.as_str(), gt2.as_str()];
+    expected.sort();
+    assert_eq!(targets, expected);
+
+    run_ok(
+        dir.path(),
+        &[
+            "node",
+            "edit",
+            &ude,
+            "--rm-ref",
+            &nc,
+            "--add-ref",
+            &format!("{nc}@{gt2}"),
+        ],
+    );
+    let data = relations(dir.path(), &[]);
+    assert_eq!(data["count"], 1, "{data}");
+    assert_eq!(data["relations"][0]["referenced"]["tree"], gt2.as_str());
+}
+
+// R7 — branch-only node is an endpoint {tree, nbr}; trunk + branch node gives 2.
+#[test]
+fn r7_nbr_endpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let (frt, inj, nbr, side) = frt_with_nbr(dir.path());
+    let crt = new_tree(dir.path(), "crt", "ahora");
+    let ude = add_node(dir.path(), "actual", "UDE");
+    attach(dir.path(), &crt, &ude);
+
+    run_ok(dir.path(), &["node", "edit", &side[0], "--add-ref", &ude]);
+    let data = relations(dir.path(), &[]);
+    assert_eq!(data["count"], 1, "{data}");
+    assert_eq!(
+        data["relations"][0]["referencing"],
+        json!({"tree": frt, "nbr": nbr})
+    );
+
+    // INJ is in the FRT trunk and is the NBR source → two referencing endpoints.
+    run_ok(dir.path(), &["node", "edit", &inj, "--add-ref", &ude]);
+    let data = relations(dir.path(), &[]);
+    let from: Vec<Value> = data["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["referencing"].clone())
+        .collect();
+    assert_eq!(
+        from,
+        vec![
+            json!({"tree": frt, "nbr": null}),
+            json!({"tree": frt, "nbr": nbr})
+        ]
+    );
+    let branch = data["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["referencing"]["nbr"] == nbr.as_str())
+        .unwrap();
+    assert_eq!(
+        branch["basis"],
+        json!([{"node": inj, "ref": ude}, {"node": side[0], "ref": ude}])
+    );
+}
+
+// R18 — same final state built in two command orders → byte-identical output.
+#[test]
+fn r18_relation_list_is_deterministic_across_build_orders() {
+    let build = |reverse: bool| {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        run_ok(d, &["init", "--name", "Det"]);
+        let (gt, crt) = if reverse {
+            let crt = new_tree(d, "crt", "realidad");
+            (new_tree(d, "gt", "meta"), crt)
+        } else {
+            let gt = new_tree(d, "gt", "meta");
+            (gt, new_tree(d, "crt", "realidad"))
+        };
+        let ncs = [add_node(d, "n1", "NC"), add_node(d, "n2", "NC")];
+        let udes = [add_node(d, "u1", "UDE"), add_node(d, "u2", "UDE")];
+        let order: Vec<usize> = if reverse { vec![1, 0] } else { vec![0, 1] };
+        for &i in &order {
+            attach(d, &gt, &ncs[i]);
+            attach(d, &crt, &udes[i]);
+        }
+        for &i in &order {
+            for &j in &order {
+                run_ok(d, &["node", "edit", &udes[i], "--add-ref", &ncs[j]]);
+            }
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_ltp"))
+            .args(["tree", "relation", "list"])
+            .current_dir(d)
+            .output()
+            .unwrap();
+        let mut v: Value = serde_json::from_slice(&output.stdout).unwrap();
+        v["workspace"] = Value::Null;
+        serde_json::to_vec_pretty(&v).unwrap()
+    };
+    assert_eq!(build(false), build(true));
+}
+
+// R20 — unknown --tree is TREE_NOT_FOUND; empty workspace is an empty success;
+// the filter keeps relations touching either endpoint.
+#[test]
+fn r20_filter_and_empty_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    run_ok(dir.path(), &["init", "--name", "Vacio"]);
+    assert_eq!(
+        relations(dir.path(), &[]),
+        json!({"relations": [], "count": 0})
+    );
+    let (out, code) = run_ltp(
+        dir.path(),
+        &["tree", "relation", "list", "--tree", "tree-x"],
+    );
+    assert_eq!(code, 1);
+    assert_eq!(error_codes(&out), vec!["TREE_NOT_FOUND"]);
+    let m = mcp_call(
+        dir.path(),
+        "ltp/tree_relation_list",
+        json!({"tree": "tree-x"}),
+    );
+    assert_eq!(error_codes(&m), vec!["TREE_NOT_FOUND"]);
+    let bad = mcp_raw(dir.path(), "ltp/tree_relation_list", json!({"tree": 5}));
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, crt, nc, ude) = gt_crt(dir.path());
+    let other = new_tree(dir.path(), "frt", "aislado");
+    run_ok(dir.path(), &["node", "edit", &ude, "--add-ref", &nc]);
+    for t in [&gt, &crt] {
+        assert_eq!(relations(dir.path(), &["--tree", t])["count"], 1, "{t}");
+    }
+    assert_eq!(relations(dir.path(), &["--tree", &other])["count"], 0);
+    let cli = relations(dir.path(), &[]);
+    let mcp = mcp_call(dir.path(), "ltp/tree_relation_list", json!({}));
+    assert_eq!(cli, mcp["data"], "CLI/MCP parity");
+}
+
+// R21 — tools/list advertises 72 tools, the new one and the refs params.
+#[test]
+fn r21_tools_list_advertises_relation_tool_and_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ltp-mcp"))
+        .arg("--workspace")
+        .arg(dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    )
+    .unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let line = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .unwrap()
+        .to_string();
+    let response: Value = serde_json::from_str(&line).unwrap();
+    let tools = response["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 72);
+    let find = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap().clone();
+    find("ltp/tree_relation_list");
+    let add = find("ltp/node_add");
+    assert_eq!(add["inputSchema"]["properties"]["refs"]["type"], "array");
+    let edit = find("ltp/node_edit");
+    for key in ["add_refs", "rm_refs"] {
+        assert_eq!(
+            edit["inputSchema"]["properties"][key]["type"], "array",
+            "{key}"
+        );
+    }
+}

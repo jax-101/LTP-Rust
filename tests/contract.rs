@@ -337,5 +337,37 @@ fn contract_output_snapshots() {
         );
     }
 
+    // Grupo C — meta-grafo inferido (RFC-002 S1): GT con NC-001 y UDE-001 del CRT
+    // con ref a NC-001. Workspace propio: añadir un GT no debe tocar `validate.json`.
+    {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        build_fixture(dir);
+        run_ok(dir, &["tree", "new", "gt", "Contract GT"]);
+        run_ok(dir, &["node", "add", "Necessary condition", "--type", "NC"]);
+        run_ok(
+            dir,
+            &[
+                "tree",
+                "attach",
+                "--tree",
+                "tree-gt-contract-gt",
+                "--node",
+                "NC-001",
+            ],
+        );
+        run_ok(dir, &["node", "edit", "UDE-001", "--add-ref", "NC-001"]);
+        // relations[] = {referencing{tree,nbr}, referenced{tree,nbr}, logic{..},
+        // basis[{node,ref}], inferred}; sin relation_type (ADR-015 D-4).
+        capture(
+            dir,
+            "tree_relation_list",
+            0,
+            &["tree", "relation", "list"],
+            update,
+            &mut failures,
+        );
+    }
+
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }

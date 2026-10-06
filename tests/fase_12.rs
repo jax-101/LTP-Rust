@@ -333,7 +333,7 @@ fn test_tools_list_complete() {
 
     assert!(resp["error"].is_null());
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 71);
+    assert_eq!(tools.len(), 72);
 
     // Verify key tools exist
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -520,7 +520,7 @@ fn test_tools_list_standalone() {
     assert!(resp["error"].is_null());
     assert_eq!(resp["id"], 42);
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 71);
+    assert_eq!(tools.len(), 72);
 }
 
 // --- UAT 12.17: ltp/tree_rename via MCP renombra manteniendo id estable ---

@@ -1,0 +1,37 @@
+{
+  "action": "tree_relation_list",
+  "data": {
+    "count": 1,
+    "relations": [
+      {
+        "basis": [
+          {
+            "node": "UDE-001",
+            "ref": "NC-001"
+          }
+        ],
+        "inferred": true,
+        "logic": {
+          "referenced": "necessity",
+          "referencing": "sufficiency"
+        },
+        "referenced": {
+          "nbr": null,
+          "tree": "tree-gt-contract-gt"
+        },
+        "referencing": {
+          "nbr": null,
+          "tree": "tree-crt-contract-crt"
+        }
+      }
+    ]
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [],
+  "workspace": "<WORKSPACE>"
+}

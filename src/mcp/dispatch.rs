@@ -87,6 +87,7 @@ pub fn dispatch_tool(
         "ltp/tree_rename" => dispatch_tree_rename(args, storage),
         "ltp/tree_diff" => dispatch_tree_diff(args, storage),
         "ltp/tree_walk" => dispatch_tree_walk(args, storage),
+        "ltp/tree_relation_list" => dispatch_tree_relation_list(args, storage),
         "ltp/link_connect" => dispatch_link_connect(args, storage),
         "ltp/link_disconnect" => dispatch_link_disconnect(args, storage),
         "ltp/link_feedback" => dispatch_link_feedback(args, storage),
@@ -693,6 +694,23 @@ fn dispatch_tree_walk(
     let order = get_str_opt(args, "order");
     let show_knowledge = get_bool(args, "show_knowledge");
     let output = execute_tree_walk(storage, tree_id, order, show_knowledge);
+    to_result(&output)
+}
+
+fn dispatch_tree_relation_list(
+    args: &BTreeMap<String, Value>,
+    storage: &FsStorage,
+) -> Result<ToolCallResult, JsonRpcError> {
+    let tree = match args.get("tree") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(t)) => Some(t.as_str()),
+        Some(_) => {
+            return Err(JsonRpcError::invalid_params(
+                "field 'tree' must be a string",
+            ))
+        }
+    };
+    let output = crate::tree::relation::execute_tree_relation_list(storage, tree);
     to_result(&output)
 }
 
