@@ -1089,10 +1089,34 @@ pub fn execute_tree_diff(
 
 /// Default `tree walk` order for a tree logic (ENGINE_SPEC §2.3, ADR-014): necessity trees
 /// read top-down from the goal, sufficiency trees bottom-up from the root causes.
-fn default_walk_order(logic: TreeLogic) -> &'static str {
+fn default_walk_order(logic: TreeLogic) -> WalkOrder {
     match logic {
-        TreeLogic::Sufficiency => "topological",
-        TreeLogic::Necessity => "reverse",
+        TreeLogic::Sufficiency => WalkOrder::Topological,
+        TreeLogic::Necessity => WalkOrder::Reverse,
+    }
+}
+
+/// Supported `tree walk` orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalkOrder {
+    Topological,
+    Reverse,
+}
+
+impl WalkOrder {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "topological" => Some(Self::Topological),
+            "reverse" => Some(Self::Reverse),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Topological => "topological",
+            Self::Reverse => "reverse",
+        }
     }
 }
 
@@ -1107,30 +1131,51 @@ pub fn execute_tree_walk(
     show_knowledge: bool,
 ) -> CommandOutput<TreeWalkData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
+    let walk_error = |order: &str, error: OutputError| CommandOutput {
+        success: false,
+        action: "tree_walk".to_string(),
+        workspace: ws_name.clone(),
+        data: TreeWalkData {
+            tree_id: tree_id.to_string(),
+            order: order.to_string(),
+            nodes: vec![],
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
+    };
+
+    let explicit = match order {
+        None => None,
+        Some(raw) => match WalkOrder::parse(raw) {
+            Some(parsed) => Some(parsed),
+            None => {
+                return walk_error(
+                    raw,
+                    OutputError::new(
+                        "INVALID_ORDER",
+                        format!("Order must be 'topological' or 'reverse', got '{raw}'"),
+                    ),
+                );
+            }
+        },
+    };
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
         Err(e) => {
-            return CommandOutput {
-                success: false,
-                action: "tree_walk".to_string(),
-                workspace: ws_name,
-                data: TreeWalkData {
-                    tree_id: tree_id.to_string(),
-                    // Tree not found => logic unknown; keep the historical default.
-                    order: order.unwrap_or("topological").to_string(),
-                    nodes: vec![],
-                },
-                graph_health: GraphHealth {
-                    valid_dag: true,
-                    orphan_nodes_count: 0,
-                },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
-                warnings: vec![],
-            };
+            // Tree not found => logic unknown; keep the historical default.
+            let order = explicit.unwrap_or(WalkOrder::Topological);
+            return walk_error(
+                order.as_str(),
+                OutputError::new("TREE_NOT_FOUND", e.to_string()),
+            );
         }
     };
-    let order = order.unwrap_or_else(|| default_walk_order(tree.logic));
+    let order = explicit.unwrap_or_else(|| default_walk_order(tree.logic));
 
     let node_ids: Vec<&str> = tree.nodes.iter().map(|n| n.node_ref.as_str()).collect();
     let roles: HashMap<&str, Option<&str>> = tree
@@ -1211,7 +1256,7 @@ pub fn execute_tree_walk(
         }
     }
 
-    if order == "reverse" {
+    if order == WalkOrder::Reverse {
         sorted.reverse();
     }
 
@@ -1274,7 +1319,7 @@ pub fn execute_tree_walk(
         &ws_name,
         TreeWalkData {
             tree_id: tree_id.to_string(),
-            order: order.to_string(),
+            order: order.as_str().to_string(),
             nodes: walk_nodes,
         },
     )

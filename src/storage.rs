@@ -32,7 +32,8 @@ pub trait Storage {
     /// Load a tree by its ID.
     ///
     /// Implementations must return the tree normalized via `Tree::normalize_logic`
-    /// (ADR-014), without writing back to storage.
+    /// (ADR-014), without writing back to storage. Every backend must pass the shared
+    /// contract in `tests/storage_contract.rs`.
     fn load_tree(&self, id: &str) -> Result<Tree>;
 
     /// Persist a tree atomically.

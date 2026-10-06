@@ -788,6 +788,65 @@ fn t7_5_legacy_gt_walk_defaults_to_reverse() {
     assert_eq!(json["data"]["order"], "reverse");
 }
 
+fn error_codes(json: &Value) -> Vec<String> {
+    json["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["code"].as_str().map(String::from))
+        .collect()
+}
+
+/// T7.6: unsupported `--order` values fail with `INVALID_ORDER` — no silent fallback,
+/// case-sensitive, and the raw value is echoed in `data.order`.
+#[test]
+fn t7_6_invalid_order_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    for bad in ["bfs", "Reverse", "TOPOLOGICAL", "", " reverse"] {
+        let (json, code) = run_ltp(dir, &["tree", "walk", &gt.tree, "--order", bad]);
+        assert_ne!(code, 0, "--order {bad:?} must fail: {json}");
+        assert_eq!(json["success"], false, "{bad:?}");
+        assert_eq!(error_codes(&json), ["INVALID_ORDER"], "{bad:?}");
+        assert_eq!(json["data"]["order"], bad);
+        assert_eq!(json["data"]["nodes"], json!([]));
+    }
+}
+
+/// T7.7: the MCP shell rejects the same values with the same code.
+#[test]
+fn t7_7_mcp_invalid_order_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let gt = gt_chain(dir);
+    let mcp = mcp_call(
+        dir,
+        "ltp/tree_walk",
+        json!({ "tree_id": gt.tree, "order": "depth" }),
+    );
+    assert_eq!(mcp["success"], false);
+    assert_eq!(error_codes(&mcp), ["INVALID_ORDER"]);
+}
+
+/// T7.8: input validation precedes lookup — an invalid order on a missing tree reports
+/// `INVALID_ORDER`; a missing tree without order reports `TREE_NOT_FOUND` + `topological`.
+#[test]
+fn t7_8_invalid_order_precedes_tree_lookup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    setup(dir);
+    let (json, _) = run_ltp(dir, &["tree", "walk", "tree-missing", "--order", "bfs"]);
+    assert_eq!(error_codes(&json), ["INVALID_ORDER"]);
+
+    let (json, code) = run_ltp(dir, &["tree", "walk", "tree-missing"]);
+    assert_ne!(code, 0);
+    assert_eq!(error_codes(&json), ["TREE_NOT_FOUND"]);
+    assert_eq!(json["data"]["order"], "topological");
+}
+
 /// T3.5: a mutation that does not target the tree (`node rm` of an attached node) still
 /// rewrites it normalized, and undo restores the legacy bytes without divergence.
 #[test]
