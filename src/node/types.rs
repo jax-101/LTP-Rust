@@ -100,6 +100,25 @@ pub struct CrossRef {
     pub tree: Option<String>,
 }
 
+impl CrossRef {
+    /// Parses the CLI form `NODE` or `NODE@TREE`. Both parts must be non-empty
+    /// and contain no whitespace; at most one `@` is allowed.
+    pub fn parse(s: &str) -> std::result::Result<Self, String> {
+        let valid = |part: &str| !part.is_empty() && !part.chars().any(char::is_whitespace);
+        let (node, tree) = match s.split_once('@') {
+            Some((node, tree)) => (node, Some(tree)),
+            None => (s, None),
+        };
+        if !valid(node) || tree.is_some_and(|t| !valid(t) || t.contains('@')) {
+            return Err(format!("Invalid ref '{s}': expected NODE or NODE@TREE"));
+        }
+        Ok(Self {
+            node: node.to_string(),
+            tree: tree.map(str::to_string),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMetadata {
     pub status: NodeStatus,
@@ -226,6 +245,36 @@ mod ref_tests {
         assert!(meta.remove_ref(&r("NC-001", None)));
         assert!(!meta.remove_ref(&r("NC-001", None)));
         assert_eq!(meta.refs.len(), 2);
+    }
+
+    #[test]
+    fn cli_ref_parse_accepts_node_and_node_at_tree_only() {
+        let ok = |s: &str| CrossRef::parse(s).ok();
+        assert_eq!(
+            ok("NC-001"),
+            Some(CrossRef {
+                node: "NC-001".into(),
+                tree: None
+            })
+        );
+        assert_eq!(
+            ok("NC-001@tree-gt-a"),
+            Some(CrossRef {
+                node: "NC-001".into(),
+                tree: Some("tree-gt-a".into())
+            })
+        );
+        for bad in [
+            "",
+            "@",
+            "@tree-gt-a",
+            "NC-001@",
+            "a@b@c",
+            "NC 001",
+            " NC-001",
+        ] {
+            assert!(CrossRef::parse(bad).is_err(), "{bad:?} must be rejected");
+        }
     }
 
     #[test]

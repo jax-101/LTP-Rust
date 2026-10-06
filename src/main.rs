@@ -221,6 +221,9 @@ enum NodeAction {
         observable: Option<bool>,
         #[arg(long)]
         epistemic: Option<String>,
+        /// Cross-tree ref NODE or NODE@TREE (repeatable)
+        #[arg(long = "ref", value_name = "NODE[@TREE]")]
+        refs: Vec<String>,
     },
     Edit {
         id: String,
@@ -234,6 +237,12 @@ enum NodeAction {
         observable: Option<bool>,
         #[arg(long)]
         epistemic: Option<String>,
+        /// Add a cross-tree ref NODE or NODE@TREE (repeatable)
+        #[arg(long, value_name = "NODE[@TREE]")]
+        add_ref: Vec<String>,
+        /// Remove a cross-tree ref NODE or NODE@TREE (repeatable)
+        #[arg(long, value_name = "NODE[@TREE]")]
+        rm_ref: Vec<String>,
     },
     Rm {
         #[arg(value_delimiter = ',')]
@@ -1082,6 +1091,32 @@ fn compute_knowledge_health(storage: &FsStorage, node_ids: &[String]) -> Knowled
     }
 }
 
+/// Parses CLI `NODE[@TREE]` refs; on the first malformed one renders an
+/// `INVALID_REF` error and exits 1.
+fn parse_refs_or_exit(
+    storage: &FsStorage,
+    action: &str,
+    raw: &[String],
+    human: bool,
+) -> Vec<ltp_engine::node::CrossRef> {
+    let mut refs = Vec::with_capacity(raw.len());
+    for s in raw {
+        match ltp_engine::node::CrossRef::parse(s) {
+            Ok(r) => refs.push(r),
+            Err(msg) => {
+                let output = ltp_engine::output::error_output(
+                    action,
+                    storage.workspace_name().unwrap_or_default(),
+                    vec![OutputError::new("INVALID_REF", msg)],
+                );
+                render_output(&output, human);
+                process::exit(1);
+            }
+        }
+    }
+    refs
+}
+
 fn render_output<T: Serialize>(output: &CommandOutput<T>, human: bool) {
     if human {
         render_human(output);
@@ -1219,7 +1254,9 @@ fn main() {
                 tags,
                 observable,
                 epistemic,
+                refs,
             } => {
+                let refs = parse_refs_or_exit(&storage, "node_add", &refs, cli.human);
                 let capture = history_begin(&storage);
                 let output = execute_node_add(
                     &storage,
@@ -1228,6 +1265,7 @@ fn main() {
                     tags,
                     observable,
                     epistemic.as_deref(),
+                    &refs,
                 );
                 if output.success {
                     history_commit(capture, "node_add", &full_command);
@@ -1244,7 +1282,11 @@ fn main() {
                 rm_tag,
                 observable,
                 epistemic,
+                add_ref,
+                rm_ref,
             } => {
+                let add_refs = parse_refs_or_exit(&storage, "node_edit", &add_ref, cli.human);
+                let rm_refs = parse_refs_or_exit(&storage, "node_edit", &rm_ref, cli.human);
                 let capture = history_begin(&storage);
                 let output = execute_node_edit(
                     &storage,
@@ -1254,6 +1296,8 @@ fn main() {
                     rm_tag.as_deref(),
                     observable,
                     epistemic.as_deref(),
+                    &add_refs,
+                    &rm_refs,
                 );
                 if output.success {
                     history_commit(capture, "node_edit", &full_command);

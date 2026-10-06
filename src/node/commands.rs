@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::errors::{LtpError, Result};
 use crate::link::Operator;
+use crate::meta::node_in_tree;
 use crate::node::clr_lint::lint_clr2;
 use crate::node::types::{CrossRef, EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
@@ -18,6 +19,8 @@ pub struct NodeAddData {
     pub tags: Vec<String>,
     pub observable: bool,
     pub epistemic: EpistemicStatus,
+    /// Outbound cross-tree refs (ADR-015), sorted.
+    pub refs: Vec<CrossRef>,
 }
 
 /// Data returned by `node edit`.
@@ -29,6 +32,8 @@ pub struct NodeEditData {
     pub tags: Vec<String>,
     pub observable: bool,
     pub epistemic: EpistemicStatus,
+    /// Outbound cross-tree refs (ADR-015), sorted.
+    pub refs: Vec<CrossRef>,
 }
 
 /// Summary of a node for listing.
@@ -127,6 +132,69 @@ fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
     }
 }
 
+/// Validates refs being written to node `self_id` (ADR-015, blocking integrity):
+/// no self-ref, target node exists, pinned tree exists and contains the target
+/// (trunk or NBR branch).
+fn validate_new_refs(
+    storage: &dyn Storage,
+    self_id: Option<&str>,
+    refs: &[CrossRef],
+) -> std::result::Result<(), OutputError> {
+    let ref_context = |err: OutputError, r: &CrossRef| {
+        err.with_context("ref_node", serde_json::Value::String(r.node.clone()))
+            .with_context(
+                "ref_tree",
+                r.tree
+                    .clone()
+                    .map_or(serde_json::Value::Null, serde_json::Value::String),
+            )
+    };
+    for r in refs {
+        if self_id == Some(r.node.as_str()) {
+            return Err(ref_context(
+                OutputError::new(
+                    "SELF_REF",
+                    format!("Node '{}' cannot reference itself", r.node),
+                ),
+                r,
+            ));
+        }
+        if storage.load_node(&r.node).is_err() {
+            return Err(ref_context(
+                OutputError::new(
+                    "NODE_NOT_FOUND",
+                    format!("Referenced node '{}' not found in pool", r.node),
+                ),
+                r,
+            ));
+        }
+        if let Some(tree_id) = &r.tree {
+            let tree = match storage.load_tree(tree_id) {
+                Ok(t) => t,
+                Err(_) => {
+                    return Err(ref_context(
+                        OutputError::new(
+                            "TREE_NOT_FOUND",
+                            format!("Referenced tree '{}' not found", tree_id),
+                        ),
+                        r,
+                    ))
+                }
+            };
+            if !node_in_tree(&tree, &r.node) {
+                return Err(ref_context(
+                    OutputError::new(
+                        "NODE_NOT_IN_TREE",
+                        format!("Referenced node '{}' is not in tree '{}'", r.node, tree_id),
+                    ),
+                    r,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Execute `node add` command.
 pub fn execute_node_add(
     storage: &dyn Storage,
@@ -135,6 +203,7 @@ pub fn execute_node_add(
     tags: Option<Vec<String>>,
     observable: Option<bool>,
     epistemic: Option<&str>,
+    refs: &[CrossRef],
 ) -> CommandOutput<NodeAddData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -152,6 +221,7 @@ pub fn execute_node_add(
                     tags: vec![],
                     observable: true,
                     epistemic: EpistemicStatus::default(),
+                    refs: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -178,6 +248,7 @@ pub fn execute_node_add(
                         tags: vec![],
                         observable: true,
                         epistemic: EpistemicStatus::default(),
+                        refs: vec![],
                     },
                     graph_health: GraphHealth {
                         valid_dag: true,
@@ -190,6 +261,33 @@ pub fn execute_node_add(
         },
         None => EpistemicStatus::default(),
     };
+
+    if let Err(err) = validate_new_refs(storage, None, refs) {
+        return CommandOutput {
+            success: false,
+            action: "node_add".to_string(),
+            workspace: ws_name,
+            data: NodeAddData {
+                id: String::new(),
+                node_type,
+                label: String::new(),
+                tags: vec![],
+                observable: true,
+                epistemic: epistemic_status,
+                refs: vec![],
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![err],
+            warnings: vec![],
+        };
+    }
+    let mut metadata = NodeMetadata::new(NodeStatus::Active);
+    for r in refs {
+        metadata.add_ref(r.clone());
+    }
 
     let lock_outcome = match storage.acquire_lock("node add") {
         Ok(outcome) => outcome,
@@ -213,6 +311,7 @@ pub fn execute_node_add(
                     tags: vec![],
                     observable: true,
                     epistemic: epistemic_status,
+                    refs: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -240,6 +339,7 @@ pub fn execute_node_add(
                     tags: vec![],
                     observable: true,
                     epistemic: epistemic_status,
+                    refs: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -261,7 +361,7 @@ pub fn execute_node_add(
         tags: node_tags.clone(),
         observable: obs,
         epistemic: epistemic_status,
-        metadata: NodeMetadata::new(NodeStatus::Active),
+        metadata,
     };
 
     if let Err(e) = storage.save_node(&node) {
@@ -277,6 +377,7 @@ pub fn execute_node_add(
                 tags: vec![],
                 observable: true,
                 epistemic: epistemic_status,
+                refs: vec![],
             },
             graph_health: GraphHealth {
                 valid_dag: true,
@@ -305,6 +406,7 @@ pub fn execute_node_add(
             tags: node_tags,
             observable: obs,
             epistemic: epistemic_status,
+            refs: node.metadata.refs,
         },
         graph_health: GraphHealth {
             valid_dag: true,
@@ -463,6 +565,10 @@ fn check_epistemic_cascade(
 }
 
 /// Execute `node edit` command.
+///
+/// `add_refs` are validated like `node add` refs; `rm_refs` are removed by
+/// exact match, emitting `REF_NOT_PRESENT` for absent ones (removals apply first).
+#[allow(clippy::too_many_arguments)]
 pub fn execute_node_edit(
     storage: &dyn Storage,
     id: &str,
@@ -471,6 +577,8 @@ pub fn execute_node_edit(
     rm_tag: Option<&str>,
     observable: Option<bool>,
     epistemic: Option<&str>,
+    add_refs: &[CrossRef],
+    rm_refs: &[CrossRef],
 ) -> CommandOutput<NodeEditData> {
     let ws_name = storage.workspace_name().unwrap_or_default();
 
@@ -489,6 +597,7 @@ pub fn execute_node_edit(
                         tags: vec![],
                         observable: true,
                         epistemic: EpistemicStatus::default(),
+                        refs: vec![],
                     },
                     graph_health: GraphHealth {
                         valid_dag: true,
@@ -516,6 +625,7 @@ pub fn execute_node_edit(
                     tags: vec![],
                     observable: true,
                     epistemic: EpistemicStatus::default(),
+                    refs: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -546,6 +656,7 @@ pub fn execute_node_edit(
                     tags: vec![],
                     observable: true,
                     epistemic: EpistemicStatus::default(),
+                    refs: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -556,6 +667,53 @@ pub fn execute_node_edit(
             };
         }
     };
+
+    if let Err(err) = validate_new_refs(storage, Some(id), add_refs) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "node_edit".to_string(),
+            workspace: ws_name,
+            data: NodeEditData {
+                id: id.to_string(),
+                node_type: node.node_type,
+                label: node.label,
+                tags: node.tags,
+                observable: node.observable,
+                epistemic: node.epistemic,
+                refs: node.metadata.refs,
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![err],
+            warnings: vec![],
+        };
+    }
+
+    let mut ref_warnings = Vec::new();
+    for r in rm_refs {
+        if !node.metadata.remove_ref(r) {
+            ref_warnings.push(
+                OutputWarning::new(
+                    "REF_NOT_PRESENT",
+                    format!("Node '{}' has no ref to '{}'", id, r.node),
+                )
+                .with_context("node_id", serde_json::Value::String(id.to_string()))
+                .with_context("ref_node", serde_json::Value::String(r.node.clone()))
+                .with_context(
+                    "ref_tree",
+                    r.tree
+                        .clone()
+                        .map_or(serde_json::Value::Null, serde_json::Value::String),
+                ),
+            );
+        }
+    }
+    for r in add_refs {
+        node.metadata.add_ref(r.clone());
+    }
 
     if let Some(new_label) = label {
         node.label = new_label.to_string();
@@ -593,6 +751,7 @@ pub fn execute_node_edit(
                 tags: node.tags.clone(),
                 observable: node.observable,
                 epistemic: node.epistemic,
+                refs: vec![],
             },
             graph_health: GraphHealth {
                 valid_dag: true,
@@ -614,6 +773,7 @@ pub fn execute_node_edit(
     if let Some(w) = stale_lock_warning(&lock_outcome) {
         warnings.insert(0, w);
     }
+    warnings.extend(ref_warnings);
 
     // Epistemic cascade warnings when status changes
     if epistemic_status.is_some() && old_epistemic != node.epistemic {
@@ -636,6 +796,7 @@ pub fn execute_node_edit(
             tags: node.tags,
             observable: node.observable,
             epistemic: node.epistemic,
+            refs: node.metadata.refs,
         },
         graph_health: GraphHealth {
             valid_dag: true,
@@ -1196,6 +1357,10 @@ pub struct NodeInspectData {
     pub epistemic: EpistemicStatus,
     pub status: NodeStatus,
     pub trees: Vec<NodeTreeParticipation>,
+    /// Outbound cross-tree refs (ADR-015), sorted.
+    pub refs: Vec<CrossRef>,
+    /// IDs of nodes whose refs point at this node, sorted.
+    pub referenced_by: Vec<String>,
 }
 
 /// Execute `node inspect` command.
@@ -1221,6 +1386,8 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
                     epistemic: EpistemicStatus::default(),
                     status: NodeStatus::Active,
                     trees: vec![],
+                    refs: vec![],
+                    referenced_by: vec![],
                 },
                 graph_health: GraphHealth {
                     valid_dag: true,
@@ -1279,6 +1446,20 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
         }
     }
 
+    let referenced_by: Vec<String> = storage
+        .list_node_ids()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|other_id| other_id != id)
+        .filter(|other_id| {
+            storage
+                .load_node(other_id)
+                .is_ok_and(|other| other.metadata.refs.iter().any(|r| r.node == id))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
     CommandOutput::ok(
         "node_inspect",
         &ws_name,
@@ -1291,6 +1472,8 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
             epistemic: node.epistemic,
             status: node.metadata.status,
             trees: participations,
+            refs: node.metadata.refs,
+            referenced_by,
         },
     )
 }

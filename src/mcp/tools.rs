@@ -35,7 +35,8 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "type": { "type": "string", "description": "Node type (UDE, RC, INJ, NC, GOAL, OBJ, WANT, OBS, IO, INT, DE, REQ, PRE, CSF)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Optional tags" },
                 "observable": { "type": "boolean", "description": "Whether the node is observable" },
-                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status (default: hypothesis)" }
+                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status (default: hypothesis)" },
+                "refs": ref_array_schema("Cross-tree refs to other nodes (ADR-015). Target must exist; if 'tree' is given the target must be in that tree (trunk or NBR branch). Self-refs are rejected; duplicates collapse.")
             },
             "required": ["label", "type"]
         }),
@@ -51,7 +52,9 @@ pub fn all_tools() -> Vec<ToolDefinition> {
                 "add_tag": { "type": "string", "description": "Tag to add" },
                 "rm_tag": { "type": "string", "description": "Tag to remove" },
                 "observable": { "type": "boolean", "description": "Observable flag" },
-                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status" }
+                "epistemic": { "type": "string", "enum": ["fact", "hypothesis", "assumption", "derived"], "description": "Epistemic status" },
+                "add_refs": ref_array_schema("Cross-tree refs to add (validated like node_add.refs). Duplicates are a no-op."),
+                "rm_refs": ref_array_schema("Cross-tree refs to remove (exact node+tree match). Missing refs produce REF_NOT_PRESENT warnings.")
             },
             "required": ["id"]
         }),
@@ -919,4 +922,21 @@ fn tool(name: &str, description: &str, input_schema: serde_json::Value) -> ToolD
         description: description.to_string(),
         input_schema,
     }
+}
+
+/// JSON schema for an array of cross-tree refs `[{node, tree?}]` (ADR-015).
+fn ref_array_schema(description: &str) -> serde_json::Value {
+    json!({
+        "type": "array",
+        "description": description,
+        "items": {
+            "type": "object",
+            "properties": {
+                "node": { "type": "string", "description": "Target node ID" },
+                "tree": { "type": ["string", "null"], "description": "Optional tree the target must belong to; omit or null for every tree it is in" }
+            },
+            "required": ["node"],
+            "additionalProperties": false
+        }
+    })
 }

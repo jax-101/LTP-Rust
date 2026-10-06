@@ -6,6 +6,7 @@
     "label": "Intermediate effect",
     "node_type": "INT",
     "observable": true,
+    "refs": [],
     "tags": []
   },
   "errors": [],

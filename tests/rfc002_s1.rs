@@ -1,8 +1,9 @@
 //! RFC-002 Slice 1 (ADR-015) — cross-tree refs, inferred meta-graph and the
 //! integrity of `node rm` / `node split` over NBR branches and refs.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
@@ -26,6 +27,48 @@ fn run_ok(dir: &Path, args: &[&str]) -> Value {
     let (json, code) = run_ltp(dir, args);
     assert_eq!(code, 0, "ltp {args:?} failed: {json}");
     json
+}
+
+/// Raw JSON-RPC response of one `tools/call`.
+fn mcp_raw(dir: &Path, tool: &str, arguments: Value) -> Value {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ltp-mcp"))
+        .arg("--workspace")
+        .arg(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ltp-mcp");
+    let request = json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": { "name": tool, "arguments": arguments }
+    });
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, "{request}").unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().find(|l| !l.trim().is_empty()).unwrap();
+    serde_json::from_str(line).unwrap()
+}
+
+/// CommandOutput returned by an MCP tool call.
+fn mcp_call(dir: &Path, tool: &str, arguments: Value) -> Value {
+    let response = mcp_raw(dir, tool, arguments);
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no tool result: {response}"));
+    serde_json::from_str(text).unwrap()
+}
+
+fn error_codes(json: &Value) -> Vec<String> {
+    json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["code"].as_str().unwrap().to_string())
+        .collect()
 }
 
 fn add_node(dir: &Path, label: &str, node_type: &str) -> String {
@@ -364,4 +407,323 @@ fn r11c_split_redirects_nbr_edges_and_source() {
         !raw.contains(&format!("\"{inj}\"")),
         "no stale {inj}: {raw}"
     );
+}
+
+/// GT with NC-001 and CSF-001, CRT with UDE-001 (no refs yet).
+fn gt_crt(dir: &Path) -> (String, String, String, String) {
+    run_ok(dir, &["init", "--name", "S1"]);
+    let gt = new_tree(dir, "gt", "meta");
+    let crt = new_tree(dir, "crt", "realidad");
+    let nc = add_node(dir, "norma", "NC");
+    attach(dir, &gt, &nc);
+    let ude = add_node(dir, "efecto", "UDE");
+    attach(dir, &crt, &ude);
+    (gt, crt, nc, ude)
+}
+
+// R2 — refs to a missing node / missing tree / node outside that tree are
+// blocking errors; nothing is written (pool byte-identical, no ID consumed).
+#[test]
+fn r2_invalid_ref_targets_are_rejected_and_nothing_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, crt, nc, ude) = gt_crt(dir.path());
+    let cases: [(String, &str); 3] = [
+        ("NC-099".to_string(), "NODE_NOT_FOUND"),
+        (format!("{nc}@tree-gt-nope"), "TREE_NOT_FOUND"),
+        (format!("{nc}@{crt}"), "NODE_NOT_IN_TREE"),
+    ];
+    for (r, code) in &cases {
+        let before = snapshot(dir.path());
+        let counters = std::fs::read(dir.path().join(".ltp/counters.json")).unwrap();
+
+        let (out, exit) = run_ltp(
+            dir.path(),
+            &["node", "add", "nuevo", "--type", "UDE", "--ref", r],
+        );
+        assert_ne!(exit, 0, "{r}: {out}");
+        assert_eq!(error_codes(&out), vec![*code], "{r}: {out}");
+        assert_eq!(out["errors"][0]["ref_node"], r.split('@').next().unwrap());
+
+        let (out, exit) = run_ltp(dir.path(), &["node", "edit", &ude, "--add-ref", r]);
+        assert_ne!(exit, 0);
+        assert_eq!(error_codes(&out), vec![*code], "{r}: {out}");
+
+        assert_eq!(snapshot(dir.path()), before, "{r}: disk must be untouched");
+        assert_eq!(
+            std::fs::read(dir.path().join(".ltp/counters.json")).unwrap(),
+            counters,
+            "{r}: a rejected add must not consume an ID"
+        );
+    }
+    // Pinned to the right tree is fine.
+    let ok = run_ok(
+        dir.path(),
+        &["node", "edit", &ude, "--add-ref", &format!("{nc}@{gt}")],
+    );
+    assert_eq!(ok["data"]["refs"], json!([{"node": nc, "tree": gt}]));
+}
+
+// R3 — self-ref is SELF_REF in edit; in add the not-yet-issued ID does not exist.
+#[test]
+fn r3_self_ref_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, _, nc, _) = gt_crt(dir.path());
+    let before = snapshot(dir.path());
+    for r in [nc.clone(), format!("{nc}@{gt}")] {
+        let (out, exit) = run_ltp(dir.path(), &["node", "edit", &nc, "--add-ref", &r]);
+        assert_ne!(exit, 0);
+        assert_eq!(error_codes(&out), vec!["SELF_REF"], "{out}");
+    }
+    let out = mcp_call(
+        dir.path(),
+        "ltp/node_edit",
+        json!({"id": nc, "add_refs": [{"node": nc}]}),
+    );
+    assert_eq!(error_codes(&out), vec!["SELF_REF"], "{out}");
+    assert_eq!(snapshot(dir.path()), before);
+
+    let (out, _) = run_ltp(
+        dir.path(),
+        &["node", "add", "yo", "--type", "UDE", "--ref", "UDE-002"],
+    );
+    assert_eq!(error_codes(&out), vec!["NODE_NOT_FOUND"], "{out}");
+}
+
+// R4 — duplicates collapse; on-disk order is canonical regardless of input order.
+#[test]
+fn r4_duplicate_refs_collapse_and_order_is_canonical() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, _, nc, _) = gt_crt(dir.path());
+    let csf = add_node(dir.path(), "factor", "CSF");
+    attach(dir.path(), &gt, &csf);
+    let pinned = format!("{nc}@{gt}");
+
+    let a = run_ok(
+        dir.path(),
+        &[
+            "node", "add", "a", "--type", "UDE", "--ref", &pinned, "--ref", &nc, "--ref", &csf,
+            "--ref", &nc,
+        ],
+    )["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let b = run_ok(
+        dir.path(),
+        &[
+            "node", "add", "b", "--type", "UDE", "--ref", &csf, "--ref", &nc, "--ref", &pinned,
+        ],
+    )["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let expected = json!([
+        {"node": csf, "tree": null},
+        {"node": nc, "tree": null},
+        {"node": nc, "tree": gt}
+    ]);
+    assert_eq!(refs_of(dir.path(), &a), expected);
+    assert_eq!(refs_of(dir.path(), &b), expected);
+
+    let again = run_ok(dir.path(), &["node", "edit", &a, "--add-ref", &nc]);
+    assert_eq!(again["data"]["refs"], expected, "re-adding is a no-op");
+    assert!(warnings_with(&again, "REF_NOT_PRESENT").is_empty());
+}
+
+// R4b — rm_ref: exact match only; absent refs warn REF_NOT_PRESENT; dangling refs can be removed.
+#[test]
+fn r4b_rm_ref_exact_match_and_dangling_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, _, nc, ude) = gt_crt(dir.path());
+    run_ok(
+        dir.path(),
+        &["node", "edit", &ude, "--add-ref", &format!("{nc}@{gt}")],
+    );
+    // Unpinned form does not match the pinned ref.
+    let out = run_ok(dir.path(), &["node", "edit", &ude, "--rm-ref", &nc]);
+    let missing = warnings_with(&out, "REF_NOT_PRESENT");
+    assert_eq!(missing.len(), 1, "{out}");
+    assert_eq!(missing[0]["ref_tree"], Value::Null);
+    assert_eq!(out["data"]["refs"], json!([{"node": nc, "tree": gt}]));
+
+    // A hand-written dangling ref (target gone) is still removable.
+    set_refs(
+        dir.path(),
+        &ude,
+        json!([{"node": "NC-404", "tree": null}, {"node": nc, "tree": gt}]),
+    );
+    let out = run_ok(dir.path(), &["node", "edit", &ude, "--rm-ref", "NC-404"]);
+    assert!(warnings_with(&out, "REF_NOT_PRESENT").is_empty(), "{out}");
+    assert_eq!(out["data"]["refs"], json!([{"node": nc, "tree": gt}]));
+
+    // Remove + re-add in one call: removal first, then add.
+    let out = run_ok(
+        dir.path(),
+        &[
+            "node",
+            "edit",
+            &ude,
+            "--rm-ref",
+            &format!("{nc}@{gt}"),
+            "--add-ref",
+            &nc,
+        ],
+    );
+    assert_eq!(out["data"]["refs"], json!([{"node": nc, "tree": null}]));
+}
+
+// R5 — MCP: malformed refs are protocol errors (invalid params); nothing written.
+#[test]
+fn r5_mcp_malformed_refs_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, _, nc, ude) = gt_crt(dir.path());
+    let before = snapshot(dir.path());
+    let bad = [
+        json!("NC-001"),
+        json!({"node": nc}),
+        json!(["NC-001"]),
+        json!([{}]),
+        json!([{"node": 5}]),
+        json!([{"tree": "x"}]),
+        json!([{"node": nc, "tree": 7}]),
+        json!([{"node": nc, "kind": "gap"}]),
+        json!([{"node": ""}]),
+        json!([{"node": "NC 001"}]),
+        json!([{"node": "NC-001@x"}]),
+        json!([{"node": nc, "tree": ""}]),
+    ];
+    for refs in &bad {
+        let response = mcp_raw(
+            dir.path(),
+            "ltp/node_add",
+            json!({"label": "x", "type": "UDE", "refs": refs}),
+        );
+        assert_eq!(response["error"]["code"], -32602, "{refs}: {response}");
+        for key in ["add_refs", "rm_refs"] {
+            let response = mcp_raw(dir.path(), "ltp/node_edit", json!({"id": ude, key: refs}));
+            assert_eq!(
+                response["error"]["code"], -32602,
+                "{key} {refs}: {response}"
+            );
+        }
+    }
+    assert_eq!(snapshot(dir.path()), before);
+    // `tree: null` and omitted tree are both accepted.
+    let ok = mcp_call(
+        dir.path(),
+        "ltp/node_add",
+        json!({"label": "x", "type": "UDE", "refs": [{"node": nc, "tree": null}]}),
+    );
+    assert_eq!(ok["success"], true, "{ok}");
+}
+
+// R5b — CLI: malformed NODE[@TREE] is a JSON INVALID_REF error; nothing written.
+#[test]
+fn r5b_cli_malformed_ref_is_invalid_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, _, _, ude) = gt_crt(dir.path());
+    let before = snapshot(dir.path());
+    for bad in ["@", "@tree-gt-meta", "NC-001@", "a@b@c", ""] {
+        let (out, exit) = run_ltp(
+            dir.path(),
+            &["node", "add", "x", "--type", "UDE", "--ref", bad],
+        );
+        assert_eq!(exit, 1, "{bad:?}");
+        assert_eq!(error_codes(&out), vec!["INVALID_REF"], "{bad:?}: {out}");
+        let (out, _) = run_ltp(dir.path(), &["node", "edit", &ude, "--rm-ref", bad]);
+        assert_eq!(error_codes(&out), vec!["INVALID_REF"], "{bad:?}: {out}");
+    }
+    assert_eq!(snapshot(dir.path()), before);
+}
+
+// R7a — a node only present in an NBR branch is a valid pinned target.
+#[test]
+fn r7a_branch_only_node_is_a_valid_pinned_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let (frt, _, _, side) = frt_with_nbr(dir.path());
+    let crt = new_tree(dir.path(), "crt", "ahora");
+    let rc = add_node(dir.path(), "causa", "RC");
+    attach(dir.path(), &crt, &rc);
+    let out = run_ok(
+        dir.path(),
+        &[
+            "node",
+            "edit",
+            &rc,
+            "--add-ref",
+            &format!("{}@{frt}", side[0]),
+        ],
+    );
+    assert_eq!(out["data"]["refs"], json!([{"node": side[0], "tree": frt}]));
+}
+
+// R19 — CLI ↔ MCP parity: same data/errors/warnings for valid and invalid refs.
+#[test]
+fn r19_cli_mcp_parity_for_refs() {
+    let cli = tempfile::tempdir().unwrap();
+    let mcp = tempfile::tempdir().unwrap();
+    let (gt, _, nc, ude) = gt_crt(cli.path());
+    gt_crt(mcp.path());
+
+    let pinned = format!("{nc}@{gt}");
+    let c = run_ltp(
+        cli.path(),
+        &["node", "add", "a", "--type", "UDE", "--ref", &pinned],
+    )
+    .0;
+    let m = mcp_call(
+        mcp.path(),
+        "ltp/node_add",
+        json!({"label": "a", "type": "UDE", "refs": [{"node": nc, "tree": gt}]}),
+    );
+    assert_eq!(c["data"], m["data"]);
+
+    for (cli_ref, mcp_ref) in [
+        ("NC-099".to_string(), json!({"node": "NC-099"})),
+        (
+            format!("{nc}@tree-gt-x"),
+            json!({"node": nc, "tree": "tree-gt-x"}),
+        ),
+    ] {
+        let c = run_ltp(cli.path(), &["node", "edit", &ude, "--add-ref", &cli_ref]).0;
+        let m = mcp_call(
+            mcp.path(),
+            "ltp/node_edit",
+            json!({"id": ude, "add_refs": [mcp_ref]}),
+        );
+        assert_eq!(c["errors"], m["errors"], "{cli_ref}");
+        assert_eq!(c["data"], m["data"], "{cli_ref}");
+    }
+
+    let c = run_ltp(cli.path(), &["node", "edit", &ude, "--rm-ref", &nc]).0;
+    let m = mcp_call(
+        mcp.path(),
+        "ltp/node_edit",
+        json!({"id": ude, "rm_refs": [{"node": nc}]}),
+    );
+    assert_eq!(c["warnings"], m["warnings"]);
+
+    let c = run_ok(cli.path(), &["node", "rm", &nc]);
+    let m = mcp_call(mcp.path(), "ltp/node_rm", json!({"ids": [nc]}));
+    assert_eq!(c["warnings"], m["warnings"]);
+    assert_eq!(c["data"], m["data"]);
+}
+
+// R-inspect — inspect exposes refs and referenced_by (sorted, deduplicated).
+#[test]
+fn inspect_exposes_refs_and_referenced_by() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, _, nc, udes) = gt_crt_with_refs(dir.path());
+    // Two refs (pinned + unpinned) from the same node count once.
+    set_refs(
+        dir.path(),
+        &udes[1],
+        json!([{"node": nc, "tree": null}, {"node": nc, "tree": gt}]),
+    );
+    let out = run_ok(dir.path(), &["node", "inspect", &nc]);
+    assert_eq!(out["data"]["referenced_by"], json!([udes[0], udes[1]]));
+    assert_eq!(out["data"]["refs"], json!([]));
+    let out = run_ok(dir.path(), &["node", "inspect", &udes[1]]);
+    assert_eq!(out["data"]["referenced_by"], json!([]));
+    assert_eq!(out["data"]["refs"].as_array().unwrap().len(), 2);
 }

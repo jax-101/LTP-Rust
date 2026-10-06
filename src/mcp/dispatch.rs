@@ -38,6 +38,7 @@ use crate::node::commands::{
     execute_node_add, execute_node_edit, execute_node_inspect, execute_node_list, execute_node_rm,
     execute_node_search, execute_node_split,
 };
+use crate::node::CrossRef;
 use crate::output::CommandOutput;
 use crate::path::{execute_path_collapse, execute_path_explode, execute_path_replace};
 use crate::storage::Storage;
@@ -190,6 +191,50 @@ fn get_str_array(args: &BTreeMap<String, Value>, key: &str) -> Result<Vec<String
             "missing required field: {key}"
         ))),
     }
+}
+
+/// Strict parser for an optional array of refs `[{node, tree?}]` (ADR-015).
+///
+/// Absent key → empty. Anything else that is not an array of objects with a
+/// string `node`, an optional string/null `tree` and no other keys is rejected,
+/// so a future field is never silently dropped.
+fn get_ref_array(args: &BTreeMap<String, Value>, key: &str) -> Result<Vec<CrossRef>, JsonRpcError> {
+    let invalid = || {
+        JsonRpcError::invalid_params(&format!(
+            "field '{key}' must be an array of {{\"node\": string, \"tree\"?: string|null}}"
+        ))
+    };
+    let Some(value) = args.get(key) else {
+        return Ok(Vec::new());
+    };
+    let arr = value.as_array().ok_or_else(invalid)?;
+    let mut refs = Vec::with_capacity(arr.len());
+    for item in arr {
+        let obj = item.as_object().ok_or_else(invalid)?;
+        if obj.keys().any(|k| k != "node" && k != "tree") {
+            return Err(invalid());
+        }
+        let node = obj
+            .get("node")
+            .and_then(Value::as_str)
+            .ok_or_else(invalid)?;
+        let tree = match obj.get("tree") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(t)) => Some(t.as_str()),
+            Some(_) => return Err(invalid()),
+        };
+        // Same lexical rule as the CLI `NODE[@TREE]` form.
+        let spelled = match tree {
+            Some(t) => format!("{node}@{t}"),
+            None => node.to_string(),
+        };
+        let parsed = CrossRef::parse(&spelled).map_err(|_| invalid())?;
+        if parsed.node != node || parsed.tree.as_deref() != tree {
+            return Err(invalid());
+        }
+        refs.push(parsed);
+    }
+    Ok(refs)
 }
 
 fn get_str_array_opt(args: &BTreeMap<String, Value>, key: &str) -> Option<Vec<String>> {
@@ -431,9 +476,12 @@ fn dispatch_node_add(
     let tags = get_str_array_opt(args, "tags");
     let observable = args.get("observable").and_then(|v| v.as_bool());
     let epistemic = get_str_opt(args, "epistemic");
+    let refs = get_ref_array(args, "refs")?;
 
     let capture = history_begin(storage);
-    let output = execute_node_add(storage, label, node_type, tags, observable, epistemic);
+    let output = execute_node_add(
+        storage, label, node_type, tags, observable, epistemic, &refs,
+    );
     if output.success {
         history_commit(capture, "node_add", &format!("mcp:ltp/node_add {label}"));
     }
@@ -450,9 +498,13 @@ fn dispatch_node_edit(
     let rm_tag = get_str_opt(args, "rm_tag");
     let observable = args.get("observable").and_then(|v| v.as_bool());
     let epistemic = get_str_opt(args, "epistemic");
+    let add_refs = get_ref_array(args, "add_refs")?;
+    let rm_refs = get_ref_array(args, "rm_refs")?;
 
     let capture = history_begin(storage);
-    let output = execute_node_edit(storage, id, label, add_tag, rm_tag, observable, epistemic);
+    let output = execute_node_edit(
+        storage, id, label, add_tag, rm_tag, observable, epistemic, &add_refs, &rm_refs,
+    );
     if output.success {
         history_commit(capture, "node_edit", &format!("mcp:ltp/node_edit {id}"));
     }
