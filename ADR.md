@@ -333,3 +333,40 @@ Justificación
 Consecuencias
 - Positivas: invariante total (ningún camino de lectura entrega un árbol inconsistente); ningún tool MCP nuevo; cero falsos positivos de CLR #4 en GT/EC/PRT; los borradores legacy se arreglan solos al primer uso.
 - Negativas: el disco conserva el contenido legacy hasta la siguiente mutación, y esa primera mutación produce un ruido puntual en el `git diff` (todos los edges cambian de lógica). Coste O(E) por cada `load_tree`. El campo almacenado `edge.logic` se mantiene como deuda (redundante con `tree_type`; su eliminación es RFC-002 Capa 1 y sería MAJOR). El cambio de default de `tree walk` es visible para consumidores que no pasan `--order` en GT/EC/PRT (mitigación: pasar `--order topological` explícito).
+
+ADR-015: Referencias Cruzadas entre Nodos y Meta-grafo Inferido (RFC-002 Slice 1)
+
+Contexto
+
+RFC-002 quiere capturar las relaciones entre árboles que hoy solo existen en la cabeza del analista. El ejemplo canónico es "esta UDE del CRT manifiesta la violación de la NC-003 del GT". La investigación (`PLAN_v031-and-rfc002-slice1.md` §1, evaluación Six Hats de D-1..D-10) mostró tres cosas:
+- El modelo de la "Opción 2" (inferir relaciones tipadas por el par de tipos de árbol) no es determinista en lo semántico. Un mismo ref UDE→NC encaja tanto con T01 (GT→CRT, `gap_analysis`) como con T05 (CRT→GT, feedback de norma). La dirección y el tipo dependen de la intención del analista.
+- En el motor, el NBR es una rama embebida en un árbol (ADR-008), no un árbol, y sus nodos no tienen por qué estar en `tree.nodes`.
+- Los campos nuevos tienen que sobrevivir a binarios antiguos (`NodeMetadata.extra`, que usa `#[serde(flatten)]`) y a un backend futuro sin tocar `Storage` ni el snapshot de undo.
+
+Decisión
+- D-1/D-2: `node.metadata.refs: [{node, tree?}]` (`CrossRef`). Es un set ordenado por `(node, tree)`: un duplicado es un no-op y el campo se omite si está vacío. Vive en el nodo (verdad global del pool). Al escribir se valida de forma bloqueante (integridad referencial): el destino existe, el `tree` existe y contiene el destino (incluidas las ramas NBR), y no hay auto-referencias (`SELF_REF`).
+- D-3: las relaciones **se calculan al vuelo** (`tree_relation_list`) y no se persisten. No hay `relations/` ni IDs `TREL-`. Su identidad natural es `(referencing, referenced)`. Fijarlas (persistir) es S3.
+- D-4: las relaciones inferidas **no llevan `relation_type`**, y sus extremos son neutros (`referencing`, `referenced`), sin `from/to`. Incluyen `logic` por extremo, derivada de `tree_type.logic()` (ADR-014), y la `basis` de refs que las sostiene. El tipo y la dirección llegan en S3 con `tree_relation_add` explícito. Añadir el campo entonces es MINOR.
+- D-5/D-6: `validate` emite `NORM_REF_MISSING` (warning, nunca error) para cada UDE adjunta a un CRT o presente en una rama NBR que no tenga una ref a una norma, solo si el workspace tiene ≥1 GT. Norma = `NC` o `CSF` adjuntos a un GT, u `OBJ` adjunto a un GT (GT legacy). `GOAL` no es norma.
+- D-7: un extremo es `{tree, nbr}`, con `nbr: null` cuando el nodo está en el tronco. La pertenencia se calcula con un helper único que incluye `nbr_branches[].edges` y `source_node`.
+- D-8: los roles de EC se quedan en `objective/requirement/prerequisite` (v0.3.1).
+- D-9: los tools se llaman `tree_relation_*` para no confundirlos con `KnowledgeRelation`.
+- D-10: la severity (S2) será `critical/high/medium/low`, en `snake_case` y ordenable. Aquí no se implementa.
+- Integridad: `node rm` quita las refs entrantes (`REFS_STRIPPED`) y los edges NBR que tocan el nodo; si el nodo era el `source_node` de una rama, elimina la rama (`NBR_BRANCH_REMOVED`). `node split` copia las refs salientes a ambos hijos, reescribe las entrantes hacia ambos y redirige los edges NBR. `validate` informa de `DANGLING_NODE_REF` y de `NODE_UNREADABLE` (antes, un nodo ilegible se saltaba en silencio).
+- Este slice **no** elimina `edge.logic` (deuda de ADR-014, sería MAJOR).
+
+Justificación
+- ADR-001: el motor afirma hechos estructurales (qué ref cruza qué árboles) y deja la intención al agente o al analista.
+- ADR-004: las vistas derivadas se calculan al vuelo.
+- Dos velocidades: `infer_relations` y `check_refs` son funciones puras sobre `&[Node]` y `&[Tree]`, sin `Storage` (candidatas a `ltp-core`). Un backend SQL las resuelve como un join.
+- Compatibilidad hacia delante: un binario v0.3.x conserva `refs` vía `metadata.extra`.
+
+Consecuencias
+- Positivas:
+  - un tool nuevo (nº 72), sin entidades persistidas nuevas ni cambios en `Storage`, el undo o el snapshot;
+  - deshacible gratis (`nodes/` ya está en el snapshot);
+  - base de S2-S5 (los handoffs son refs que cruzan).
+- Negativas:
+  - fan-out: una ref sin `tree` a un nodo adjunto a N árboles produce N relaciones (es intencionado; `tree` lo acota);
+  - coste O(N+T) por llamada;
+  - una clave futura dentro de un `CrossRef` se perdería al reescribir con v0.4.0.
