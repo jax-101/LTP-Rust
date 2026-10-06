@@ -6,6 +6,7 @@ pub mod link;
 pub mod macro_assume;
 pub mod macro_edge;
 pub mod mcp;
+pub mod meta;
 pub mod nbr;
 pub mod node;
 pub mod output;

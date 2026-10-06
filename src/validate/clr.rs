@@ -330,7 +330,6 @@ mod tests {
     use super::*;
     use crate::link::{Edge, EdgeStatus, Logic, Operator};
     use crate::node::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-    use std::collections::BTreeMap;
 
     fn make_node(id: &str, node_type: NodeType, observable: bool) -> Node {
         Node {
@@ -340,10 +339,7 @@ mod tests {
             tags: vec![],
             observable,
             epistemic: EpistemicStatus::default(),
-            metadata: NodeMetadata {
-                status: NodeStatus::Active,
-                extra: BTreeMap::new(),
-            },
+            metadata: NodeMetadata::new(NodeStatus::Active),
         }
     }
 
@@ -369,10 +365,7 @@ mod tests {
             tags: vec![],
             observable: true,
             epistemic: EpistemicStatus::default(),
-            metadata: NodeMetadata {
-                status: NodeStatus::Active,
-                extra: BTreeMap::new(),
-            },
+            metadata: NodeMetadata::new(NodeStatus::Active),
         }];
         let warnings = lint_clr2(&nodes);
         assert!(!warnings.is_empty());

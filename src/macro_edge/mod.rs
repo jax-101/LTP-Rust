@@ -415,10 +415,7 @@ pub fn execute_macro_expand(
             tags: vec![],
             observable: true,
             epistemic: EpistemicStatus::default(),
-            metadata: NodeMetadata {
-                status: NodeStatus::Active,
-                extra: Default::default(),
-            },
+            metadata: NodeMetadata::new(NodeStatus::Active),
         });
     }
 

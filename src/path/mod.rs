@@ -568,10 +568,7 @@ pub fn execute_path_explode(
         tags: vec![],
         observable: true,
         epistemic: EpistemicStatus::default(),
-        metadata: NodeMetadata {
-            status: NodeStatus::Active,
-            extra: Default::default(),
-        },
+        metadata: NodeMetadata::new(NodeStatus::Active),
     };
 
     if let Err(e) = storage.save_node(&int_node) {

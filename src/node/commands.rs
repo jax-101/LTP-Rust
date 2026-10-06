@@ -1,11 +1,11 @@
 use serde::Serialize;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::errors::{LtpError, Result};
 use crate::link::Operator;
 use crate::node::clr_lint::lint_clr2;
-use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
+use crate::node::types::{CrossRef, EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 
@@ -261,10 +261,7 @@ pub fn execute_node_add(
         tags: node_tags.clone(),
         observable: obs,
         epistemic: epistemic_status,
-        metadata: NodeMetadata {
-            status: NodeStatus::Active,
-            extra: Default::default(),
-        },
+        metadata: NodeMetadata::new(NodeStatus::Active),
     };
 
     if let Err(e) = storage.save_node(&node) {
@@ -918,6 +915,7 @@ pub fn execute_node_rm(
 
     let mut total_removed_edges = 0usize;
     let mut affected_trees = Vec::new();
+    let mut nbr_branch_warnings: Vec<OutputWarning> = Vec::new();
 
     for tree_id in &tree_ids {
         let mut tree = match storage.load_tree(tree_id) {
@@ -941,11 +939,46 @@ pub fn execute_node_rm(
         tree.feedback_edges
             .retain(|fb| !id_set.contains(fb.from.as_str()) && !id_set.contains(fb.to.as_str()));
 
-        let edges_removed =
-            (before_edges - tree.edges.len()) + (before_fb - tree.feedback_edges.len());
+        // NBR branches: a branch whose source is removed goes away entirely;
+        // otherwise only the branch edges touching a removed node are dropped.
+        let before_branches = tree.nbr_branches.len();
+        let mut nbr_edges_removed = 0usize;
+        tree.nbr_branches.retain(|b| {
+            if id_set.contains(b.source_node.as_str()) {
+                nbr_edges_removed += b.edges.len();
+                nbr_branch_warnings.push(
+                    OutputWarning::new(
+                        "NBR_BRANCH_REMOVED",
+                        format!(
+                            "NBR branch '{}' of tree '{}' removed: its source node was deleted",
+                            b.id, tree.id
+                        ),
+                    )
+                    .with_context("tree_id", serde_json::Value::String(tree.id.clone()))
+                    .with_context("nbr_id", serde_json::Value::String(b.id.clone())),
+                );
+                false
+            } else {
+                true
+            }
+        });
+        for branch in &mut tree.nbr_branches {
+            let before = branch.edges.len();
+            branch.edges.retain(|edge| {
+                !id_set.contains(edge.to.as_str())
+                    && !edge.from.iter().any(|f| id_set.contains(f.as_str()))
+            });
+            nbr_edges_removed += before - branch.edges.len();
+        }
+
+        let edges_removed = (before_edges - tree.edges.len())
+            + (before_fb - tree.feedback_edges.len())
+            + nbr_edges_removed;
         let tree_changed = tree.nodes.len() != before_nodes
             || tree.edges.len() != before_edges
-            || tree.feedback_edges.len() != before_fb;
+            || tree.feedback_edges.len() != before_fb
+            || tree.nbr_branches.len() != before_branches
+            || nbr_edges_removed > 0;
 
         if tree_changed {
             if let Err(e) = storage.save_tree(&tree) {
@@ -970,6 +1003,70 @@ pub fn execute_node_rm(
             total_removed_edges += edges_removed;
             affected_trees.push(tree_id.clone());
         }
+    }
+
+    // Inbound cross-tree refs (ADR-015): strip refs that point at removed nodes.
+    let mut refs_stripped_warnings: Vec<OutputWarning> = Vec::new();
+    for other_id in storage.list_node_ids().unwrap_or_default() {
+        if id_set.contains(other_id.as_str()) {
+            continue;
+        }
+        let Ok(mut other) = storage.load_node(&other_id) else {
+            continue;
+        };
+        let stripped: BTreeSet<String> = other
+            .metadata
+            .refs
+            .iter()
+            .filter(|r| id_set.contains(r.node.as_str()))
+            .map(|r| r.node.clone())
+            .collect();
+        if stripped.is_empty() {
+            continue;
+        }
+        other
+            .metadata
+            .refs
+            .retain(|r| !id_set.contains(r.node.as_str()));
+        if let Err(e) = storage.save_node(&other) {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_rm".to_string(),
+                workspace: ws_name,
+                data: NodeRmData {
+                    removed_nodes: vec![],
+                    removed_edges_count: total_removed_edges,
+                    affected_trees,
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+        refs_stripped_warnings.push(
+            OutputWarning::new(
+                "REFS_STRIPPED",
+                format!(
+                    "Refs from '{}' to removed node(s) stripped: {}",
+                    other_id,
+                    stripped.iter().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            )
+            .with_context("referencing", serde_json::Value::String(other_id.clone()))
+            .with_context(
+                "node_ids",
+                serde_json::Value::Array(
+                    stripped
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            ),
+        );
     }
 
     let mut removed_nodes = Vec::new();
@@ -1002,6 +1099,8 @@ pub fn execute_node_rm(
     if let Some(w) = stale_lock_warning(&lock_outcome) {
         warnings.push(w);
     }
+    warnings.extend(nbr_branch_warnings);
+    warnings.extend(refs_stripped_warnings);
 
     // KNOWLEDGE_ORPHANED: check if any knowledge items link to the removed nodes
     let orphaned_kn_ids: Vec<String> = storage
@@ -1212,11 +1311,23 @@ pub struct NodeSplitData {
     pub tree_id: String,
 }
 
+/// Metadata inherited by each child of a split: the original's refs and extra
+/// keys, with a fresh `active` status.
+fn split_child_metadata(original: &NodeMetadata) -> NodeMetadata {
+    NodeMetadata {
+        refs: original.refs.clone(),
+        extra: original.extra.clone(),
+        ..NodeMetadata::new(NodeStatus::Active)
+    }
+}
+
 /// Execute `node split` command.
 ///
 /// Splits a node into two new nodes within a specific tree.
-/// Incoming edges of the original are redirected to the first new node.
-/// Outgoing edges of the original are redirected from the second new node.
+/// Incoming edges of the original (trunk and NBR branches) are redirected to the
+/// first new node; outgoing edges are redirected from the second new node.
+/// Both children inherit the original's refs and extra metadata, and inbound
+/// refs from other nodes are rewritten to point at both children (ADR-015).
 /// The original node is removed from pool and tree.
 pub fn execute_node_split(
     storage: &dyn Storage,
@@ -1372,10 +1483,7 @@ pub fn execute_node_split(
         tags: original.tags.clone(),
         observable: original.observable,
         epistemic: EpistemicStatus::default(),
-        metadata: NodeMetadata {
-            status: NodeStatus::Active,
-            extra: Default::default(),
-        },
+        metadata: split_child_metadata(&original.metadata),
     };
     let node_second = Node {
         id: id_second.clone(),
@@ -1384,10 +1492,7 @@ pub fn execute_node_split(
         tags: original.tags.clone(),
         observable: original.observable,
         epistemic: EpistemicStatus::default(),
-        metadata: NodeMetadata {
-            status: NodeStatus::Active,
-            extra: Default::default(),
-        },
+        metadata: split_child_metadata(&original.metadata),
     };
 
     if let Err(e) = storage.save_node(&node_first) {
@@ -1446,6 +1551,22 @@ pub fn execute_node_split(
             }
         }
     }
+    // Same redirection inside NBR branches; a split source becomes the first child.
+    for branch in &mut tree.nbr_branches {
+        if branch.source_node == id {
+            branch.source_node = id_first.clone();
+        }
+        for edge in &mut branch.edges {
+            if edge.to == id {
+                edge.to = id_first.clone();
+            }
+            for from_ref in &mut edge.from {
+                if *from_ref == id {
+                    *from_ref = id_second.clone();
+                }
+            }
+        }
+    }
 
     if let Err(e) = storage.save_tree(&tree) {
         let _ = storage.release_lock();
@@ -1461,6 +1582,50 @@ pub fn execute_node_split(
             errors: vec![OutputError::new("IO_ERROR", e.to_string())],
             warnings: vec![],
         };
+    }
+
+    // Inbound cross-tree refs (ADR-015): a ref to the split node now points at both children.
+    for other_id in storage.list_node_ids().unwrap_or_default() {
+        if other_id == id || other_id == id_first || other_id == id_second {
+            continue;
+        }
+        let Ok(mut other) = storage.load_node(&other_id) else {
+            continue;
+        };
+        let inbound: Vec<CrossRef> = other
+            .metadata
+            .refs
+            .iter()
+            .filter(|r| r.node == id)
+            .cloned()
+            .collect();
+        if inbound.is_empty() {
+            continue;
+        }
+        other.metadata.refs.retain(|r| r.node != id);
+        for r in inbound {
+            for child in [&id_first, &id_second] {
+                other.metadata.add_ref(CrossRef {
+                    node: child.clone(),
+                    tree: r.tree.clone(),
+                });
+            }
+        }
+        if let Err(e) = storage.save_node(&other) {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "node_split".to_string(),
+                workspace: ws_name,
+                data: empty_data(),
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
     }
 
     if let Err(e) = storage.delete_node(id) {
