@@ -1,10 +1,11 @@
 use serde_json::json;
 
 use crate::mcp::types::ToolDefinition;
+use crate::validate::ec::ROLE_HELP;
 
 /// Generate the complete list of MCP tool definitions with JSON Schema inputs.
 pub fn all_tools() -> Vec<ToolDefinition> {
-    let mut tools = Vec::with_capacity(61);
+    let mut tools = Vec::with_capacity(72);
 
     // --- Workspace ---
     tools.push(tool(
@@ -154,7 +155,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
             "properties": {
                 "tree": { "type": "string", "description": "Tree ID" },
                 "node": { "type": "string", "description": "Node ID" },
-                "role": { "type": "string", "description": "Role in tree (root, leaf, intermediate)" }
+                "role": { "type": "string", "description": ROLE_HELP }
             },
             "required": ["tree", "node"]
         }),

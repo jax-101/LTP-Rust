@@ -2,6 +2,21 @@ use crate::link::Edge;
 use crate::output::OutputError;
 use crate::tree::types::NodeRef;
 
+/// EC role for the single objective node (A).
+pub const ROLE_OBJECTIVE: &str = "objective";
+/// EC role for the requirement nodes (B, C).
+pub const ROLE_REQUIREMENT: &str = "requirement";
+/// EC role for the prerequisite nodes (D, D').
+pub const ROLE_PREREQUISITE: &str = "prerequisite";
+/// The exact (case-sensitive) role vocabulary enforced by [`check_ec_rules`].
+pub const EC_ROLES: [&str; 3] = [ROLE_OBJECTIVE, ROLE_REQUIREMENT, ROLE_PREREQUISITE];
+
+/// Help text for the `role` parameter of `tree attach`, shared by CLI and MCP
+/// so the advertised vocabulary cannot drift from the validator.
+pub const ROLE_HELP: &str = "Role in tree. Required in EC trees (exact, case-sensitive): \
+objective (exactly 1), requirement (at least 2), prerequisite (at least 1 per requirement, \
+connected prerequisite -> requirement). Free-form in other trees.";
+
 /// Validate Evaporating Cloud (EC) specific rules.
 ///
 /// Rules:
@@ -13,7 +28,7 @@ pub fn check_ec_rules(nodes: &[NodeRef], edges: &[Edge], tree_id: &str) -> Vec<O
 
     let objectives: Vec<&NodeRef> = nodes
         .iter()
-        .filter(|n| n.role.as_deref() == Some("objective"))
+        .filter(|n| n.role.as_deref() == Some(ROLE_OBJECTIVE))
         .collect();
 
     if objectives.len() != 1 {
@@ -35,7 +50,7 @@ pub fn check_ec_rules(nodes: &[NodeRef], edges: &[Edge], tree_id: &str) -> Vec<O
 
     let requirements: Vec<&NodeRef> = nodes
         .iter()
-        .filter(|n| n.role.as_deref() == Some("requirement"))
+        .filter(|n| n.role.as_deref() == Some(ROLE_REQUIREMENT))
         .collect();
 
     if requirements.len() < 2 {
@@ -57,7 +72,7 @@ pub fn check_ec_rules(nodes: &[NodeRef], edges: &[Edge], tree_id: &str) -> Vec<O
 
     let prerequisites: Vec<&NodeRef> = nodes
         .iter()
-        .filter(|n| n.role.as_deref() == Some("prerequisite"))
+        .filter(|n| n.role.as_deref() == Some(ROLE_PREREQUISITE))
         .collect();
 
     for req in &requirements {
@@ -118,11 +133,11 @@ mod tests {
     #[test]
     fn valid_ec_no_errors() {
         let nodes = vec![
-            node_ref("OBJ-001", Some("objective")),
-            node_ref("REQ-001", Some("requirement")),
-            node_ref("REQ-002", Some("requirement")),
-            node_ref("PRE-001", Some("prerequisite")),
-            node_ref("PRE-002", Some("prerequisite")),
+            node_ref("OBJ-001", Some(ROLE_OBJECTIVE)),
+            node_ref("REQ-001", Some(ROLE_REQUIREMENT)),
+            node_ref("REQ-002", Some(ROLE_REQUIREMENT)),
+            node_ref("PRE-001", Some(ROLE_PREREQUISITE)),
+            node_ref("PRE-002", Some(ROLE_PREREQUISITE)),
         ];
         let edges = vec![
             make_edge("L1", vec!["PRE-001"], "REQ-001"),
@@ -135,8 +150,8 @@ mod tests {
     #[test]
     fn missing_objective() {
         let nodes = vec![
-            node_ref("REQ-001", Some("requirement")),
-            node_ref("REQ-002", Some("requirement")),
+            node_ref("REQ-001", Some(ROLE_REQUIREMENT)),
+            node_ref("REQ-002", Some(ROLE_REQUIREMENT)),
         ];
         let errors = check_ec_rules(&nodes, &[], "test-ec");
         assert!(errors.iter().any(|e| e.detail.contains("objective")));
@@ -145,8 +160,8 @@ mod tests {
     #[test]
     fn insufficient_requirements() {
         let nodes = vec![
-            node_ref("OBJ-001", Some("objective")),
-            node_ref("REQ-001", Some("requirement")),
+            node_ref("OBJ-001", Some(ROLE_OBJECTIVE)),
+            node_ref("REQ-001", Some(ROLE_REQUIREMENT)),
         ];
         let errors = check_ec_rules(&nodes, &[], "test-ec");
         assert!(errors.iter().any(|e| e.detail.contains("at least 2")));
@@ -155,10 +170,10 @@ mod tests {
     #[test]
     fn requirement_without_prerequisite() {
         let nodes = vec![
-            node_ref("OBJ-001", Some("objective")),
-            node_ref("REQ-001", Some("requirement")),
-            node_ref("REQ-002", Some("requirement")),
-            node_ref("PRE-001", Some("prerequisite")),
+            node_ref("OBJ-001", Some(ROLE_OBJECTIVE)),
+            node_ref("REQ-001", Some(ROLE_REQUIREMENT)),
+            node_ref("REQ-002", Some(ROLE_REQUIREMENT)),
+            node_ref("PRE-001", Some(ROLE_PREREQUISITE)),
         ];
         let edges = vec![make_edge("L1", vec!["PRE-001"], "REQ-001")];
         let errors = check_ec_rules(&nodes, &edges, "test-ec");

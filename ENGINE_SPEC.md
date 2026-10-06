@@ -125,6 +125,8 @@ Lista todos los trees del workspace. `data`: `{ "trees": [ { "id", "name", "tree
 
 Añade un nodo del pool a un tree sin conectarlo (staging). Aparece como huérfano dentro del tree. `status` lo reporta.
 
+`--role` es texto libre salvo en los EC, donde `validate` exige el vocabulario exacto (case-sensitive): `objective` (exactamente 1), `requirement` (≥2) y `prerequisite` (≥1 por requirement, conectado `prerequisite → requirement`). Cualquier otro valor en un EC (p. ej. `root`, `leaf`, `intermediate`, `Objective`) hace fallar `validate` con `EC_VALIDATION`.
+
 #### `ltp tree detach --tree <TREE_ID> --node <ID>`
 
 Quita un nodo de una vista (y sus edges en ese tree), pero lo preserva en el pool global `/nodes/`.

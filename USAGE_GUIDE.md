@@ -174,6 +174,16 @@ La EC expone el dilema que impide actuar. Usa logica de necesidad (Para X, neces
 - 2+ Requirements (necesidades contrapuestas)
 - Prerequisites que entran en conflicto (XOR)
 
+**Roles exactos al adjuntar** (`tree attach --role`, case-sensitive; `validate` falla con `EC_VALIDATION` si no):
+
+| Rol | Cuántos | Conexión |
+|-----|---------|----------|
+| `objective` | exactamente 1 | recibe de los `requirement` |
+| `requirement` | al menos 2 | `requirement → objective` |
+| `prerequisite` | al menos 1 por requirement | `prerequisite → requirement` |
+
+No uses `root`, `leaf` ni `intermediate` en un EC: no son roles válidos.
+
 **Comandos tipicos:**
 
 ```

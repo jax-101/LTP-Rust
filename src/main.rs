@@ -284,7 +284,7 @@ enum TreeAction {
         tree: String,
         #[arg(long)]
         node: String,
-        #[arg(long)]
+        #[arg(long, help = ltp_engine::validate::ec::ROLE_HELP)]
         role: Option<String>,
     },
     Detach {
