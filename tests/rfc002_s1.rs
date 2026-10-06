@@ -968,3 +968,272 @@ fn r21_tools_list_advertises_relation_tool_and_refs() {
         );
     }
 }
+
+/// Warnings of the synthetic `_meta_graph` validate entry (empty if absent).
+fn meta_warnings(dir: &Path, extra: &[&str]) -> (Value, Vec<Value>) {
+    let mut args = vec!["validate"];
+    args.extend_from_slice(extra);
+    let (out, _) = run_ltp(dir, &args);
+    let meta = out["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["tree_id"] == "_meta_graph")
+        .map(|d| d["warnings"].as_array().unwrap().clone())
+        .unwrap_or_default();
+    (out, meta)
+}
+
+fn codes_of(ws: &[Value]) -> Vec<(String, String)> {
+    ws.iter()
+        .map(|w| {
+            (
+                w["code"].as_str().unwrap().to_string(),
+                w["node_id"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+// R12 — hand-written dangling refs: each reason is classified, and validate
+// stays success=true (warning, never error).
+#[test]
+fn r12_dangling_refs_by_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let (gt, crt, nc, ude) = gt_crt(dir.path());
+    let nc2 = add_node(dir.path(), "norma 2", "NC");
+    attach(dir.path(), &gt, &nc2);
+    let (_, clean) = meta_warnings(dir.path(), &[]);
+    assert!(warnings_with(&json!({"warnings": clean}), "DANGLING_NODE_REF").is_empty());
+
+    set_refs(
+        dir.path(),
+        &ude,
+        json!([
+            {"node": nc, "tree": crt},
+            {"node": nc2, "tree": "tree-gt-borrado"},
+            {"node": "NC-404", "tree": null}
+        ]),
+    );
+    let (out, meta) = meta_warnings(dir.path(), &[]);
+    assert_eq!(out["success"], true, "{out}");
+    let dangling = warnings_with(&json!({"warnings": meta}), "DANGLING_NODE_REF");
+    let got: Vec<(&str, &str, &str)> = dangling
+        .iter()
+        .map(|w| {
+            (
+                w["ref_node"].as_str().unwrap(),
+                w["reason"].as_str().unwrap(),
+                w["node_id"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (nc.as_str(), "not_in_tree", ude.as_str()),
+            (nc2.as_str(), "tree_missing", ude.as_str()),
+            ("NC-404", "node_missing", ude.as_str()),
+        ]
+    );
+    assert_eq!(dangling[1]["ref_tree"], "tree-gt-borrado");
+    assert_eq!(dangling[2]["ref_tree"], Value::Null);
+
+    // Detaching the target turns a valid pinned ref into not_in_tree.
+    set_refs(dir.path(), &ude, json!([{"node": nc, "tree": gt}]));
+    assert!(meta_warnings(dir.path(), &[]).1.is_empty());
+    run_ok(
+        dir.path(),
+        &["tree", "detach", "--tree", &gt, "--node", &nc],
+    );
+    let (_, meta) = meta_warnings(dir.path(), &[]);
+    let dangling = warnings_with(&json!({"warnings": meta}), "DANGLING_NODE_REF");
+    assert_eq!(dangling.len(), 1);
+    assert_eq!(dangling[0]["reason"], "not_in_tree");
+}
+
+// R13 — a node file with `refs: "garbage"` no longer vanishes silently:
+// NODE_UNREADABLE, while the other nodes keep being validated.
+#[test]
+fn r13_unreadable_node_is_reported_and_others_still_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_gt, crt, _nc, ude) = gt_crt(dir.path());
+    let ude2 = add_node(dir.path(), "otro efecto", "UDE");
+    attach(dir.path(), &crt, &ude2);
+    set_refs(dir.path(), &ude, json!("garbage"));
+    let (out, meta) = meta_warnings(dir.path(), &[]);
+    assert_eq!(out["success"], true, "{out}");
+    let unreadable = warnings_with(&json!({"warnings": meta}), "NODE_UNREADABLE");
+    assert_eq!(unreadable.len(), 1);
+    assert_eq!(unreadable[0]["node_id"], ude.as_str());
+    // ude2 is still checked: it lacks a norm ref.
+    assert!(codes_of(&meta).contains(&("NORM_REF_MISSING".to_string(), ude2)));
+}
+
+fn norm_missing(dir: &Path, extra: &[&str]) -> Vec<Value> {
+    warnings_with(
+        &json!({"warnings": meta_warnings(dir, extra).1}),
+        "NORM_REF_MISSING",
+    )
+}
+
+// R14 — NORM_REF_MISSING: silent without a GT; with a GT only a ref to a norm
+// (NC/CSF, or OBJ) attached to a GT satisfies it.
+#[test]
+fn r14_norm_ref_missing_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    run_ok(d, &["init", "--name", "S1"]);
+    let crt = new_tree(d, "crt", "realidad");
+    let ude = add_node(d, "efecto", "UDE");
+    attach(d, &crt, &ude);
+    assert!(norm_missing(d, &[]).is_empty(), "no GT → no warning");
+
+    let gt = new_tree(d, "gt", "meta");
+    let ec = new_tree(d, "ec", "conflicto");
+    let csf = add_node(d, "factor", "CSF");
+    let obj_gt = add_node(d, "objetivo gt", "OBJ");
+    let obj_ec = add_node(d, "objetivo ec", "OBJ");
+    let loose_nc = add_node(d, "norma suelta", "NC");
+    let rc = add_node(d, "causa", "RC");
+    attach(d, &gt, &csf);
+    attach(d, &gt, &obj_gt);
+    attach(d, &ec, &obj_ec);
+    attach(d, &gt, &rc);
+    assert_eq!(
+        norm_missing(d, &[]).len(),
+        1,
+        "GT present, UDE without refs"
+    );
+
+    for (target, expect_warning) in [
+        (&loose_nc, true), // NC in no GT
+        (&rc, true),       // wrong type, even if attached to the GT
+        (&obj_ec, true),   // OBJ outside a GT
+        (&csf, false),
+        (&obj_gt, false),
+    ] {
+        set_refs(d, &ude, json!([{"node": target, "tree": null}]));
+        let ws = norm_missing(d, &[]);
+        assert_eq!(!ws.is_empty(), expect_warning, "ref to {target}: {ws:?}");
+        if expect_warning {
+            assert_eq!(ws[0]["node_id"], ude.as_str());
+            assert_eq!(ws[0]["trees"], json!([crt]));
+        }
+    }
+    // A pin to a non-GT tree does not satisfy the rule even for a norm type.
+    attach(d, &ec, &csf);
+    set_refs(d, &ude, json!([{"node": csf, "tree": ec}]));
+    assert_eq!(norm_missing(d, &[]).len(), 1);
+}
+
+// R15 — UDE only in an NBR branch is checked; a UDE in 2 CRTs yields ONE
+// warning whose `trees` is sorted.
+#[test]
+fn r15_norm_ref_missing_nbr_and_multi_crt() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (frt, _inj, _nbr, side) = frt_with_nbr(d);
+    new_tree(d, "gt", "meta");
+    let crt_b = new_tree(d, "crt", "zeta");
+    let crt_a = new_tree(d, "crt", "alfa");
+    let ude = add_node(d, "efecto compartido", "UDE");
+    attach(d, &crt_b, &ude);
+    attach(d, &crt_a, &ude);
+
+    let ws = norm_missing(d, &[]);
+    let by_node: Vec<(&str, &Value)> = ws
+        .iter()
+        .map(|w| (w["node_id"].as_str().unwrap(), &w["trees"]))
+        .collect();
+    let mut sorted = vec![crt_a, crt_b];
+    sorted.sort();
+    assert_eq!(
+        by_node,
+        vec![
+            (side[0].as_str(), &json!([frt])),
+            (side[1].as_str(), &json!([frt])),
+            (ude.as_str(), &json!(sorted)),
+        ]
+    );
+}
+
+// R16 — `validate --tree` only reports meta warnings for nodes of that tree
+// (trunk or NBR branch).
+#[test]
+fn r16_validate_tree_filter_scopes_meta_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (frt, _inj, _nbr, side) = frt_with_nbr(d);
+    new_tree(d, "gt", "meta");
+    let crt = new_tree(d, "crt", "realidad");
+    let ude = add_node(d, "efecto", "UDE");
+    attach(d, &crt, &ude);
+    set_refs(d, &ude, json!([{"node": "NC-404", "tree": null}]));
+
+    let all = codes_of(&meta_warnings(d, &[]).1);
+    assert_eq!(all.len(), 4, "{all:?}"); // 2 NBR UDEs + dangling + norm on ude
+
+    let only_crt = codes_of(&meta_warnings(d, &["--tree", &crt]).1);
+    assert_eq!(
+        only_crt,
+        vec![
+            ("DANGLING_NODE_REF".to_string(), ude.clone()),
+            ("NORM_REF_MISSING".to_string(), ude),
+        ]
+    );
+    let only_frt: Vec<String> = codes_of(&meta_warnings(d, &["--tree", &frt]).1)
+        .into_iter()
+        .map(|(_, n)| n)
+        .collect();
+    assert_eq!(only_frt, side.to_vec());
+}
+
+/// v0.3.0 shape of `NodeMetadata`: typed `status` plus flattened unknown keys.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct OldMetadata {
+    status: String,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, Value>,
+}
+
+/// Reads and rewrites a node file the way a v0.3.0 binary would.
+fn old_binary_rewrite(dir: &Path, id: &str) {
+    let path = node_path(dir, id);
+    let mut raw = read_json(&path);
+    let old: OldMetadata = serde_json::from_value(raw["metadata"].take()).unwrap();
+    raw["metadata"] = serde_json::to_value(old).unwrap();
+    std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+}
+
+// R17 — old-binary round trip: refs survive in `extra` and the new binary sees
+// them again; a node without refs has no `refs` key (v0.3.0 shape).
+#[test]
+fn r17_old_binary_round_trip_preserves_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (gt, _crt, nc, ude) = gt_crt(d);
+    run_ok(
+        d,
+        &["node", "edit", &ude, "--add-ref", &format!("{nc}@{gt}")],
+    );
+    let before = refs_of(d, &ude);
+    assert_eq!(before, json!([{"node": nc, "tree": gt}]));
+
+    old_binary_rewrite(d, &ude);
+    assert_eq!(refs_of(d, &ude), before);
+    let out = run_ok(d, &["node", "inspect", &ude]);
+    assert_eq!(out["data"]["refs"], before);
+    // A later write by the new binary keeps them.
+    run_ok(d, &["node", "edit", &ude, "--label", "efecto renombrado"]);
+    assert_eq!(refs_of(d, &ude), before);
+
+    // Node without refs: no `refs` key, and an old rewrite is a no-op.
+    assert!(read_json(&node_path(d, &nc))["metadata"]
+        .get("refs")
+        .is_none());
+    let original = read_json(&node_path(d, &nc));
+    old_binary_rewrite(d, &nc);
+    assert_eq!(read_json(&node_path(d, &nc)), original);
+    assert!(meta_warnings(d, &[]).1.is_empty());
+}

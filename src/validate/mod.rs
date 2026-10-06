@@ -8,11 +8,12 @@ pub mod orphans;
 
 pub use dag::check_dag;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::Serialize;
 use tracing::{debug, info};
 
+use crate::meta;
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
 use crate::tree::types::{MacroEdgeStatus, TreeLogic, TreeType};
@@ -260,6 +261,16 @@ pub fn execute_validate<S: Storage>(
         });
     }
 
+    // Meta-graph validation (RFC-002 S1): ref integrity and norm coverage
+    let meta_warnings = validate_meta_graph(storage, tree_filter);
+    if !meta_warnings.is_empty() {
+        details.push(TreeValidation {
+            tree_id: "_meta_graph".to_string(),
+            errors: vec![],
+            warnings: meta_warnings,
+        });
+    }
+
     let total_errors: usize = details.iter().map(|d| d.errors.len()).sum();
     let total_warnings: usize = details.iter().map(|d| d.warnings.len()).sum();
     let success = total_errors == 0;
@@ -288,4 +299,42 @@ pub fn execute_validate<S: Storage>(
         errors: vec![],
         warnings: vec![],
     }
+}
+
+/// Workspace-wide ref checks (ADR-015) for the synthetic `_meta_graph` entry.
+///
+/// Loads every readable tree and node. Nodes listed on disk that fail to load
+/// yield `NODE_UNREADABLE {node_id}` (they used to be skipped silently), followed
+/// by `meta::check_refs`. With `tree_filter`, only nodes present in that tree
+/// (trunk or NBR branch) are checked.
+fn validate_meta_graph<S: Storage>(storage: &S, tree_filter: Option<&str>) -> Vec<OutputWarning> {
+    let trees: Vec<_> = storage
+        .list_tree_ids()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|id| storage.load_tree(id).ok())
+        .collect();
+    let scope: Option<BTreeSet<String>> = tree_filter.map(|id| {
+        meta::tree_memberships(&trees)
+            .into_iter()
+            .filter(|(_, ends)| ends.iter().any(|e| e.tree == id))
+            .map(|(node, _)| node)
+            .collect()
+    });
+    let in_scope = |id: &str| scope.as_ref().is_none_or(|s| s.contains(id));
+
+    let mut warnings = Vec::new();
+    let mut nodes = Vec::new();
+    for id in storage.list_node_ids().unwrap_or_default() {
+        match storage.load_node(&id) {
+            Ok(node) => nodes.push(node),
+            Err(_) if in_scope(&id) => warnings.push(
+                OutputWarning::new("NODE_UNREADABLE", format!("Node '{id}' cannot be loaded"))
+                    .with_context("node_id", serde_json::Value::String(id)),
+            ),
+            Err(_) => {}
+        }
+    }
+    warnings.extend(meta::check_refs(&nodes, &trees, scope.as_ref()));
+    warnings
 }

@@ -7,8 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use crate::node::Node;
-use crate::tree::{Tree, TreeLogic};
+use crate::node::{Node, NodeType};
+use crate::output::OutputWarning;
+use crate::tree::{Tree, TreeLogic, TreeType};
 
 /// Where a node lives: a tree trunk (`nbr: None`) or an NBR branch of a tree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -167,6 +168,119 @@ pub fn infer_relations(nodes: &[Node], trees: &[Tree]) -> Vec<InferredRelation> 
             })
         })
         .collect()
+}
+
+/// A node type that can act as a norm for UDEs (D-6): NC or CSF, or OBJ —
+/// but only when attached to a Goal Tree (the caller checks attachment).
+fn is_norm_type(node_type: NodeType) -> bool {
+    matches!(node_type, NodeType::Nc | NodeType::Csf | NodeType::Obj)
+}
+
+/// Ref-integrity and norm-coverage warnings for `validate` (ADR-015).
+///
+/// - `DANGLING_NODE_REF {node_id, ref_node, ref_tree, reason}` with reason
+///   `node_missing` | `tree_missing` | `not_in_tree`.
+/// - `NORM_REF_MISSING {node_id, trees}`: only when the workspace has ≥1 GT; a
+///   UDE in a CRT trunk or in an NBR branch with no ref to a norm (NC/CSF/OBJ)
+///   attached to a GT (respecting the ref's tree pin). One warning per node.
+///
+/// `scope` restricts the checked (referencing) nodes; `None` checks all.
+/// Output is sorted by node ID, dangling before norm warnings per node.
+pub fn check_refs(
+    nodes: &[Node],
+    trees: &[Tree],
+    scope: Option<&BTreeSet<String>>,
+) -> Vec<OutputWarning> {
+    let memberships = tree_memberships(trees);
+    let by_id: BTreeMap<&str, &Node> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let tree_by_id: BTreeMap<&str, &Tree> = trees.iter().map(|t| (t.id.as_str(), t)).collect();
+    let tree_type = |id: &str| tree_by_id.get(id).map(|t| t.tree_type);
+    let has_gt = trees.iter().any(|t| t.tree_type == TreeType::Gt);
+
+    let mut warnings = Vec::new();
+    for (id, node) in &by_id {
+        if scope.is_some_and(|s| !s.contains(*id)) {
+            continue;
+        }
+        for r in &node.metadata.refs {
+            let reason = if !by_id.contains_key(r.node.as_str()) {
+                Some("node_missing")
+            } else {
+                match r.tree.as_deref().map(|t| tree_by_id.get(t)) {
+                    Some(None) => Some("tree_missing"),
+                    Some(Some(tree)) if !node_in_tree(tree, &r.node) => Some("not_in_tree"),
+                    _ => None,
+                }
+            };
+            if let Some(reason) = reason {
+                warnings.push(
+                    OutputWarning::new(
+                        "DANGLING_NODE_REF",
+                        format!(
+                            "Node '{}' has a dangling ref to '{}' ({reason})",
+                            id, r.node
+                        ),
+                    )
+                    .with_context("node_id", serde_json::Value::String(id.to_string()))
+                    .with_context("ref_node", serde_json::Value::String(r.node.clone()))
+                    .with_context(
+                        "ref_tree",
+                        r.tree
+                            .clone()
+                            .map_or(serde_json::Value::Null, serde_json::Value::String),
+                    )
+                    .with_context("reason", serde_json::Value::String(reason.to_string())),
+                );
+            }
+        }
+
+        if !has_gt || node.node_type != NodeType::Ude {
+            continue;
+        }
+        let candidate_trees: BTreeSet<&str> = memberships
+            .get(*id)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.nbr.is_some() || tree_type(&e.tree) == Some(TreeType::Crt))
+            .map(|e| e.tree.as_str())
+            .collect();
+        if candidate_trees.is_empty() {
+            continue;
+        }
+        let covered = node.metadata.refs.iter().any(|r| {
+            by_id
+                .get(r.node.as_str())
+                .is_some_and(|target| is_norm_type(target.node_type))
+                && memberships.get(&r.node).is_some_and(|ends| {
+                    ends.iter().any(|e| {
+                        tree_type(&e.tree) == Some(TreeType::Gt)
+                            && r.tree.as_ref().is_none_or(|t| *t == e.tree)
+                    })
+                })
+        });
+        if !covered {
+            warnings.push(
+                OutputWarning::new(
+                    "NORM_REF_MISSING",
+                    format!(
+                        "UDE '{}' has no ref to a norm (NC/CSF/OBJ) of a Goal Tree",
+                        id
+                    ),
+                )
+                .with_context("node_id", serde_json::Value::String(id.to_string()))
+                .with_context(
+                    "trees",
+                    serde_json::Value::Array(
+                        candidate_trees
+                            .into_iter()
+                            .map(|t| serde_json::Value::String(t.to_string()))
+                            .collect(),
+                    ),
+                ),
+            );
+        }
+    }
+    warnings
 }
 
 #[cfg(test)]
@@ -388,5 +502,104 @@ mod tests {
                 ("UDE-002", "NC-002")
             ]
         );
+    }
+
+    fn typed_node(id: &str, kind: NodeType, refs: &[(&str, Option<&str>)]) -> Node {
+        let mut n = node(id, refs);
+        n.node_type = kind;
+        n
+    }
+
+    fn codes(ws: &[OutputWarning]) -> Vec<(String, String)> {
+        ws.iter()
+            .map(|w| {
+                let id = w
+                    .context
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                (w.code.clone(), id.to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dangling_reasons_are_classified() {
+        let trees = [
+            typed_tree("tree-crt-x", "crt", &["UDE-001"]),
+            typed_tree("tree-gt-y", "gt", &[]),
+        ];
+        let nodes = [
+            node(
+                "UDE-001",
+                &[
+                    ("NC-404", None),
+                    ("NC-001", Some("tree-gone")),
+                    ("NC-001", Some("tree-gt-y")),
+                ],
+            ),
+            typed_node("NC-001", NodeType::Nc, &[]),
+        ];
+        let ws = check_refs(&nodes, &trees, None);
+        let reasons: Vec<&str> = ws
+            .iter()
+            .filter(|w| w.code == "DANGLING_NODE_REF")
+            .filter_map(|w| w.context.get("reason").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(reasons, vec!["tree_missing", "not_in_tree", "node_missing"]);
+    }
+
+    #[test]
+    fn norm_rule_requires_gt_and_norm_attached_to_gt() {
+        let crt = typed_tree("tree-crt-x", "crt", &["UDE-001"]);
+        let nodes_no_ref = [node("UDE-001", &[])];
+        // No GT in workspace → silent.
+        assert!(check_refs(&nodes_no_ref, std::slice::from_ref(&crt), None).is_empty());
+        let gt = typed_tree("tree-gt-y", "gt", &["CSF-001", "OBJ-001"]);
+        let ec = typed_tree("tree-ec-z", "ec", &["OBJ-002"]);
+        let trees = [crt, gt, ec];
+        let case = |target: &str, kind: NodeType| {
+            let nodes = [
+                node("UDE-001", &[(target, None)]),
+                typed_node(target, kind, &[]),
+            ];
+            codes(&check_refs(&nodes, &trees, None))
+        };
+        let missing = vec![("NORM_REF_MISSING".to_string(), "UDE-001".to_string())];
+        assert!(case("CSF-001", NodeType::Csf).is_empty());
+        assert!(case("OBJ-001", NodeType::Obj).is_empty());
+        assert_eq!(case("OBJ-002", NodeType::Obj), missing);
+        assert_eq!(case("NC-009", NodeType::Nc), missing); // NC in no GT
+        assert_eq!(codes(&check_refs(&nodes_no_ref, &trees, None)), missing);
+    }
+
+    #[test]
+    fn norm_warning_is_one_per_node_with_sorted_trees_and_scope_filters() {
+        let mut frt = typed_tree("tree-frt-a", "frt", &["INJ-001"]);
+        frt.nbr_branches.push(NbrBranch {
+            id: "NBR-001".into(),
+            source_node: "INJ-001".into(),
+            edges: vec![edge("LINK-001", &["INJ-001"], "UDE-002")],
+            trim_injection: None,
+        });
+        let trees = [
+            typed_tree("tree-crt-b", "crt", &["UDE-001"]),
+            typed_tree("tree-crt-a", "crt", &["UDE-001"]),
+            typed_tree("tree-gt-y", "gt", &[]),
+            frt,
+        ];
+        let nodes = [node("UDE-001", &[]), node("UDE-002", &[])];
+        let ws = check_refs(&nodes, &trees, None);
+        assert_eq!(ws.len(), 2);
+        assert_eq!(
+            ws[0].context.get("trees"),
+            Some(&serde_json::json!(["tree-crt-a", "tree-crt-b"]))
+        );
+        assert_eq!(
+            ws[1].context.get("trees"),
+            Some(&serde_json::json!(["tree-frt-a"]))
+        );
+        let scope: BTreeSet<String> = ["UDE-002".to_string()].into();
+        assert_eq!(check_refs(&nodes, &trees, Some(&scope)).len(), 1);
     }
 }
