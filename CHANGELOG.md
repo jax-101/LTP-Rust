@@ -6,6 +6,13 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-06
+
+### Fixed
+
+- **Reconstrucción de contadores** (`.ltp/counters.json` ausente o corrupto): el rebuild solo leía nombres de fichero, así que los IDs que viven dentro del JSON de los árboles (`LINK`, `ASM`, `NBR`, `MACRO`, `MASM`, `FB`) volvían a 0 y el motor podía **reemitir IDs ya existentes**. Ahora también se recorren las claves `"id"` de `trees/*.json` (los ficheros ilegibles se saltan). `FB` pasa a ser un tipo contado desde `init`. Un tree con slug numérico (`tree-crt-2024`) ya no crea la clave basura `TREE-CRT` en `counters.json`.
+- **Vocabulario de roles de EC**: el schema MCP de `ltp/tree_attach` anunciaba `root, leaf, intermediate`, que siempre fallan `validate` con `EC_VALIDATION`. La descripción (MCP y `ltp tree attach --help`) ahora sale de la misma constante que usa el validador: `objective` (1), `requirement` (≥2), `prerequisite` (≥1 por requirement, `prerequisite → requirement`). Solo cambia la documentación; el comportamiento del validador no varía.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added

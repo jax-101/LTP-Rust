@@ -4,7 +4,7 @@ Motor **determinista** (Rust) para el *Logical Thinking Process* (LTP) de H. Wil
 
 El motor valida **topología** (DAG), **integridad referencial** e **IDs únicos**; **nunca evalúa semántica** — eso lo hace el consumidor (una UI o un agente LLM). Separación estricta de responsabilidades (ADR-001).
 
-**Estado**: `v0.3.0` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo y la flecha larga (macro-edges). **RFC-002 (meta-grafo) es diseño, NO implementado.**
+**Estado**: `v0.3.1` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo y la flecha larga (macro-edges). **RFC-002 (meta-grafo) es diseño, NO implementado.**
 
 ## Empieza aquí según quién eres
 

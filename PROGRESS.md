@@ -9,8 +9,8 @@
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
 | **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
-| **Último release** | v0.3.0 (2026-10-06) — CSF + lógica de árbol derivada del tipo (ADR-014) + `INVALID_ORDER` |
-| **Último bugfix** | Lógica de árbol derivada del tipo: GT = necesidad, edges heredan, CLR #4 y walk por lógica (ADR-014) |
+| **Último release** | v0.3.1 (2026-10-06) — PATCH: rebuild de contadores con IDs embebidos + roles EC en el schema |
+| **Último bugfix** | `Counters::rebuild` recupera LINK/ASM/NBR/MACRO/MASM/FB desde el JSON de los árboles; descripción del rol EC alineada con el validador |
 | **Último añadido** | Tipo de nodo `CSF` (Critical Success Factor del Goal Tree) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
@@ -21,7 +21,8 @@
 | **Tests Slice 2 (macro lifecycle)** | 36/36 |
 | **Tests versión/provenance** | 4/4 |
 | **Tests CSF + lógica de árbol** | 36/36 |
-| **Tests totales** | 567 |
+| **Tests v0.3.1 (contadores + roles EC)** | 15/15 |
+| **Tests totales** | 582 |
 
 ---
 
@@ -67,6 +68,13 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Release v0.3.1] — Rebuild de contadores + roles EC (PATCH)
+**Fecha**: 2026-10-06
+**Naturaleza**: PATCH sin cambio de contrato, previo a RFC-002 Slice 1 (plan `PLAN_v031-and-rfc002-slice1.md`). **No** altera el % del motor ni el factor de escala.
+**Avance**: `Counters::rebuild` recorre las claves `"id"` de `trees/*.json` (antes reemitía IDs embebidos tras perder `counters.json`); prefijos solo en mayúsculas; `FB` en `ENTITY_TYPES`. `EC_ROLES`/`ROLE_HELP` como fuente única del vocabulario EC para validador, MCP y CLI. UATs adversariales: `counters.json` ausente o corrupto (5 variantes), tree corrupto, frontera `LINK-999 → LINK-1000`, IDs anidados, referencias que no cuentan, determinismo, roles legacy y casi correctos. Mutation checks: sin el escaneo de árboles fallan 5 UATs; con la descripción antigua falla U10.
+**Tests totales**: 567 → 582
+**Docs**: CHANGELOG `[0.3.1]`, ENGINE_SPEC (`tree attach`), USAGE_GUIDE §3.3, tag `v0.3.1`.
 
 ### [Release v0.3.0] — `INVALID_ORDER` + contrato de `Storage::load_tree`
 **Fecha**: 2026-10-06
@@ -789,3 +797,4 @@ Análisis Six Thinking Hats → regla: "el edge que conserva las causas original
 | 2026-09-23 | Release v0.2.0 — versionado + provenance (infra) | +4 UATs (`version_provenance`). Infraestructura de release; no altera % del motor ni factor de escala. | 516 → 520 tests. |
 | 2026-10-06 | CSF + lógica de árbol derivada del tipo (ADR-014) | +31 tests (5 UATs CSF + 5 unit + 21 E2E `tree_logic`). Bugfix + tipo aditivo sobre el motor completo (no altera % del motor base ni del Knowledge Pool). | 531 → 562 tests. Factor de escala 1.0x. |
 | 2026-10-06 | Release v0.3.0 — `INVALID_ORDER` + contrato `Storage` | +5 tests (3 E2E `tree_logic` + 2 `storage_contract`). Cierre de diferidos; no altera % del motor ni factor de escala. | 562 → 567 tests. |
+| 2026-10-06 | Release v0.3.1 — rebuild de contadores + roles EC | +15 tests (8 E2E `counters_rebuild` + 2 unit + 5 `ec_roles`). PATCH; no altera % del motor ni factor de escala. | 567 → 582 tests. |
