@@ -8,10 +8,10 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | Slice 2 — Long Arrow Lifecycle (macro add/expand/promote) |
-| **Último release** | v0.3.1 (2026-10-06) — PATCH: rebuild de contadores con IDs embebidos + roles EC en el schema |
-| **Último bugfix** | `Counters::rebuild` recupera LINK/ASM/NBR/MACRO/MASM/FB desde el JSON de los árboles; descripción del rol EC alineada con el validador |
-| **Último añadido** | Tipo de nodo `CSF` (Critical Success Factor del Goal Tree) |
+| **Última fase completada** | RFC-002 Slice 1 — refs entre nodos + meta-grafo inferido (ADR-015) |
+| **Último release** | v0.4.0 (2026-10-06) — MINOR: RFC-002 Slice 1 (refs, `tree relation list`, warnings `_meta_graph`) |
+| **Último bugfix** | `node rm`/`node split` respetan ramas NBR y refs; `validate` reporta nodos ilegibles (`NODE_UNREADABLE`) |
+| **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
 | **UATs Knowledge Pool** | 220/239 |
@@ -22,7 +22,8 @@
 | **Tests versión/provenance** | 4/4 |
 | **Tests CSF + lógica de árbol** | 36/36 |
 | **Tests v0.3.1 (contadores + roles EC)** | 15/15 |
-| **Tests totales** | 582 |
+| **Tests RFC-002 Slice 1** | 46/46 |
+| **Tests totales** | 628 |
 
 ---
 
@@ -68,6 +69,16 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ---
 
 ## Historial de Avance
+
+### [Release v0.4.0] — RFC-002 Slice 1: refs + meta-grafo inferido (MINOR)
+**Fecha**: 2026-10-06
+**Naturaleza**: Primer slice de RFC-002 sobre JSON (arquitectura de dos velocidades). Nueva línea de trabajo fuera del 100% del motor base; **no** altera ese %. Plan `PLAN_v031-and-rfc002-slice1.md`, decisiones D-1..D-10 en ADR-015 (D-4: relaciones sin tipo).
+**Avance**: T-S1.0→T-S1.5 completadas (6 paquetes). `CrossRef` + `NodeMetadata::new`; `src/meta/` puro (semilla de `ltp-core`): `tree_memberships`, `infer_relations`, `check_refs`; refs en `node add/edit/inspect` (CLI + MCP estricto); tool nº 72 `tree_relation_list`; `_meta_graph` en `validate`; integridad NBR/refs en `node rm`/`node split`.
+**UATs**: R1–R22 en `tests/rfc002_s1.rs` (31 E2E adversariales: refs a destinos inválidos sin escritura, auto-ref, duplicados, MCP malformado, fan-out multi-attach y pin, endpoints NBR, `node rm` + undo byte a byte, split, refs colgantes por motivo, nodo ilegible, reglas de norma, filtro `--tree`, round-trip con binario v0.3.0, determinismo entre órdenes de construcción, paridad CLI↔MCP) + 15 unit. Mutation checks R23: sin filtro de pin falla R6; sin condición ≥1 GT falla R14; sin limpieza de refs en `node rm` falla R9; además sin `NODE_UNREADABLE` falla R13, sin `NODE_NOT_IN_TREE` falla R2, sin `SELF_REF` falla R3, sin borrado de rama falla R10a.
+**Tests totales**: 582 → 628
+**Factor de escala**: 1.0x (6 paquetes, esfuerzo ≈ estimado; correcciones limitadas a lints de clippy y drift aditivo de goldens)
+**Docs**: ENGINE_SPEC (refs, `tree relation list`, códigos nuevos, `_meta_graph`), USAGE_GUIDE §6.6, INTEGRATION (mínima `v0.4.0`, §4), RELEASE_POLICY (gate `>= 0.4.0`), CHANGELOG `[0.4.0]`, README, contract/README, tag `v0.4.0`.
+**Huecos registrados (fuera de alcance)**: `node split` borra el nodo globalmente pero solo reescribe el árbol indicado (preexistente); `node rm` ignora `macro_edges`; validación XOR de EC; `--dry-run` en mutaciones.
 
 ### [Release v0.3.1] — Rebuild de contadores + roles EC (PATCH)
 **Fecha**: 2026-10-06

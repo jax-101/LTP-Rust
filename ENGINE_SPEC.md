@@ -73,7 +73,7 @@ Diagnóstico de salud determinista del workspace:
 
 ### 2.2. Entidades (Pool Global)
 
-#### `ltp node add "<label>" --type <TYPE> [--tags t1,t2] [--observable true|false]`
+#### `ltp node add "<label>" --type <TYPE> [--tags t1,t2] [--observable true|false] [--ref NODE[@TREE]]…`
 
 Tipos: `UDE | RC | INJ | NC | GOAL | OBJ | WANT | OBS | IO | INT | DE | REQ | PRE | CSF`
 
@@ -81,7 +81,13 @@ Tipos: `UDE | RC | INJ | NC | GOAL | OBJ | WANT | OBS | IO | INT | DE | REQ | PR
 
 "Con Dientes": ejecuta un linter sintáctico suave. Advierte si el texto contiene conjunciones causales prohibidas por CLR #2 (`because`, `in order to`, `para`), sugiriendo dividir la idea.
 
-#### `ltp node edit <ID> [--label "<texto>"] [--add-tag <tag>] [--rm-tag <tag>] [--observable true|false] [--epistemic <fact|hypothesis|assumption|derived>]`
+**Refs entre nodos (RFC-002 S1, ADR-015, desde v0.4.0).** `--ref` (repetible) declara que este nodo se refiere a otro nodo del pool, opcionalmente fijado a un árbol (`NODE@TREE`). En disco: `metadata.refs: [{"node": "NC-001", "tree": "tree-gt-x" | null}]`, set ordenado por `(node, tree)` (un duplicado es no-op). Se omite si está vacío (byte-compatible con v0.3.0). MCP: `refs: [{node, tree?}]` (parser estricto: claves desconocidas o tipos erróneos → `-32602`).
+
+Validación bloqueante, previa al minteo del ID: `NODE_NOT_FOUND` (destino inexistente), `TREE_NOT_FOUND` (árbol del pin inexistente), `NODE_NOT_IN_TREE` (destino ausente del árbol, tronco o ramas NBR), `SELF_REF` (auto-referencia). Contexto: `ref_node`, `ref_tree`. En CLI, un `--ref` léxicamente inválido (`@`, `NC-001@`, espacios, dos `@`) → `INVALID_REF`.
+
+#### `ltp node edit <ID> [--label "<texto>"] [--add-tag <tag>] [--rm-tag <tag>] [--observable true|false] [--epistemic <fact|hypothesis|assumption|derived>] [--add-ref NODE[@TREE]]… [--rm-ref NODE[@TREE]]…`
+
+`--rm-ref` se aplica antes que `--add-ref`; elimina por coincidencia exacta `(node, tree)` y no valida el destino (permite limpiar refs colgantes). Una ref ausente → warning `REF_NOT_PRESENT {node_id, ref_node, ref_tree}` (no-op). `--add-ref` aplica la misma validación que `node add`. MCP: `add_refs` / `rm_refs`.
 
 Cuando se modifica `--epistemic`, el motor emite warnings de cascada epistémica:
 - `EPISTEMIC_UNBOUNDED_FACT`: al promover a `fact` o `derived`, si alguna causa upstream (en cualquier tree donde participe) tiene status `hypothesis` o `assumption`.
@@ -89,11 +95,14 @@ Cuando se modifica `--epistemic`, el motor emite warnings de cascada epistémica
 
 #### `ltp node rm <ID>[,<ID2>,<ID3>] [--force]`
 
-Elimina nodos del pool global y todos sus edges asociados en todas las vistas. Batch: acepta lista separada por comas.
+Elimina nodos del pool global y todos sus edges asociados en todas las vistas, incluidos los edges de ramas NBR. Batch: acepta lista separada por comas.
+
+- Si un nodo eliminado es el `source_node` de una rama NBR, la rama se elimina: warning `NBR_BRANCH_REMOVED {tree_id, nbr_id}`.
+- Las refs entrantes desde otros nodos se eliminan: un warning `REFS_STRIPPED {referencing, node_ids}` por nodo afectado (`node_ids` ordenado). Deshacible con `undo`.
 
 #### `ltp node inspect <ID>`
 
-Muestra en qué árboles participa, con qué rol en cada uno, y sus conexiones.
+Muestra en qué árboles participa, con qué rol en cada uno, y sus conexiones. Desde v0.4.0, `data` incluye `refs` (salientes) y `referenced_by` (IDs de nodos que lo referencian, ordenados y sin duplicados).
 
 #### `ltp node list --tree <TREE_ID> [--type UDE,RC,...] [--status active,draft,...]`
 
@@ -105,7 +114,7 @@ Busca nodos por contenido de label (substring match).
 
 #### `ltp node split <ID> --into "<label_1>" "<label_2>" --tree <TREE_ID>`
 
-Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al primer nodo y salientes al segundo. Elimina el nodo original. Caso de uso principal: CLR #2 (entidad con ideas mezcladas).
+Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al primer nodo y salientes al segundo. Elimina el nodo original. Ambos hijos heredan `refs` y metadata extra (status `active`). Las refs entrantes de otros nodos se reescriben para apuntar a **ambos** hijos (conservando el pin). En ramas NBR del árbol: `source_node` y los `to` entrantes → primer hijo; los `from` → segundo hijo. Caso de uso principal: CLR #2 (entidad con ideas mezcladas).
 
 ---
 
@@ -144,6 +153,21 @@ Renombra el `name` (label) de una instancia de tree existente. Muta **solo** el 
 #### `ltp tree diff <TREE_A> <TREE_B>`
 
 Reporta diferencias entre dos trees: nodos añadidos/quitados, edges añadidos/quitados/modificados, cambios de operador.
+
+#### `ltp tree relation list [--tree <TREE_ID>]`
+
+*(RFC-002 S1, ADR-015, desde v0.4.0. MCP: `ltp/tree_relation_list`.)* Meta-grafo **inferido al vuelo** desde las `refs` de los nodos; nunca se persiste y es solo lectura. Para cada nodo N y cada ref r: extremos(N) × extremos(r.node), filtrando por `r.tree` si hay pin. Un extremo es `{tree, nbr}` (`nbr: null` = tronco). Se descartan los pares con extremos idénticos (refs intra-árbol). Las relaciones son **estructurales y sin tipo** (no hay `relation_type`: inferirlo afirmaría la intención del analista, ADR-001).
+
+```json
+{ "relations": [ { "referencing": {"tree": "tree-crt-x", "nbr": null},
+                   "referenced":  {"tree": "tree-gt-y",  "nbr": null},
+                   "logic": {"referencing": "sufficiency", "referenced": "necessity"},
+                   "basis": [{"node": "UDE-001", "ref": "NC-003"}],
+                   "inferred": true } ],
+  "count": 1 }
+```
+
+`logic` se deriva del tipo de cada árbol (ADR-014). Salida ordenada por `(referencing, referenced)`. `--tree` filtra las relaciones que tocan ese árbol; si no existe → `TREE_NOT_FOUND`.
 
 #### `ltp tree walk <TREE_ID> [--order topological|reverse] [--show-knowledge]`
 
@@ -383,6 +407,7 @@ Ejecuta validaciones en dos niveles:
 - CLR #5 (MAG weights): `CLR5_MAG_WEIGHTS_NOT_NORMALIZED` si las weights de edges MAG al mismo nodo no suman ~1.0 (tolerancia ±0.01). `CLR5_MAG_WEIGHT_UNDEFINED` si un edge MAG no tiene weight definido.
 - Nodos huérfanos dentro del tree (attached pero sin edges). Excepción (ADR-013): los extremos de un `macro_edge` en estado `reservation` se consideran conectados (el salto lógico ya los relaciona), por lo que no disparan `ORPHAN_NODE_IN_TREE`.
 - Flecha larga en estado `reservation` sin resolver: `LONG_ARROW_RESERVATION_PENDING` (CLR #1, contexto `macro_link`/`from`/`to`) recuerda que el salto está pendiente de `macro expand` o `macro promote`. No bloquea (ADR-010).
+- *(Meta-grafo, entrada sintética `_meta_graph`, desde v0.4.0.)* `DANGLING_NODE_REF {node_id, ref_node, ref_tree, reason}` con `reason` = `node_missing` | `tree_missing` | `not_in_tree` (refs rotas por edición manual o binarios antiguos). `NORM_REF_MISSING {node_id, trees}`: solo si el workspace tiene ≥1 GT; una UDE adjunta a un CRT o presente en una rama NBR sin ref a una norma (NC, CSF u OBJ) adjunta a un GT (respetando el pin). Un warning por nodo, `trees` ordenado. `NODE_UNREADABLE {node_id}`: nodo listado en disco que no se puede cargar (antes se saltaba en silencio). Con `--tree`, solo nodos de ese árbol (tronco o ramas NBR). La entrada solo aparece si hay warnings.
 - Higiene de resumen de flecha larga (Slice 1): `LONG_ARROW_SUMMARY_STALE` (proyecciones colgantes o supuestos interiores sin mapear) y `MACRO_ASSUMPTION_UNGROUNDED` (macro-assume sobre un `overlay` con interior no vacío pero sin `projection_refs`).
 
 ---

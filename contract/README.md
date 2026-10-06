@@ -48,6 +48,7 @@ llegar al consumidor.
 | `tree_walk.json` | `tree walk <crt>` | nodos `{id, role, incoming_edges[], outgoing_edges[]}`; **sin** `feedback_edges` |
 | `tree_walk_knowledge.json` | `tree walk <crt> --show-knowledge` | campo opcional `knowledge{supports,contradicts,contextualizes}` |
 | `tree_list.json` | `tree list` | `tree_type` (no `type`), enums minúscula, `logic`, `node_count`/`edge_count` |
+| `tree_relation_list.json` | `tree relation list` (GT + CRT con `node edit UDE-001 --add-ref NC-001`) | `relations[]` con extremos `{tree, nbr}` (`nbr: null`), `logic` por extremo, `basis[{node, ref}]`, `inferred: true`, **sin** `relation_type`; `count` |
 | `validate.json` | `validate` | `graph_health` + warnings CLR anidados en `data.details[]` (contexto aplanado: `edge_id`, `node_id`) |
 | `warning_root.json` | `node edit INT-001 --epistemic fact` | `warnings[]` **poblado a nivel raíz** (`EPISTEMIC_UNBOUNDED_FACT`, contexto aplanado); no bloqueante (`success:true`) |
 | `error_flattened_context.json` | `macro add` con `--from X --to X` (self-loop) | `errors[]` = `{code, detail, ...contexto aplanado}` (aquí `node_id` al nivel raíz); `success:false` |

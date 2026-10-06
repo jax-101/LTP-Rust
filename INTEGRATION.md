@@ -11,18 +11,18 @@ Hay **dos superficies de integración**, ambas sobre el **mismo motor** y el **m
 
 > **Regla de oro**: el binario en marcha es la **fuente de verdad**. Esta guía enseña a invocarlo y a leer su versión; **no** duplica el catálogo de comandos (vive en `ENGINE_SPEC.md` y en el propio binario).
 >
-> **Versión mínima de motor asumida por esta guía: `v0.3.0`.**
+> **Versión mínima de motor asumida por esta guía: `v0.4.0`.**
 
 ## 1. Obtener el binario
 
 ```bash
-git pull origin main          # o: git checkout v0.3.0  (para fijar una versión)
+git pull origin main          # o: git checkout v0.4.0  (para fijar una versión)
 cargo build --release
 # → target/release/ltp        (CLI)
 # → target/release/ltp-mcp    (servidor MCP)
 ```
 
-Para reproducibilidad, compila desde un tag: `git checkout v0.3.0 && cargo build --release`.
+Para reproducibilidad, compila desde un tag: `git checkout v0.4.0 && cargo build --release`.
 
 ## 2A. Integración por CLI (apps / UI)
 
@@ -32,7 +32,7 @@ Modelo: **spawnea `ltp` una vez por comando**. No hay estado en memoria entre ll
 - **Workspace = directorio de trabajo (`cwd`)**. ⚠️ El CLI **no** tiene flag `--workspace`: el motor opera sobre el `cwd` del proceso. Tu consumidor debe fijar el *current directory* al workspace al spawnear (p. ej. `Command::new(bin).current_dir(workspace)`).
 - **Salida**: JSON canónico (`CommandOutput`) por **stdout**. `--human` da texto legible (no lo parsees); `--dry-run` simula la operación sin escribir a disco.
 - **Errores de proceso**: si `stdout` viene vacío, lee `stderr` (fallo antes de producir salida JSON).
-- **Handshake / feature-gate**: `ltp --version` → `X.Y.Z+<sha>[.dirty]`. Parsea el *core* antes de `+` y exige `>= 0.3.0` (antes de `0.3.0`, `tree walk` sin `--order` recorre siempre en `topological` y los GT tienen lógica `sufficiency`). El fragmento tras `+` es el commit exacto (`git checkout <sha>` reproduce código y docs).
+- **Handshake / feature-gate**: `ltp --version` → `X.Y.Z+<sha>[.dirty]`. Parsea el *core* antes de `+` y exige `>= 0.4.0` (antes de `0.4.0` no existen `refs` en los nodos ni `tree relation list`; antes de `0.3.0`, `tree walk` sin `--order` recorre siempre en `topological` y los GT tienen lógica `sufficiency`). El fragmento tras `+` es el commit exacto (`git checkout <sha>` reproduce código y docs).
 
 ```bash
 cd /ruta/al/workspace       # el cwd ES el workspace
@@ -86,9 +86,10 @@ Los nombres se corresponden 1:1: subcomando CLI `tree walk` ↔ tool MCP `ltp/tr
 
 ## 4. Estable vs WIP (no construyas contra vaporware)
 
+- ✅ **v0.4.0 — RFC-002 Slice 1** — `refs` entre nodos (`metadata.refs`, `--ref NODE[@TREE]`, MCP `refs`/`add_refs`/`rm_refs`), meta-grafo **inferido y sin tipo** (`tree relation list` / `ltp/tree_relation_list`, ADR-015), warnings `_meta_graph` en `validate` (`DANGLING_NODE_REF`, `NORM_REF_MISSING`, `NODE_UNREADABLE`) e integridad de ramas NBR y refs en `node rm`/`node split`.
 - ✅ **v0.3.0** — tipo de nodo `CSF`, lógica de árbol derivada del tipo (ADR-014: GT/EC/PRT de necesidad, `tree walk` con orden por defecto según la lógica, CLR #4 solo en suficiencia) y error `INVALID_ORDER`.
 - ✅ **v0.2.0** — implementado y con contrato estable: núcleo determinista (grafo causal, DAG, integridad referencial), Knowledge Pool, historial undo/redo, y la flecha larga (Slice 1 `macro-assume` + Slice 2 `macro add/expand/promote`).
-- 🚧 **RFC-002 meta-grafo** (escenarios, marcos temporales, multi-actor) — **RFC de diseño, NO implementado**. No hay comandos ni tools para eso en el binario. No construyas contra ello hasta que se versione: aparecerá como MINOR en [CHANGELOG.md](CHANGELOG.md) y se anunciará aquí (§4 + versión mínima en cabecera).
+- 🚧 **RFC-002 Slices 2+** (severidad, relaciones fijadas/tipadas, escenarios, marcos temporales, multi-actor) — **diseño, NO implementado**. No construyas contra ello hasta que se versione: aparecerá como MINOR en [CHANGELOG.md](CHANGELOG.md) y se anunciará aquí.
 
 ## Cómo se mantiene esta guía al día
 

@@ -421,6 +421,32 @@ Para modelar ciclos de retroalimentacion (que refuerzan o estabilizan):
 "Crea un feedback loop positivo: UDE-003 refuerza RC-001 ('La perdida de clientes reduce ingresos, lo que agrava la falta de inversion')"
 ```
 
+### 6.6. Conectar arboles: refs y meta-grafo inferido (v0.4.0)
+
+Un nodo puede **referirse** a otro nodo de otro arbol (ADR-015). El caso tipico: cada UDE del CRT se mide contra una NC (o CSF) del Goal Tree.
+
+```
+"Haz que UDE-001 referencie NC-002 del Goal Tree"
+"Que relaciones hay entre arboles?"
+"Valida el workspace: que UDEs no tienen norma?"
+```
+
+Por CLI:
+
+```bash
+ltp node edit UDE-001 --add-ref NC-002@tree-gt-meta   # el pin @TREE es opcional
+ltp tree relation list                                # meta-grafo inferido
+ltp tree relation list --tree tree-crt-realidad       # solo relaciones que tocan ese arbol
+ltp validate                                          # NORM_REF_MISSING / DANGLING_NODE_REF en _meta_graph
+```
+
+Claves:
+- Las relaciones son **inferidas al vuelo y sin tipo**: el motor dice que el CRT *referencia* al GT y con que `logic` va cada extremo, pero no interpreta la intencion (eso lo hace Claude o la UI).
+- Sin pin, una ref a un nodo adjunto a 2 arboles produce 2 relaciones; usa `@TREE` para fijar una.
+- Refs dentro del mismo arbol se guardan pero no generan relacion.
+- `NORM_REF_MISSING` solo aparece si existe al menos un Goal Tree.
+- `node rm` limpia las refs entrantes (`REFS_STRIPPED`) y `node split` las redirige a ambos hijos. Todo es deshacible.
+
 ---
 
 ## 7. Preguntas Poderosas para Claude durante el Analisis
@@ -534,7 +560,7 @@ Yo: "Crea el PRT — que obstaculos hay para implementar?"
 |-------|-------|-----------|
 | Workspace | `init`, `status` | Crear y diagnosticar workspace |
 | Node | `add`, `edit`, `rm`, `inspect`, `list`, `search`, `split` | Gestionar entidades del pool |
-| Tree | `new`, `list`, `rename`, `rm`, `attach`, `detach`, `clone`, `diff`, `walk` | Gestionar vistas topologicas |
+| Tree | `new`, `list`, `rename`, `rm`, `attach`, `detach`, `clone`, `diff`, `walk`, `relation_list` | Gestionar vistas topologicas y el meta-grafo inferido |
 | Link | `connect`, `disconnect`, `feedback`, `inspect`, `find`, `reverse`, `move`, `insert_between`, `group`, `dissolve`, `split`, `reoperator`, `add_cause`, `rm_cause` | Relaciones causa-efecto |
 | Assume | `add`, `edit`, `rm`, `list`, `move` | Supuestos en edges |
 | Logic | `invalidate`, `validate`, `trace` | Romper supuestos, validar, explorar |

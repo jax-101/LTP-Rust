@@ -4,7 +4,7 @@ Motor **determinista** (Rust) para el *Logical Thinking Process* (LTP) de H. Wil
 
 El motor valida **topología** (DAG), **integridad referencial** e **IDs únicos**; **nunca evalúa semántica** — eso lo hace el consumidor (una UI o un agente LLM). Separación estricta de responsabilidades (ADR-001).
 
-**Estado**: `v0.3.1` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo y la flecha larga (macro-edges). **RFC-002 (meta-grafo) es diseño, NO implementado.**
+**Estado**: `v0.4.0` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo, la flecha larga (macro-edges) y **RFC-002 Slice 1** (refs entre nodos y meta-grafo inferido, ADR-015). Los slices siguientes de RFC-002 son diseño, no implementado.
 
 ## Empieza aquí según quién eres
 
@@ -48,7 +48,7 @@ cargo fmt --all -- --check
 **Arquitectura y decisiones**
 - [ADR.md](ADR.md) — registro de decisiones de arquitectura.
 - [RFC-001_hybrid-persistence.md](RFC-001_hybrid-persistence.md) — persistencia híbrida (JSON → Turso).
-- [RFC-002_meta-graph.md](RFC-002_meta-graph.md) — meta-grafo (**diseño, NO implementado**).
+- [RFC-002_meta-graph.md](RFC-002_meta-graph.md) — meta-grafo (Slice 1 implementado en v0.4.0; resto en diseño).
 
 **Planificación y progreso**
 - [PLAN.md](PLAN.md) — plan de desarrollo por fases con UATs.

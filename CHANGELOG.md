@@ -6,6 +6,28 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-06
+
+RFC-002 Slice 1 (ADR-015): refs entre nodos y meta-grafo inferido. Cambio aditivo (MINOR): los nodos sin refs se serializan byte-idénticos a v0.3.x.
+
+### Added
+
+- **Refs entre nodos** (`metadata.refs: [{node, tree}]`, set ordenado): `node add --ref NODE[@TREE]`, `node edit --add-ref/--rm-ref` (repetibles); MCP `refs` en `ltp/node_add` y `add_refs`/`rm_refs` en `ltp/node_edit` (parser estricto, `-32602` ante shape inválido). Validación bloqueante previa al minteo de ID: `NODE_NOT_FOUND`, `TREE_NOT_FOUND`, `NODE_NOT_IN_TREE` y el código nuevo `SELF_REF`. CLI: `INVALID_REF` para un `--ref` léxicamente inválido. `--rm-ref` de una ref ausente → warning `REF_NOT_PRESENT`.
+- **`node inspect`** expone `refs` y `referenced_by`.
+- **`tree relation list [--tree]`** / `ltp/tree_relation_list` (tool nº 72): meta-grafo inferido al vuelo, relaciones **estructurales y sin tipo** entre extremos `{tree, nbr}` con `logic` por extremo y `basis` ordenado. Nunca se persiste.
+- **`validate`, entrada sintética `_meta_graph`**: `DANGLING_NODE_REF` (`node_missing|tree_missing|not_in_tree`), `NORM_REF_MISSING` (UDE de CRT/NBR sin ref a una norma de un GT; solo con ≥1 GT) y `NODE_UNREADABLE`. Todos son warnings.
+- Golden de contrato `contract/tree_relation_list.json`.
+
+### Fixed
+
+- **`node rm` y ramas NBR**: los edges de rama que tocaban el nodo quedaban colgando; ahora se eliminan, y si el nodo era el `source_node` la rama entera se borra (warning `NBR_BRANCH_REMOVED`). Las refs entrantes se limpian (warning `REFS_STRIPPED`).
+- **`node split`**: perdía la metadata del nodo; ahora ambos hijos heredan `refs` y claves extra, las refs entrantes se reescriben a ambos hijos y los edges NBR se redirigen.
+- **`validate`** saltaba en silencio los nodos ilegibles; ahora emite `NODE_UNREADABLE`.
+
+### Changed
+
+- Golden `contract/warning_root.json`: `data` de `node edit` incluye `refs` (aditivo).
+
 ## [0.3.1] - 2026-10-06
 
 ### Fixed
