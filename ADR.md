@@ -370,3 +370,42 @@ Consecuencias
   - fan-out: una ref sin `tree` a un nodo adjunto a N árboles produce N relaciones (es intencionado; `tree` lo acota);
   - coste O(N+T) por llamada;
   - una clave futura dentro de un `CrossRef` se perdería al reescribir con v0.4.0.
+
+ADR-016: Integridad Global de las Mutaciones de Nodo (`node split` / `node rm`, v0.5.0)
+
+Contexto
+
+En v0.4.0 (`PROGRESS.md`) quedaron dos huecos: `node split` borra el nodo del pool global pero solo reescribe el árbol indicado con `--tree`, y `node rm` no toca `macro_edges`. La investigación de `PLAN_v050-integrity.md` encontró más casos:
+- El split tampoco reescribe `feedback_edges` ni `macro_edges`, ni siquiera en el propio árbol `--tree`.
+- `macro expand` y `path replace` no comprueban los extremos de la macro. Una macro colgante materializa edges rotos.
+- `validate` solo comprueba la integridad referencial de `tree.edges` del tronco, así que los workspaces dañados por v0.4.0 pasan la validación.
+- `rm` y `split` se saltan en silencio los árboles que no pueden leer (`Err(_) => continue`).
+
+Decisión
+- D-1: el split reescribe **todos** los árboles donde aparece el nodo: tronco, ramas NBR, feedback y macros. `--tree` sigue siendo obligatorio como árbol de contexto (`NODE_NOT_IN_TREE`). La respuesta añade `affected_trees`, ordenado y con el árbol `--tree` incluido.
+- D-2: una sola regla de dirección. Lo entrante va a `first` (edge `to`, feedback `to`, macro `to`, NBR `source_node`). Lo saliente va a `second` (edge `from[]`, feedback `from`, macro `from`). En `nodes[]` y en `macro.interior_nodes`, el original se sustituye **en su posición** por `[first, second]`, sin duplicar. No hay edge `first→second`, así que redirigir solo puede quitar caminos y nunca crea ciclos.
+- D-3: `node rm` poda las macros.
+  - (a) Si se borra un extremo, la macro se elimina junto con sus `MacroAssumption` (`reason=endpoint_removed`).
+  - (b) Si se borra un nodo interior, sale de `interior_nodes`, y los edges eliminados salen de `interior_links`.
+  - (c) Un `Overlay` que se queda sin `interior_links` se elimina (`reason=interior_emptied`).
+  - Cada eliminación emite el warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, from, to, assumption_ids}`.
+- D-4: fail-closed. `split` y `rm` cargan todos los árboles antes de escribir. Si alguno no se puede leer, devuelven `IO_ERROR {tree_id}`: 0 bytes escritos y ningún contador consumido.
+- D-5: `validate` amplía `REFERENTIAL_INTEGRITY_VIOLATION` a `nodes[]`, `feedback_edges`, `nbr_branches` (edges y `source_node`) y `macro_edges` (`from`, `to` e `interior_nodes`), con `location` y el ID del contenedor. Un nodo ilegible (`NODE_UNREADABLE`) cuenta como existente, para no duplicar el error.
+- Defensivo: `macro expand` y `path replace` comprueban que los extremos están en `tree.nodes` antes de mintear contadores (`NODE_NOT_IN_TREE`).
+
+Justificación
+- El nodo es una entidad global del pool, y las refs entrantes ya se reescriben de forma global (ADR-015). Un split local que conservara el original duplicaría identidad y contradiría ENGINE_SPEC.
+- Hay simetría con `NBR_BRANCH_REMOVED` ("limpiar y avisar"). Un `Overlay` sin interior no es un estado válido de ADR-013. Degradarlo a `Reservation` sería una transición implícita que nadie ha autorizado.
+- El undo hace snapshot de `nodes/`, `trees/` y `knowledge/` completos (ADR-009), así que reescribir N árboles se puede deshacer sin cambios en `history`.
+- Dos velocidades: `redirect_split`, `prune_removed` y `check_tree_integrity` son funciones puras sobre `Tree`, en `src/meta/integrity.rs`, candidatas a `ltp-core`.
+
+Consecuencias
+- Positivas:
+  - ninguna mutación de nodo deja referencias colgantes;
+  - los workspaces dañados por v0.4.0 se pueden diagnosticar con `validate`;
+  - el contrato solo crece de forma aditiva (MINOR v0.5.0).
+- Negativas:
+  - un workspace con un árbol corrupto bloquea `rm` y `split` hasta que se repare;
+  - workspaces que hoy pasan `validate` empezarán a fallar (es correcto, porque están rotos);
+  - la pérdida de `MacroAssumption` en `rm` solo se puede recuperar con `undo`.
+- Fuera de alcance: el `role` de los hijos de un split, los knowledge links al nodo partido y `tree detach` de un extremo de macro.
