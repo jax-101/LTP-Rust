@@ -3,6 +3,8 @@
 //! Pure functions over loaded nodes and trees: no `Storage`, no I/O. They are
 //! the seed of the future `ltp-core` crate.
 
+pub mod integrity;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
