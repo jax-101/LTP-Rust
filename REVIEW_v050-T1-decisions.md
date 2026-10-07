@@ -7,7 +7,7 @@
 | # | Decisión | Afecta a | Veredicto |
 |---|---|---|---|
 | 1 | `RemovedMacro` lleva `from`/`to` + `MacroRemovalReason::as_str()` | T3 (warning) | ✅ con cambios |
-| 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ☐ |
+| 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ✅ cambiada (opción C) |
 | 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ☐ |
 | 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ☐ |
 | 5 | `projection_refs` de `MacroAssumption` no se tocan en `rm` | T3 (rm), M3 | ☐ |
@@ -42,7 +42,7 @@
 
 **Qué dice el plan (D-2):** "el original se sustituye **en su posición** por `[first, second]` (sin duplicar si un hijo ya estuviera)". No dice *qué posición gana* si el hijo ya está.
 
-**Qué hice** (`splice_children`, `:132`):
+**Qué hice** (`splice_children`, `:141`, versión original, ya sustituida):
 - Los hijos se insertan en la posición de la **primera** aparición del original.
 - Si un hijo ya estaba en la lista, se queda solo en su **primera** posición (antes o después del original), y no se repite.
 - Las apariciones repetidas del original (un estado ya corrupto) se eliminan todas.
@@ -59,9 +59,18 @@
 - (a) El hijo ya existente gana siempre su posición original, aunque esté después del original. `[X, X1]` daría `[X2, X1]`, con el orden de los hijos invertido.
 - (b) Los hijos siempre van en la posición del original y se borran las copias previas. `[X1, X, B]` daría `[X1, X2, B]` igualmente, pero se perdería el `role` de X1.
 
-**Test:** `u2b_children_not_duplicated` (`:492`).
+**Test:** `u2b_children_not_duplicated` (`:493`).
 
-**Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
+**Veredicto:** ✏️ cambiada a la **opción C** (2026-10-07):
+- **Fallo encontrado al revisar:** la versión original no conservaba el `role` en todos los casos, como decía la tabla de arriba. Si el hijo existente estaba **después** del original, se reconstruía con `role: None` y se descartaba la entrada antigua: `[X, X1🎫]` ⇒ `[X1, X2]`, con el role perdido. Había dos criterios distintos según si estaba antes o después.
+- **Regla nueva, una sola:** lo que ya está en la lista no se mueve ni se reconstruye; solo se insertan **los hijos que faltan**, en el sitio de la primera aparición de X. Todas las apariciones de X se eliminan.
+  - `[A, X, B]` ⇒ `[A, X1, X2, B]` (el caso real, siempre)
+  - `[X1, X, B]` ⇒ `[X1, X2, B]`
+  - `[X, X1🎫, B]` ⇒ `[X2, X1🎫, B]` (el orden de los hermanos queda invertido, solo en este caso inalcanzable)
+  - `[X1, X, X2, X]` ⇒ `[X1, X2]`
+- **Alcance real:** nulo en el CLI, porque los hijos son IDs recién generados, el contador solo crece y el undo no restaura contadores. Es una garantía de la función pura: nunca duplica IDs ni pierde datos.
+- **Tests:** U2b ajustado, U2c nuevo (el role se conserva), U2d nuevo (ambos hijos presentes y X repetido). U2b y U2c se vieron en rojo con la versión original.
+- **Hallazgo colateral, S14 reformulado en el PLAN:** `nodes[]` nunca se ordena (`attach` hace `push` y `save_tree` no ordena), así que "dos órdenes de construcción ⇒ ficheros idénticos" era imposible. Ahora S14 comprueba que el split es local y en posición. El mutante "hijos al final" sigue fallando en U2 y en el S14 nuevo.
 
 ---
 
@@ -69,7 +78,7 @@
 
 **Qué dice el plan (D-3c):** "Un `Overlay` cuyo `interior_links` queda vacío se elimina".
 
-**Qué hice** (`:217`): el Overlay se elimina por `interior_emptied` solo si este `rm` ha quitado algo de su interior y, como consecuencia, `interior_links` queda vacío. Un Overlay que **ya tenía** `interior_links: []` antes del `rm` (un legacy raro o escrito a mano) no se toca.
+**Qué hice** (`:215`): el Overlay se elimina por `interior_emptied` solo si este `rm` ha quitado algo de su interior y, como consecuencia, `interior_links` queda vacío. Un Overlay que **ya tenía** `interior_links: []` antes del `rm` (un legacy raro o escrito a mano) no se toca.
 
 **Por qué:** si no, borrar un nodo cualquiera del árbol eliminaría en silencio (con warning, pero sin relación causal) una macro que no tiene nada que ver con el nodo borrado. Eso es una transición no autorada, justo lo que ADR-016 quiere evitar. Ese estado inválido previo es asunto de `validate`, no de `rm`.
 
@@ -99,7 +108,7 @@
 - (a) Solo `nbr_id` (lectura literal).
 - (b) `location: "nbr_edges"` como valor distinto de `nbr_branches`. Más preciso, pero añade un valor al enum de `location` que el plan no contempla.
 
-**Test:** `u6_one_violation_per_structure_in_fixed_order` (`:727`).
+**Test:** `u6_one_violation_per_structure_in_fixed_order` (`:750`).
 
 **Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
 

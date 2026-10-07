@@ -133,10 +133,11 @@ fn redirect_edge(edge: &mut Edge, original: &str, first: &str, second: &str) -> 
     changed
 }
 
-/// Replaces the first occurrence of `original` in place by `children`, in order.
+/// Replaces `original` in place by the children that are not listed yet (ADR-016 D-2).
 ///
-/// Further occurrences of `original` are dropped, and a child that is already listed keeps
-/// only its first position, so no ID appears twice.
+/// Entries already in the list are never moved or rebuilt, so an existing child keeps its
+/// slot and its data (e.g. `role`). The missing children take the slot of the first
+/// occurrence of `original`, in order. Every occurrence of `original` is dropped.
 fn splice_children<T>(
     items: &mut Vec<T>,
     key: impl Fn(&T) -> &str,
@@ -144,28 +145,17 @@ fn splice_children<T>(
     children: [&str; 2],
     make: impl Fn(&str) -> T,
 ) -> bool {
-    if !items.iter().any(|it| key(it) == original) {
+    let Some(pos) = items.iter().position(|it| key(it) == original) else {
         return false;
-    }
-    let mut placed = [false; 2];
-    for it in std::mem::take(items) {
-        let k = key(&it);
-        if k == original {
-            for (slot, child) in placed.iter_mut().zip(children) {
-                if !*slot {
-                    *slot = true;
-                    items.push(make(child));
-                }
-            }
-        } else if let Some(i) = children.iter().position(|c| *c == k) {
-            if !placed[i] {
-                placed[i] = true;
-                items.push(it);
-            }
-        } else {
-            items.push(it);
-        }
-    }
+    };
+    let missing: Vec<T> = children
+        .into_iter()
+        .filter(|c| !items.iter().any(|it| key(it) == *c))
+        .map(make)
+        .collect();
+    // `pos` is the first occurrence, so nothing before it is removed and it stays valid.
+    items.retain(|it| key(it) != original);
+    items.splice(pos..pos, missing);
     true
 }
 
@@ -497,7 +487,8 @@ mod tests {
         assert_eq!(t.edges[1].from, vec!["X2"]);
     }
 
-    // U2b: a child already listed is not duplicated.
+    // U2b: a child already listed is not duplicated and keeps its own slot, before or after
+    // the original; only the missing children take the original's slot (D2, option C).
     #[test]
     fn u2b_children_not_duplicated() {
         let mut t = tree(&["X1", "X", "B"]);
@@ -505,7 +496,25 @@ mod tests {
             .push(overlay("MACRO-001", "A", "B", &["X", "X1"], &[]));
         assert!(redirect_split(&mut t, "X", "X1", "X2"));
         assert_eq!(node_ids(&t), vec!["X1", "X2", "B"]);
-        assert_eq!(t.macro_edges[0].interior_nodes, vec!["X1", "X2"]);
+        assert_eq!(t.macro_edges[0].interior_nodes, vec!["X2", "X1"]);
+    }
+
+    // U2c: an existing child listed after the original keeps its role (no data loss).
+    #[test]
+    fn u2c_existing_child_after_original_keeps_role() {
+        let mut t = tree(&["X", "X1", "B"]);
+        t.nodes[1].role = Some("objective".into());
+        assert!(redirect_split(&mut t, "X", "X1", "X2"));
+        assert_eq!(node_ids(&t), vec!["X2", "X1", "B"]);
+        assert_eq!(t.nodes[1].role.as_deref(), Some("objective"));
+    }
+
+    // U2d: both children already listed => only the original leaves; repeated originals too.
+    #[test]
+    fn u2d_both_children_present_and_repeated_original() {
+        let mut t = tree(&["X1", "X", "X2", "X"]);
+        assert!(redirect_split(&mut t, "X", "X1", "X2"));
+        assert_eq!(node_ids(&t), vec!["X1", "X2"]);
     }
 
     // U3: AND edge keeps the other cause, operator and assumptions.

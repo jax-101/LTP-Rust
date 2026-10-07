@@ -383,7 +383,7 @@ En v0.4.0 (`PROGRESS.md`) quedaron dos huecos: `node split` borra el nodo del po
 
 Decisión
 - D-1: el split reescribe **todos** los árboles donde aparece el nodo: tronco, ramas NBR, feedback y macros. `--tree` sigue siendo obligatorio como árbol de contexto (`NODE_NOT_IN_TREE`). La respuesta añade `affected_trees`, ordenado y con el árbol `--tree` incluido.
-- D-2: una sola regla de dirección. Lo entrante va a `first` (edge `to`, feedback `to`, macro `to`, NBR `source_node`). Lo saliente va a `second` (edge `from[]`, feedback `from`, macro `from`). En `nodes[]` y en `macro.interior_nodes`, el original se sustituye **en su posición** por `[first, second]`, sin duplicar. No hay edge `first→second`, así que redirigir solo puede quitar caminos y nunca crea ciclos.
+- D-2: una sola regla de dirección. Lo entrante va a `first` (edge `to`, feedback `to`, macro `to`, NBR `source_node`). Lo saliente va a `second` (edge `from[]`, feedback `from`, macro `from`). En `nodes[]` y en `macro.interior_nodes`, el original se sustituye **en su posición** por los hijos que aún no estén en la lista. Una entrada existente nunca se mueve ni se reconstruye, así que no se duplican IDs ni se pierde un `role`. No hay edge `first→second`, así que redirigir solo puede quitar caminos y nunca crea ciclos.
 - D-3: `node rm` poda las macros.
   - (a) Si se borra un extremo, la macro se elimina junto con sus `MacroAssumption` (`reason=endpoint_removed`).
   - (b) Si se borra un nodo interior, sale de `interior_nodes`, y los edges eliminados salen de `interior_links`.
