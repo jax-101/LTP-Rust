@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::Serialize;
 
 use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
+use crate::meta::integrity::check_macro_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
@@ -850,6 +851,29 @@ pub fn execute_path_replace(
                 "NODE_NOT_FOUND",
                 format!("Node '{}' not found in pool", by_node_id),
             )],
+            warnings: vec![],
+        };
+    }
+
+    // Re-validate attached endpoints before touching the pool or minting (ADR-016).
+    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: action.to_string(),
+            workspace: ws_name,
+            data: ReplaceData {
+                macro_link: macro_link_id.to_string(),
+                by_node: by_node_id.to_string(),
+                superseded_links: vec![],
+                superseded_nodes: vec![],
+                new_links: vec![],
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![e],
             warnings: vec![],
         };
     }

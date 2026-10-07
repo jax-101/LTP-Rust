@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::errors::LtpError;
 use crate::link::{Assumption, Edge, EdgeStatus, Logic, Operator};
+use crate::meta::integrity::check_macro_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
@@ -365,6 +366,13 @@ pub fn execute_macro_expand(
         );
     }
 
+    // Re-validar extremos attached antes de mintear (ADR-016): una reserva colgante no
+    // materializa edges hacia un nodo fuera del árbol.
+    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
+        let _ = storage.release_lock();
+        return expand_failure(&ws_name, macro_link, true, e);
+    }
+
     // Parseo de labels: separadas por comas, sin espacios, sin vacías. Duplicadas permitidas
     // (los INT son entidades distintas; los labels no son únicos). Vacío ⇒ STEPS_REQUIRED.
     let labels: Vec<String> = steps
@@ -675,32 +683,10 @@ pub fn execute_macro_promote(
     let from = tree.macro_edges[macro_idx].from.clone();
     let to = tree.macro_edges[macro_idx].to.clone();
 
-    // Re-validar extremos attached (defensivo).
-    if !tree.nodes.iter().any(|nr| nr.node_ref == from) {
+    // Re-validar extremos attached (defensivo, ADR-016).
+    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
         let _ = storage.release_lock();
-        return promote_failure(
-            &ws_name,
-            macro_link,
-            true,
-            OutputError::new(
-                "NODE_NOT_IN_TREE",
-                format!("Node '{from}' is not attached to tree '{tree_id}'"),
-            )
-            .with_context("node_id", from.as_str()),
-        );
-    }
-    if !tree.nodes.iter().any(|nr| nr.node_ref == to) {
-        let _ = storage.release_lock();
-        return promote_failure(
-            &ws_name,
-            macro_link,
-            true,
-            OutputError::new(
-                "NODE_NOT_IN_TREE",
-                format!("Node '{to}' is not attached to tree '{tree_id}'"),
-            )
-            .with_context("node_id", to.as_str()),
-        );
+        return promote_failure(&ws_name, macro_link, true, e);
     }
 
     let link_id = match storage.next_id("LINK") {

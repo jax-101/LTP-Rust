@@ -1319,3 +1319,87 @@ fn validate_warnings(dir: &Path, code: &str) -> Vec<Value> {
         .filter(|w| w["code"] == code)
         .collect()
 }
+
+// --- D: macro endpoints in expand / replace ----------------------------------
+
+fn detach(dir: &Path, tree: &str, node: &str) {
+    run_ok(dir, &["tree", "detach", "--tree", tree, "--node", node]);
+}
+
+/// The failure contract shared with `macro promote`: one `NODE_NOT_IN_TREE {node_id}`.
+fn assert_endpoint_not_in_tree(out: &Value, node: &str) {
+    assert_eq!(out["success"], false, "{out}");
+    assert_eq!(error_codes(out), vec!["NODE_NOT_IN_TREE"], "{out}");
+    assert_eq!(out["errors"][0]["node_id"], node, "{out}");
+}
+
+// D1 — reservation whose endpoint was detached ⇒ `macro expand` fails before minting
+// (INT/LINK counters intact, 0 bytes). Both endpoints are covered; promote is the reference.
+#[test]
+fn d1_expand_rejects_detached_endpoint() {
+    for detached_to in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        init(d);
+        let t = new_tree(d, "crt", "reserva");
+        let a = add_node(d, "a", "UDE");
+        let e = add_node(d, "e", "UDE");
+        attach(d, &t, &[&a, &e]);
+        let m = macro_add(d, &t, &a, &e);
+        let gone = if detached_to { &e } else { &a };
+        detach(d, &t, gone);
+        let (before, ctr) = (snapshot(d), counters(d));
+
+        let attempts: [Vec<&str>; 2] = [
+            vec![
+                "macro",
+                "expand",
+                "--tree",
+                &t,
+                "--macro-link",
+                &m,
+                "--steps",
+                "p,q",
+            ],
+            vec!["macro", "promote", "--tree", &t, "--macro-link", &m],
+        ];
+        for args in attempts {
+            let (out, _) = run_ltp(d, &args);
+            assert_endpoint_not_in_tree(&out, gone);
+            assert_untouched(d, &before, &ctr);
+        }
+    }
+}
+
+// D2 — overlay with a detached endpoint ⇒ `path replace` fails before touching the pool:
+// no node marked superseded, counters intact, 0 bytes.
+#[test]
+fn d2_replace_rejects_detached_endpoint() {
+    for detached_to in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let (t, [a, b, e], _, m) = linear_overlay(d);
+        let inj = add_node(d, "inyeccion", "INJ");
+        let gone = if detached_to { &e } else { &a };
+        detach(d, &t, gone);
+        let (before, ctr) = (snapshot(d), counters(d));
+
+        let (out, _) = run_ltp(
+            d,
+            &[
+                "path",
+                "replace",
+                "--tree",
+                &t,
+                "--macro-link",
+                &m,
+                "--by-node",
+                &inj,
+            ],
+        );
+        assert_endpoint_not_in_tree(&out, gone);
+        assert_untouched(d, &before, &ctr);
+        let interior = read_json(&d.join("nodes").join(format!("{b}.json")));
+        assert_ne!(interior["metadata"]["status"], "superseded");
+    }
+}

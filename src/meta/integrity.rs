@@ -2,7 +2,8 @@
 //!
 //! Pure functions over a single [`Tree`]: no `Storage`, no I/O. `node split` uses
 //! [`redirect_split`], `node rm` uses [`prune_removed`] and `validate` uses
-//! [`check_tree_integrity`]. Seed of the future `ltp-core` crate.
+//! [`check_tree_integrity`]; macro materializers use [`check_macro_endpoints`]. Seed of the
+//! future `ltp-core` crate.
 
 use std::collections::HashSet;
 
@@ -231,6 +232,24 @@ pub fn prune_removed(tree: &mut Tree, ids: &HashSet<&str>) -> PruneReport {
         || !report.removed_branches.is_empty()
         || !report.removed_macros.is_empty();
     report
+}
+
+/// Checks that both endpoints of `m` are attached to `tree` (`from` first).
+///
+/// Shared by `macro expand`, `macro promote` and `path replace` before they mint anything
+/// (ADR-016): a macro left dangling by `tree detach` or by pre-v0.5.0 data must not
+/// materialize edges onto a node outside the tree. Fails with `NODE_NOT_IN_TREE {node_id}`.
+pub fn check_macro_endpoints(tree: &Tree, m: &MacroEdge) -> Result<(), OutputError> {
+    for endpoint in [&m.from, &m.to] {
+        if !tree.nodes.iter().any(|n| &n.node_ref == endpoint) {
+            return Err(OutputError::new(
+                "NODE_NOT_IN_TREE",
+                format!("Node '{endpoint}' is not attached to tree '{}'", tree.id),
+            )
+            .with_context("node_id", endpoint.as_str()));
+        }
+    }
+    Ok(())
 }
 
 /// Whether the edge references any removed node (`to` or any `from`).
@@ -1031,5 +1050,20 @@ mod tests {
                 "assumption_ids": ["MASM-1000", "MASM-998"]
             }))
         );
+    }
+    // Endpoints must be attached: `from` is reported first; a fully attached macro passes.
+    #[test]
+    fn macro_endpoints_must_be_attached() {
+        let t = tree(&["A", "E"]);
+        assert!(check_macro_endpoints(&t, &overlay("MACRO-001", "A", "E", &[], &[])).is_ok());
+        for (from, to, missing) in [("X", "E", "X"), ("A", "Y", "Y"), ("X", "Y", "X")] {
+            let err = check_macro_endpoints(&t, &overlay("MACRO-001", from, to, &[], &[]))
+                .err()
+                .map(|e| (e.code.clone(), ctx(&e, "node_id").map(str::to_string)));
+            assert_eq!(
+                err,
+                Some(("NODE_NOT_IN_TREE".to_string(), Some(missing.to_string())))
+            );
+        }
     }
 }
