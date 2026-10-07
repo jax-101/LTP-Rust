@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 1 | `RemovedMacro` lleva `from`/`to` + `MacroRemovalReason::as_str()` | T3 (warning) | ✅ con cambios |
 | 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ✅ cambiada (opción C) |
-| 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ☐ |
+| 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ✏️ cambiada (links vivos) |
 | 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ☐ |
 | 5 | `projection_refs` de `MacroAssumption` no se tocan en `rm` | T3 (rm), M3 | ☐ |
 
@@ -87,7 +87,17 @@
 
 **Hueco de test:** no hay un unit test específico para "Overlay legacy vacío + `rm` no relacionado ⇒ intacto". Si se acepta, lo añado en T3, junto a M10 (macros legacy).
 
-**Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
+**Veredicto:** ✏️ cambiada (2026-10-07). La revisión con el sombrero Negro encontró tres problemas:
+- **F1, la justificación era falsa:** "ese estado inválido previo es asunto de `validate`". `validate` (`src/validate/macro_edge.rs`) **no** detecta un Overlay sin interior. Corregido: queda apuntado en el §6 del PLAN como hueco fuera de alcance.
+- **F2, regla y código no coincidían:** el código eliminaba la macro si el `rm` tocaba algo del interior y no quedaban links, aunque `interior_links` ya estuviera vacía. Con la regla nueva, ese caso **se elimina**, y es coherente: el `rm` la tocó y no le queda nada vivo. El código no cambia; cambia la regla, que ahora dice lo mismo. Test `d3_touched_overlay_without_links_is_removed`.
+- **F3, links fantasma:** `src/link/` no menciona las macros, así que `link disconnect` deja el ID del edge en `interior_links`. Secuencia: Overlay A⇒E `[L1, L2]` → `link disconnect L1` → `node rm B` ⇒ `interior_links = [L1]`, que no está vacía, y la macro sobrevivía sin interior. **Este es el único cambio de comportamiento.** Test `d3_touched_overlay_with_only_ghost_links_is_removed` (visto en rojo con la versión original).
+
+**Regla nueva para (c):** un Overlay se elimina por `interior_emptied` si este `rm` lo ha **tocado** (le quitó algún nodo o link interior) y no le queda **ningún link interior vivo** (presente en `tree.edges`).
+- Las macros no tocadas nunca se modifican: `d3_untouched_empty_overlay_is_left_alone` cubre el hueco de test de D3, también con un Overlay hecho solo de fantasmas.
+- Los fantasmas de una macro que sobrevive **no se limpian**, porque no los ha creado este `rm`: `d3_touched_overlay_with_a_live_link_survives_and_keeps_ghosts`.
+- Coste: un `HashSet<&str>` de IDs de edges por árbol, sin clones.
+
+**PLAN:** D-3(c) reformulada; UAT nuevo **M13** (fantasma + Overlay vacío no relacionado, a nivel CLI); mutación nueva "lista vacía en vez de links vivos"; el §6 suma la poda de `interior_links` en `link` y la detección en `validate`. **ADR-016:** D-3(c) y fuera de alcance.
 
 ---
 

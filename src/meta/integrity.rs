@@ -162,9 +162,10 @@ fn splice_children<T>(
 /// Removes every reference to `ids` from the tree: trunk, feedback, NBR and macros (ADR-016 D-3).
 ///
 /// A macro whose endpoint is removed goes away (`EndpointRemoved`, which takes priority).
-/// Otherwise the removed nodes leave `interior_nodes`, the removed trunk edges leave
-/// `interior_links`, and an `Overlay` left with no interior links goes away
-/// (`InteriorEmptied`).
+/// Otherwise the removed nodes leave `interior_nodes` and the removed trunk edges leave
+/// `interior_links`. An `Overlay` this call touched (trimmed) that has no live interior link
+/// left (one still in `tree.edges`) goes away (`InteriorEmptied`). Untouched macros are never
+/// modified, and ghost link IDs left by other commands are not cleaned.
 pub fn prune_removed(tree: &mut Tree, ids: &HashSet<&str>) -> PruneReport {
     let mut report = PruneReport::default();
 
@@ -200,6 +201,9 @@ pub fn prune_removed(tree: &mut Tree, ids: &HashSet<&str>) -> PruneReport {
         report.edges_removed += before - branch.edges.len();
     }
 
+    // `link` commands do not prune `interior_links`, so it may hold ghost IDs: "emptied"
+    // means no live interior link, not an empty list.
+    let live: HashSet<&str> = tree.edges.iter().map(|e| e.id.as_str()).collect();
     for mut m in std::mem::take(&mut tree.macro_edges) {
         if ids.contains(m.from.as_str()) || ids.contains(m.to.as_str()) {
             report
@@ -212,7 +216,8 @@ pub fn prune_removed(tree: &mut Tree, ids: &HashSet<&str>) -> PruneReport {
         m.interior_links.retain(|l| !removed_links.contains(l));
         if before != (m.interior_nodes.len(), m.interior_links.len()) {
             report.changed = true;
-            if m.status == MacroEdgeStatus::Overlay && m.interior_links.is_empty() {
+            let alive = m.interior_links.iter().any(|l| live.contains(l.as_str()));
+            if m.status == MacroEdgeStatus::Overlay && !alive {
                 report
                     .removed_macros
                     .push(RemovedMacro::new(m, MacroRemovalReason::InteriorEmptied));
@@ -677,6 +682,82 @@ mod tests {
         );
         assert_eq!(r.removed_macros[0].assumption_ids, vec!["MASM-001"]);
         assert!(t.macro_edges.is_empty());
+    }
+
+    // D3/F3: `link` commands leave ghost IDs in `interior_links`. A macro this rm touched
+    // with no live interior link left is removed, ghosts notwithstanding.
+    #[test]
+    fn d3_touched_overlay_with_only_ghost_links_is_removed() {
+        let mut t = tree(&["A", "B", "E"]);
+        // LINK-001 (A→B) was disconnected earlier: gone from edges, still in the macro.
+        t.edges.push(edge("LINK-002", &["B"], "E"));
+        t.macro_edges.push(overlay(
+            "MACRO-001",
+            "A",
+            "E",
+            &["B"],
+            &["LINK-001", "LINK-002"],
+        ));
+        let r = prune_removed(&mut t, &ids(&["B"]));
+        assert_eq!(r.removed_macros.len(), 1);
+        assert_eq!(
+            r.removed_macros[0].reason,
+            MacroRemovalReason::InteriorEmptied
+        );
+        assert!(t.macro_edges.is_empty());
+    }
+
+    // D3: a touched overlay that keeps one live link survives; its ghosts are not cleaned.
+    #[test]
+    fn d3_touched_overlay_with_a_live_link_survives_and_keeps_ghosts() {
+        let mut t = diamond();
+        // LINK-001 (A→B) disconnected earlier: ghost in the macro.
+        t.edges.retain(|e| e.id != "LINK-001");
+        let r = prune_removed(&mut t, &ids(&["C"]));
+        assert!(r.removed_macros.is_empty());
+        assert_eq!(
+            t.macro_edges[0].interior_links,
+            vec!["LINK-001", "LINK-002"]
+        );
+    }
+
+    // D3: an overlay that was already empty (legacy/hand-made) is not touched by an
+    // unrelated rm.
+    #[test]
+    fn d3_untouched_empty_overlay_is_left_alone() {
+        let mut t = tree(&["A", "E", "Z"]);
+        t.macro_edges.push(overlay("MACRO-001", "A", "E", &[], &[]));
+        // Untouched overlay made only of ghosts: also left alone.
+        t.macro_edges
+            .push(overlay("MACRO-002", "A", "E", &[], &["LINK-404"]));
+        let before: Vec<String> = t
+            .macro_edges
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .collect();
+        let r = prune_removed(&mut t, &ids(&["Z"]));
+        assert!(r.removed_macros.is_empty());
+        let after: Vec<String> = t
+            .macro_edges
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap_or_default())
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    // D3/F2: interior node removed while `interior_links` was already empty: the rm touched
+    // it and nothing live remains, so it goes (rule and code say the same thing).
+    #[test]
+    fn d3_touched_overlay_without_links_is_removed() {
+        let mut t = tree(&["A", "B", "E"]);
+        t.macro_edges
+            .push(overlay("MACRO-001", "A", "E", &["B"], &[]));
+        let r = prune_removed(&mut t, &ids(&["B"]));
+        assert_eq!(r.removed_macros.len(), 1);
+        assert_eq!(
+            r.removed_macros[0].reason,
+            MacroRemovalReason::InteriorEmptied
+        );
     }
 
     // A Reservation (empty interior by construction) only goes away by its endpoint.
