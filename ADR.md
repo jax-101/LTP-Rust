@@ -389,6 +389,7 @@ Decisión
   - (b) Si se borra un nodo interior, sale de `interior_nodes`, y los edges eliminados salen de `interior_links`.
   - (c) Un `Overlay` que este `rm` ha tocado y al que no le queda ningún link interior **vivo** (presente en `tree.edges`) se elimina (`reason=interior_emptied`). "Vivo" y no "lista vacía" porque los comandos `link` no podan `interior_links` y pueden dejar IDs fantasma. Una macro que el `rm` no toca no se modifica nunca.
   - Cada eliminación emite el warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`. `status` distingue perder una intención top-down (`reservation`, sin rastro en el grafo) de perder un resumen (`overlay`, la cadena interior sigue). `assumption_ids` va en orden de almacenamiento, que es el de creación.
+  - (d) Las `projection_refs` de una macro superviviente no se tocan y `rm` no emite `LONG_ARROW_SUMMARY_STALE`. Las refs colgantes las detecta `validate` (`dangling`), igual que tras `assume rm` o `link split` (Slice 1). Limpiarlas ocultaría la obsolescencia y provocaría falsos `MACRO_ASSUMPTION_UNGROUNDED`.
 - D-4: fail-closed. `split` y `rm` cargan todos los árboles antes de escribir. Si alguno no se puede leer, devuelven `IO_ERROR {tree_id}`: 0 bytes escritos y ningún contador consumido.
 - D-5: `validate` amplía `REFERENTIAL_INTEGRITY_VIOLATION` a `nodes[]`, `feedback_edges`, `nbr_branches` (edges y `source_node`) y `macro_edges` (`from`, `to` e `interior_nodes`), con `location`, `field` (`ref`/`from`/`to`/`source_node`/`interior_nodes`) y el ID del contenedor (`nbr_id` + `edge_id` en edges de rama). El código no estaba documentado en ENGINE_SPEC y los comandos `link` lo emiten sin contexto; T7 lo documenta y la unificación queda fuera de alcance. Un nodo ilegible (`NODE_UNREADABLE`) cuenta como existente, para no duplicar el error.
 - Defensivo: `macro expand` y `path replace` comprueban que los extremos están en `tree.nodes` antes de mintear contadores (`NODE_NOT_IN_TREE`).
@@ -397,6 +398,7 @@ Justificación
 - El nodo es una entidad global del pool, y las refs entrantes ya se reescriben de forma global (ADR-015). Un split local que conservara el original duplicaría identidad y contradiría ENGINE_SPEC.
 - Hay simetría con `NBR_BRANCH_REMOVED` ("limpiar y avisar"). Un `Overlay` sin interior no es un estado válido de ADR-013. Degradarlo a `Reservation` sería una transición implícita que nadie ha autorizado.
 - El undo hace snapshot de `nodes/`, `trees/` y `knowledge/` completos (ADR-009), así que reescribir N árboles se puede deshacer sin cambios en `history`.
+- Regla de avisos: **una mutación avisa de lo que destruye; `validate`, de lo que queda inconsistente.** Una rama NBR o una macro eliminadas ya no existen, así que `validate` nunca podría detectarlas: el warning tiene que salir en la mutación. Un resumen obsoleto persiste y `validate` lo detecta en cualquier momento. Avisar de él solo en `rm` daría una garantía parcial, porque las demás mutaciones que dejan resúmenes obsoletos no avisan.
 - Dos velocidades: `redirect_split`, `prune_removed` y `check_tree_integrity` son funciones puras sobre `Tree`, en `src/meta/integrity.rs`, candidatas a `ltp-core`.
 
 Consecuencias
@@ -408,4 +410,4 @@ Consecuencias
   - un workspace con un árbol corrupto bloquea `rm` y `split` hasta que se repare;
   - workspaces que hoy pasan `validate` empezarán a fallar (es correcto, porque están rotos);
   - la pérdida de `MacroAssumption` en `rm` solo se puede recuperar con `undo`.
-- Fuera de alcance: el `role` de los hijos de un split, los knowledge links al nodo partido, `tree detach` de un extremo de macro, la poda de `interior_links` en los comandos `link` y la detección en `validate` de Overlays vacíos o de links fantasma.
+- Fuera de alcance: el `role` de los hijos de un split, los knowledge links al nodo partido, `tree detach` de un extremo de macro, la poda de `interior_links` en los comandos `link`, un aviso uniforme de resumen obsoleto en todas las mutaciones que tocan interiores de macros, y la detección en `validate` de Overlays vacíos o de links fantasma.

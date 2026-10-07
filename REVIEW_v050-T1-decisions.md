@@ -10,7 +10,7 @@
 | 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ✅ cambiada (opción C) |
 | 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ✏️ cambiada (links vivos) |
 | 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ✅ + `field` |
-| 5 | `projection_refs` de `MacroAssumption` no se tocan en `rm` | T3 (rm), M3 | ☐ |
+| 5 | `projection_refs` de `MacroAssumption` no se tocan en `rm` | T3 (rm), M3 | ✅ (M3 precisado) |
 
 ---
 
@@ -159,7 +159,12 @@
 
 **Hueco de test:** lo cubrirá M3 en T3 (integración). No hay unit test, porque es una ausencia de comportamiento.
 
-**Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
+**Veredicto:** ✅ aceptada (revisión Six Hats, 2026-10-07). Opción (a) + documentación del flujo; el código no cambia.
+- **Verificado:** `compute_diff` (`src/macro_assume/mod.rs:81`) da por vivo solo lo que cuelga de links interiores presentes en `tree.edges`, así que las refs del link borrado salen en `dangling`, y `validate` emite `LONG_ARROW_SUMMARY_STALE` (`src/validate/macro_edge.rs:75`).
+- **Hueco encontrado:** `rm` no emite `STALE`, y M3 no decía en la salida de qué comando debía aparecer. Además contradecía "`validate` queda limpio".
+- **Descartado (b), que `rm` emita `STALE`:** ninguna mutación lo emite (`assume rm` en el UAT I1 de Slice 1, `link split`, `link disconnect`). Hacerlo solo en `rm` sería una garantía parcial que induce a confiar en falso.
+- **Regla (ADR-016):** *una mutación avisa de lo que destruye; `validate`, de lo que queda inconsistente*. Justifica a la vez `NBR_BRANCH_REMOVED` y `MACRO_EDGE_REMOVED` (lo destruido ya no es detectable) y la ausencia de `STALE` (persiste y es detectable).
+- **PLAN:** D-3(d), M3 reescrito (rm sin `STALE`, `affected_trees`, refs intactas, `validate` posterior con `dangling` exacto y 0 errores de integridad), mutación "Limpiar `projection_refs` en la poda", T7 documenta "tras `rm`/`split` ⇒ `validate`", y el §6 registra el aviso uniforme como mejora futura.
 
 ---
 
