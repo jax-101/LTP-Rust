@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::errors::{LtpError, Result};
 use crate::link::Operator;
+use crate::meta::integrity::redirect_split;
 use crate::meta::node_in_tree;
 use crate::node::clr_lint::lint_clr2;
 use crate::node::types::{CrossRef, EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
@@ -1492,6 +1493,8 @@ pub struct NodeSplitData {
     pub original_id: String,
     pub new_nodes: Vec<NewNodeSummary>,
     pub tree_id: String,
+    /// Trees rewritten by the split (ADR-016 D-1), sorted; always includes `tree_id`.
+    pub affected_trees: Vec<String>,
 }
 
 /// Metadata inherited by each child of a split: the original's refs and extra
@@ -1506,12 +1509,16 @@ fn split_child_metadata(original: &NodeMetadata) -> NodeMetadata {
 
 /// Execute `node split` command.
 ///
-/// Splits a node into two new nodes within a specific tree.
-/// Incoming edges of the original (trunk and NBR branches) are redirected to the
-/// first new node; outgoing edges are redirected from the second new node.
+/// Splits a node into two new nodes in **every** tree where it appears (ADR-016 D-1);
+/// `tree_id` is the context tree and must have the node attached.
+/// Inbound references (edge/feedback/macro `to`, NBR `source_node`) go to the first
+/// child; outbound ones (edge `from`, feedback/macro `from`) leave from the second; in
+/// `nodes[]` and macro interiors the children replace the original in place (D-2).
+/// All trees are loaded before anything is written or any ID is minted (D-4).
 /// Both children inherit the original's refs and extra metadata, and inbound
 /// refs from other nodes are rewritten to point at both children (ADR-015).
-/// The original node is removed from pool and tree.
+/// The original node is removed from the pool last, so no intermediate state
+/// leaves a dangling reference.
 pub fn execute_node_split(
     storage: &dyn Storage,
     id: &str,
@@ -1524,6 +1531,19 @@ pub fn execute_node_split(
         original_id: id.to_string(),
         new_nodes: vec![],
         tree_id: tree_id.to_string(),
+        affected_trees: vec![],
+    };
+    let fail = |error: OutputError| CommandOutput {
+        success: false,
+        action: "node_split".to_string(),
+        workspace: ws_name.clone(),
+        data: empty_data(),
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![error],
+        warnings: vec![],
     };
 
     if labels.len() != 2 {
@@ -1583,42 +1603,44 @@ pub fn execute_node_split(
         }
     };
 
-    let mut tree = match storage.load_tree(tree_id) {
-        Ok(t) => t,
+    // D-4: load every tree before writing anything or minting IDs.
+    let tree_ids = match storage.list_tree_ids() {
+        Ok(ids) => ids,
         Err(e) => {
             let _ = storage.release_lock();
-            return CommandOutput {
-                success: false,
-                action: "node_split".to_string(),
-                workspace: ws_name,
-                data: empty_data(),
-                graph_health: GraphHealth {
-                    valid_dag: true,
-                    orphan_nodes_count: 0,
-                },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
-                warnings: vec![],
-            };
+            return fail(OutputError::new("IO_ERROR", e.to_string()));
         }
     };
-
-    if !tree.nodes.iter().any(|nr| nr.node_ref == id) {
+    if !tree_ids.iter().any(|t| t == tree_id) {
         let _ = storage.release_lock();
-        return CommandOutput {
-            success: false,
-            action: "node_split".to_string(),
-            workspace: ws_name,
-            data: empty_data(),
-            graph_health: GraphHealth {
-                valid_dag: true,
-                orphan_nodes_count: 0,
-            },
-            errors: vec![OutputError::new(
-                "NODE_NOT_IN_TREE",
-                format!("Node '{}' is not attached to tree '{}'", id, tree_id),
-            )],
-            warnings: vec![],
-        };
+        return fail(OutputError::new(
+            "TREE_NOT_FOUND",
+            format!("Tree '{tree_id}' not found"),
+        ));
+    }
+    let mut trees = Vec::with_capacity(tree_ids.len());
+    for tid in tree_ids {
+        match storage.load_tree(&tid) {
+            Ok(t) => trees.push((tid, t)),
+            Err(e) => {
+                let _ = storage.release_lock();
+                return fail(
+                    OutputError::new("IO_ERROR", e.to_string()).with_context("tree_id", tid),
+                );
+            }
+        }
+    }
+
+    let attached = trees
+        .iter()
+        .find(|(tid, _)| tid == tree_id)
+        .is_some_and(|(_, t)| t.nodes.iter().any(|nr| nr.node_ref == id));
+    if !attached {
+        let _ = storage.release_lock();
+        return fail(OutputError::new(
+            "NODE_NOT_IN_TREE",
+            format!("Node '{}' is not attached to tree '{}'", id, tree_id),
+        ));
     }
 
     let type_prefix = original.node_type.prefix();
@@ -1709,62 +1731,17 @@ pub fn execute_node_split(
         };
     }
 
-    // Update tree: replace original node ref with two new refs
-    tree.nodes.retain(|nr| nr.node_ref != id);
-    tree.nodes.push(crate::tree::NodeRef {
-        node_ref: id_first.clone(),
-        role: None,
-    });
-    tree.nodes.push(crate::tree::NodeRef {
-        node_ref: id_second.clone(),
-        role: None,
-    });
-
-    // Redirect inbound edges (to == original) -> to = first
-    for edge in &mut tree.edges {
-        if edge.to == id {
-            edge.to = id_first.clone();
+    // D-2: redirect in memory; only the trees that change are written.
+    let mut affected_trees = Vec::new();
+    for (tid, mut tree) in trees {
+        if !redirect_split(&mut tree, id, &id_first, &id_second) {
+            continue;
         }
-    }
-    // Redirect outbound edges (from contains original) -> replace with second
-    for edge in &mut tree.edges {
-        for from_ref in &mut edge.from {
-            if *from_ref == id {
-                *from_ref = id_second.clone();
-            }
+        if let Err(e) = storage.save_tree(&tree) {
+            let _ = storage.release_lock();
+            return fail(OutputError::new("IO_ERROR", e.to_string()).with_context("tree_id", tid));
         }
-    }
-    // Same redirection inside NBR branches; a split source becomes the first child.
-    for branch in &mut tree.nbr_branches {
-        if branch.source_node == id {
-            branch.source_node = id_first.clone();
-        }
-        for edge in &mut branch.edges {
-            if edge.to == id {
-                edge.to = id_first.clone();
-            }
-            for from_ref in &mut edge.from {
-                if *from_ref == id {
-                    *from_ref = id_second.clone();
-                }
-            }
-        }
-    }
-
-    if let Err(e) = storage.save_tree(&tree) {
-        let _ = storage.release_lock();
-        return CommandOutput {
-            success: false,
-            action: "node_split".to_string(),
-            workspace: ws_name,
-            data: empty_data(),
-            graph_health: GraphHealth {
-                valid_dag: true,
-                orphan_nodes_count: 0,
-            },
-            errors: vec![OutputError::new("IO_ERROR", e.to_string())],
-            warnings: vec![],
-        };
+        affected_trees.push(tid);
     }
 
     // Inbound cross-tree refs (ADR-015): a ref to the split node now points at both children.
@@ -1853,6 +1830,7 @@ pub fn execute_node_split(
                 },
             ],
             tree_id: tree_id.to_string(),
+            affected_trees,
         },
         graph_health: GraphHealth {
             valid_dag: true,
