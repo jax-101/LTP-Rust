@@ -254,22 +254,72 @@ impl RemovedMacro {
     }
 }
 
+/// Structure of a tree where a node reference lives (`location` in the error context).
+#[derive(Debug, Clone, Copy)]
+enum Location {
+    Nodes,
+    Edges,
+    FeedbackEdges,
+    NbrBranches,
+    MacroEdges,
+}
+
+impl Location {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Nodes => "nodes",
+            Self::Edges => "edges",
+            Self::FeedbackEdges => "feedback_edges",
+            Self::NbrBranches => "nbr_branches",
+            Self::MacroEdges => "macro_edges",
+        }
+    }
+}
+
+/// Exact slot of the reference inside its container (`field` in the error context).
+#[derive(Debug, Clone, Copy)]
+enum Field {
+    Ref,
+    From,
+    To,
+    SourceNode,
+    InteriorNodes,
+}
+
+impl Field {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ref => "ref",
+            Self::From => "from",
+            Self::To => "to",
+            Self::SourceNode => "source_node",
+            Self::InteriorNodes => "interior_nodes",
+        }
+    }
+}
+
 /// Referential integrity violations in every structure of the tree (ADR-016 D-5).
 ///
 /// Reports one `REFERENTIAL_INTEGRITY_VIOLATION` per node reference missing from `pool`, in
 /// a fixed order: `nodes` → `edges` → `feedback_edges` → `nbr_branches` → `macro_edges`.
-/// Each error carries `tree_id`, `node_id`, `location` and the container ID (`edge_id`,
-/// `feedback_id`, `nbr_id` or `macro_link`).
+/// Each error carries `tree_id`, `node_id`, `location` (the structure), `field` (the exact
+/// slot: `ref`, `from`, `to`, `source_node` or `interior_nodes`) and the container IDs
+/// (`edge_id`, `feedback_id`, `nbr_id` (+ `edge_id` for branch edges) or `macro_link`).
 pub fn check_tree_integrity(tree: &Tree, pool: &HashSet<String>) -> Vec<OutputError> {
     let mut errors = Vec::new();
-    let mut check = |node: &str, location: &str, container: &[(&str, &str)], detail: String| {
+    let mut check = |node: &str,
+                     location: Location,
+                     field: Field,
+                     container: &[(&str, &str)],
+                     detail: &dyn Fn() -> String| {
         if pool.contains(node) {
             return;
         }
-        let mut e = OutputError::new("REFERENTIAL_INTEGRITY_VIOLATION", detail)
+        let mut e = OutputError::new("REFERENTIAL_INTEGRITY_VIOLATION", detail())
             .with_context("tree_id", tree.id.as_str())
             .with_context("node_id", node)
-            .with_context("location", location);
+            .with_context("location", location.as_str())
+            .with_context("field", field.as_str());
         for (k, v) in container {
             e = e.with_context(*k, *v);
         }
@@ -278,39 +328,42 @@ pub fn check_tree_integrity(tree: &Tree, pool: &HashSet<String>) -> Vec<OutputEr
 
     for n in &tree.nodes {
         let id = n.node_ref.as_str();
-        check(
-            id,
-            "nodes",
-            &[],
+        check(id, Location::Nodes, Field::Ref, &[], &|| {
             format!(
                 "Node '{id}' attached to tree '{}' does not exist in pool",
                 tree.id
-            ),
-        );
+            )
+        });
     }
     for edge in &tree.edges {
-        for id in edge.from.iter().chain(std::iter::once(&edge.to)) {
+        for (id, field) in edge_refs(edge) {
             check(
                 id,
-                "edges",
+                Location::Edges,
+                field,
                 &[("edge_id", &edge.id)],
-                format!(
-                    "Node '{id}' referenced in edge '{}' does not exist in pool",
-                    edge.id
-                ),
+                &|| {
+                    format!(
+                        "Node '{id}' referenced in edge '{}' does not exist in pool",
+                        edge.id
+                    )
+                },
             );
         }
     }
     for fb in &tree.feedback_edges {
-        for id in [&fb.from, &fb.to] {
+        for (id, field) in [(&fb.from, Field::From), (&fb.to, Field::To)] {
             check(
                 id,
-                "feedback_edges",
+                Location::FeedbackEdges,
+                field,
                 &[("feedback_id", &fb.id)],
-                format!(
-                    "Node '{id}' referenced in feedback edge '{}' does not exist in pool",
-                    fb.id
-                ),
+                &|| {
+                    format!(
+                        "Node '{id}' referenced in feedback edge '{}' does not exist in pool",
+                        fb.id
+                    )
+                },
             );
         }
     }
@@ -318,42 +371,60 @@ pub fn check_tree_integrity(tree: &Tree, pool: &HashSet<String>) -> Vec<OutputEr
         let id = b.source_node.as_str();
         check(
             id,
-            "nbr_branches",
+            Location::NbrBranches,
+            Field::SourceNode,
             &[("nbr_id", &b.id)],
-            format!(
-                "Node '{id}' is the source of NBR branch '{}' but does not exist in pool",
-                b.id
-            ),
+            &|| {
+                format!(
+                    "Node '{id}' is the source of NBR branch '{}' but does not exist in pool",
+                    b.id
+                )
+            },
         );
         for edge in &b.edges {
-            for id in edge.from.iter().chain(std::iter::once(&edge.to)) {
+            for (id, field) in edge_refs(edge) {
                 check(
                     id,
-                    "nbr_branches",
+                    Location::NbrBranches,
+                    field,
                     &[("nbr_id", &b.id), ("edge_id", &edge.id)],
-                    format!(
-                        "Node '{id}' referenced in edge '{}' of NBR branch '{}' does not exist in pool",
-                        edge.id, b.id
-                    ),
+                    &|| {
+                        format!(
+                            "Node '{id}' referenced in edge '{}' of NBR branch '{}' does not exist in pool",
+                            edge.id, b.id
+                        )
+                    },
                 );
             }
         }
     }
     for m in &tree.macro_edges {
-        let interior = m.interior_nodes.iter();
-        for id in [&m.from, &m.to].into_iter().chain(interior) {
+        let endpoints = [(&m.from, Field::From), (&m.to, Field::To)];
+        let interior = m.interior_nodes.iter().map(|n| (n, Field::InteriorNodes));
+        for (id, field) in endpoints.into_iter().chain(interior) {
             check(
                 id,
-                "macro_edges",
+                Location::MacroEdges,
+                field,
                 &[("macro_link", &m.id)],
-                format!(
-                    "Node '{id}' referenced in macro edge '{}' does not exist in pool",
-                    m.id
-                ),
+                &|| {
+                    format!(
+                        "Node '{id}' referenced in macro edge '{}' does not exist in pool",
+                        m.id
+                    )
+                },
             );
         }
     }
     errors
+}
+
+/// Node references of an edge with their slot: every `from` (in order), then `to`.
+fn edge_refs(edge: &Edge) -> impl Iterator<Item = (&String, Field)> {
+    edge.from
+        .iter()
+        .map(|f| (f, Field::From))
+        .chain(std::iter::once((&edge.to, Field::To)))
 }
 
 #[cfg(test)]
@@ -826,58 +897,62 @@ mod tests {
 
     // ---- check_tree_integrity ----------------------------------------------------
 
-    // U6: one failure per structure, fixed order, correct location and container.
+    // U6: one failure per reference, fixed order, correct location, field and container.
     #[test]
     fn u6_one_violation_per_structure_in_fixed_order() {
         let mut t = tree(&["A", "G1"]);
-        t.edges.push(edge("LINK-001", &["A"], "G2"));
-        t.feedback_edges.push(feedback("FB-001", "G3", "A"));
+        t.edges.push(edge("LINK-001", &["A", "G2"], "G3"));
+        t.feedback_edges.push(feedback("FB-001", "G4", "A"));
         t.nbr_branches.push(NbrBranch {
             id: "NBR-001".into(),
-            source_node: "G4".into(),
-            edges: vec![edge("LINK-010", &["A"], "G5")],
+            source_node: "G5".into(),
+            edges: vec![edge("LINK-010", &["A"], "G6")],
             trim_injection: None,
         });
         t.macro_edges
-            .push(overlay("MACRO-001", "G6", "G7", &["G8"], &[]));
+            .push(overlay("MACRO-001", "G7", "G8", &["G9"], &[]));
 
         let errs = check_tree_integrity(&t, &pool(&["A"]));
         let got: Vec<_> = errs
             .iter()
             .map(|e| {
+                assert_eq!(e.code, "REFERENTIAL_INTEGRITY_VIOLATION");
+                assert_eq!(ctx(e, "tree_id"), Some("tree-crt-a"));
                 (
-                    e.code.as_str(),
-                    ctx(e, "node_id"),
-                    ctx(e, "location"),
-                    ctx(e, "tree_id"),
+                    ctx(e, "node_id").unwrap_or_default(),
+                    ctx(e, "location").unwrap_or_default(),
+                    ctx(e, "field").unwrap_or_default(),
                 )
             })
             .collect();
-        let v = "REFERENTIAL_INTEGRITY_VIOLATION";
-        let tid = Some("tree-crt-a");
         assert_eq!(
             got,
             vec![
-                (v, Some("G1"), Some("nodes"), tid),
-                (v, Some("G2"), Some("edges"), tid),
-                (v, Some("G3"), Some("feedback_edges"), tid),
-                (v, Some("G4"), Some("nbr_branches"), tid),
-                (v, Some("G5"), Some("nbr_branches"), tid),
-                (v, Some("G6"), Some("macro_edges"), tid),
-                (v, Some("G7"), Some("macro_edges"), tid),
-                (v, Some("G8"), Some("macro_edges"), tid),
+                ("G1", "nodes", "ref"),
+                ("G2", "edges", "from"),
+                ("G3", "edges", "to"),
+                ("G4", "feedback_edges", "from"),
+                ("G5", "nbr_branches", "source_node"),
+                ("G6", "nbr_branches", "to"),
+                ("G7", "macro_edges", "from"),
+                ("G8", "macro_edges", "to"),
+                ("G9", "macro_edges", "interior_nodes"),
             ]
         );
+        // Containers.
+        assert_eq!(ctx(&errs[0], "edge_id"), None);
         assert_eq!(ctx(&errs[1], "edge_id"), Some("LINK-001"));
-        assert_eq!(ctx(&errs[2], "feedback_id"), Some("FB-001"));
-        assert_eq!(ctx(&errs[3], "nbr_id"), Some("NBR-001"));
+        assert_eq!(ctx(&errs[2], "edge_id"), Some("LINK-001"));
+        assert_eq!(ctx(&errs[3], "feedback_id"), Some("FB-001"));
         assert_eq!(ctx(&errs[4], "nbr_id"), Some("NBR-001"));
-        assert_eq!(ctx(&errs[4], "edge_id"), Some("LINK-010"));
-        for e in &errs[5..] {
+        assert_eq!(ctx(&errs[4], "edge_id"), None);
+        assert_eq!(ctx(&errs[5], "nbr_id"), Some("NBR-001"));
+        assert_eq!(ctx(&errs[5], "edge_id"), Some("LINK-010"));
+        for e in &errs[6..] {
             assert_eq!(ctx(e, "macro_link"), Some("MACRO-001"));
         }
 
-        let all = pool(&["A", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]);
+        let all = pool(&["A", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9"]);
         assert!(check_tree_integrity(&t, &all).is_empty());
     }
 

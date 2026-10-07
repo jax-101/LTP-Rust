@@ -9,7 +9,7 @@
 | 1 | `RemovedMacro` lleva `from`/`to` + `MacroRemovalReason::as_str()` | T3 (warning) | ✅ con cambios |
 | 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ✅ cambiada (opción C) |
 | 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ✏️ cambiada (links vivos) |
-| 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ☐ |
+| 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ✅ + `field` |
 | 5 | `projection_refs` de `MacroAssumption` no se tocan en `rm` | T3 (rm), M3 | ☐ |
 
 ---
@@ -120,7 +120,26 @@
 
 **Test:** `u6_one_violation_per_structure_in_fixed_order` (`:750`).
 
-**Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
+**Veredicto:** ✅ aceptada, ampliada con `field` (opción d, 2026-10-07). La revisión Six Hats encontró:
+- **Código sin documentar:** `REFERENTIAL_INTEGRITY_VIOLATION` no está en el catálogo de ENGINE_SPEC. T7 lo documenta, con todas sus claves de contexto.
+- **Dos formas del mismo código:** los comandos `link` lo emiten sin contexto (solo `detail`) y `validate` con contexto completo. Queda en el §6 del PLAN como fuera de alcance.
+- **`location` es una clave nueva** sin precedente, y por sí sola no dice qué hueco reparar: en `macro_edges`, por ejemplo, el nodo puede ser `from`, `to` o interior.
+
+**Cambio:** cada error lleva además `field`, uniforme en todas las estructuras:
+
+| `location` | `field` | Contenedor |
+|---|---|---|
+| `nodes` | `ref` | — |
+| `edges` | `from` / `to` | `edge_id` |
+| `feedback_edges` | `from` / `to` | `feedback_id` |
+| `nbr_branches` | `source_node` | `nbr_id` |
+| `nbr_branches` | `from` / `to` | `nbr_id` + `edge_id` |
+| `macro_edges` | `from` / `to` / `interior_nodes` | `macro_link` |
+
+- `location` y `field` son enums privados con `as_str()` (type-first), no strings sueltos.
+- El `detail` de los edges del tronco no cambia (`trunk_edge_detail_is_unchanged`).
+- U6 comprueba la terna `(node_id, location, field)` y los contenedores; se vio en rojo antes del cambio.
+- **PLAN:** D-5, U6, V1, T7 (catálogo de errores en ENGINE_SPEC) y §6. **ADR-016:** D-5.
 
 ---
 
