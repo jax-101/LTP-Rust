@@ -80,7 +80,7 @@ Sin `clone()` innecesarios: `redirect_split` muta en sitio; `prune_removed` calc
 | **T0** | Este plan + **ADR-016** "Integridad global de mutaciones de nodo" (D-1..D-5). | `docs(v0.5.0): plan + ADR-016` |
 | **T1** | `src/meta/integrity.rs` con las 3 funciones + unit tests (§4.1). | `feat(v0.5.0): funciones puras de integridad` |
 | **T2** | `execute_node_split`: carga todos los árboles → valida contexto → mintea IDs → `redirect_split` en memoria → guarda solo los que cambian → refs → borra original. `NodeSplitData.affected_trees: Vec<String>` (ordenado, incluye `--tree`). CLI + MCP (mismo `execute_*`). | `feat(v0.5.0): node split global` |
-| **T3** | `execute_node_rm` usa `prune_removed`; carga previa fail-closed (D-4); warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}` en el orden (árbol, macro). | `feat(v0.5.0): node rm poda macro_edges` |
+| **T3** | `execute_node_rm` usa `prune_removed`; carga previa fail-closed (D-4); warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}` en orden (árbol, almacenamiento), construido por `RemovedMacro::into_warning`; `status` vía `MacroEdgeStatus::as_str()` (única fuente, `impl Serialize` delega); IDs duplicados en la entrada se deduplican (bug previo: `rm A,A` borraba y fallaba sin undo). | `feat(v0.5.0): node rm poda macro_edges` |
 | **T4** | Defensivo: `macro expand` y `path replace` re-validan que los extremos están en `tree.nodes` **antes** de mintear contadores (`NODE_NOT_IN_TREE`, código existente). | `fix(v0.5.0): extremos de macro en expand/replace` |
 | **T5** | `validate` usa `check_tree_integrity` (sustituye a `check_integrity` sobre el tronco; respeta `--tree`). | `feat(v0.5.0): validate integridad completa` |
 | **T6** | Mutation checks (§4.4) ejecutados y registrados. | — (resultado en PROGRESS) |
@@ -131,9 +131,10 @@ Happy path mínimo, el resto adversarial:
 - **M7** X extremo de una macro en T1 e interior de otra en T2 ⇒ ambas tratadas según D-3; una macro no relacionada en T1 queda byte a byte igual.
 - **M8** tras M1, `macro expand`/`macro promote`/`path replace` sobre la macro eliminada ⇒ `MACRO_EDGE_NOT_FOUND`, 0 bytes.
 - **M9** árbol corrupto en el workspace ⇒ `IO_ERROR`, 0 bytes, nada borrado del pool (D-4).
-- **M10** macro legacy escrita a mano (`"status": "active"`, sin `assumptions`) con X como extremo ⇒ eliminada sin error; otra legacy no relacionada se re-serializa sin cambios de bytes no esperados.
-- **M11** orden de warnings determinista: varias macros en varios árboles ⇒ ordenados por (`tree_id`, `macro_link`) y después de `NBR_BRANCH_REMOVED`, antes de `REFS_STRIPPED`.
+- **M10** macro legacy escrita a mano (`"status": "active"`, sin `assumptions`) con X como extremo ⇒ eliminada sin error (`status=overlay` en el warning); otra legacy no relacionada en el mismo árbol solo cambia `active` → `overlay` (normalización perezosa, como ADR-014); una legacy en un árbol que no cambia queda byte a byte igual.
+- **M11** orden de warnings determinista: varias macros en varios árboles ⇒ por árbol (`tree_id`) y, dentro de cada árbol, en orden de almacenamiento (= creación; sin `sort()` textual: fixture a mano con `MACRO-998` antes que `MACRO-1000`); después de `NBR_BRANCH_REMOVED`, antes de `REFS_STRIPPED`.
 - **M12** paridad CLI↔MCP (`ltp_node_rm`).
+- **M14** IDs duplicados (`rm A,A`, CLI y MCP) ⇒ igual que `rm A`: éxito, `removed_nodes=[A]`, y undo restaura byte a byte (antes: `IO_ERROR` con la mutación aplicada y `UNDO_STATE_DIVERGED`).
 - **M13** links fantasma (D3/F3): Overlay lineal A→B→E; `link disconnect` de A→B (el ID queda en `interior_links`); `node rm B` ⇒ macro eliminada con `reason=interior_emptied`. Variante: un Overlay ya vacío (escrito a mano) y un `rm` de un nodo no relacionado ⇒ bytes de esa macro idénticos y sin warning.
 
 ### 4.4 Defensivo y validate (D, V)
@@ -165,6 +166,8 @@ Happy path mínimo, el resto adversarial:
 | Limpiar `projection_refs` en la poda | M3 |
 | Comprobar lista vacía en vez de links vivos | M13, `d3_touched_overlay_with_only_ghost_links_is_removed` |
 | Sin deduplicar por macro | M5, U4 |
+| Ordenar warnings de macro textualmente | M11 |
+| Sin deduplicar IDs de entrada en `rm` | M14 |
 | Sin re-validar extremos en expand/replace | D1, D2 |
 | `check_tree_integrity` sin macros (o sin feedback/NBR/`nodes[]`) | V1 |
 | Tratar nodos ilegibles como ausentes | V3 |
