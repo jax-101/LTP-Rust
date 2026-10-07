@@ -782,3 +782,540 @@ fn s16_split_creates_no_cycle() {
     assert_eq!(v["graph_health"]["valid_dag"], true);
     assert!(!error_codes(&v).contains(&"CIRCULAR_DEPENDENCY_DETECTED".to_string()));
 }
+
+// --- M: node rm and macros ---------------------------------------------------
+
+fn rm(dir: &Path, ids: &str) -> (Value, i32) {
+    run_ltp(dir, &["node", "rm", ids])
+}
+
+fn rm_ok(dir: &Path, ids: &str) -> Value {
+    let (out, code) = rm(dir, ids);
+    assert_eq!(code, 0, "rm failed: {out}");
+    out
+}
+
+fn assume_add(dir: &Path, tree: &str, link: &str, text: &str) -> String {
+    run_ok(
+        dir,
+        &[
+            "assume", "add", "--tree", tree, "--link", link, "--text", text,
+        ],
+    )["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn macro_assume_add(dir: &Path, tree: &str, m: &str, text: &str, projection: &[&str]) -> String {
+    let mut args = vec![
+        "macro-assume",
+        "add",
+        "--tree",
+        tree,
+        "--macro-link",
+        m,
+        "--text",
+        text,
+    ];
+    for p in projection {
+        args.push("--projection");
+        args.push(p);
+    }
+    run_ok(dir, &args)["data"]["created_assumption_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn codes_of(warnings: &Value) -> Vec<String> {
+    warnings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["code"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Rewrites a tree file by hand (simulates legacy data / v0.4.0 damage).
+fn edit_tree(dir: &Path, id: &str, f: impl FnOnce(&mut Value)) {
+    let mut tree = tree_json(dir, id);
+    f(&mut tree);
+    std::fs::write(
+        tree_path(dir, id),
+        serde_json::to_string_pretty(&tree).unwrap(),
+    )
+    .unwrap();
+}
+
+/// CRT with the chain A → B → E collapsed into an overlay A ⇒ E.
+/// Returns `(tree, [a, b, e], [l1, l2], macro)`.
+fn linear_overlay(d: &Path) -> (String, [String; 3], [String; 2], String) {
+    init(d);
+    let t = new_tree(d, "crt", "lineal");
+    let a = add_node(d, "a", "UDE");
+    let b = add_node(d, "b", "UDE");
+    let e = add_node(d, "e", "UDE");
+    attach(d, &t, &[&a, &b, &e]);
+    let l1 = connect(d, &t, &a, &b);
+    let l2 = connect(d, &t, &b, &e);
+    let m = collapse(d, &t, &a, &e);
+    (t, [a, b, e], [l1, l2], m)
+}
+
+// M1 — removing the `from` of an overlay with 2 MacroAssumptions removes it, with
+// MACRO_EDGE_REMOVED {endpoint_removed, overlay, assumption_ids in storage order}.
+#[test]
+fn m1_endpoint_removal_drops_overlay_with_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [a, _, e], _, m) = linear_overlay(d);
+    let masm1 = macro_assume_add(d, &t, &m, "primero", &[]);
+    let masm2 = macro_assume_add(d, &t, &m, "segundo", &[]);
+    let before = snapshot(d);
+
+    let out = rm_ok(d, &a);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    let w = &removed[0];
+    assert_eq!(w["tree_id"], t.as_str());
+    assert_eq!(w["macro_link"], m.as_str());
+    assert_eq!(w["reason"], "endpoint_removed");
+    assert_eq!(w["status"], "overlay");
+    assert_eq!(w["from"], a.as_str());
+    assert_eq!(w["to"], e.as_str());
+    assert_eq!(w["assumption_ids"], json!([masm1, masm2]));
+    assert_eq!(tree_json(d, &t)["macro_edges"], json!([]));
+    assert_validate_clean(d);
+
+    run_ok(d, &["undo"]);
+    assert_eq!(snapshot(d), before, "undo must restore every byte");
+}
+
+// M2 — removing the `to` of a pure reservation removes it (status=reservation).
+#[test]
+fn m2_reservation_endpoint_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t = new_tree(d, "crt", "reserva");
+    let a = add_node(d, "a", "UDE");
+    let e = add_node(d, "e", "UDE");
+    attach(d, &t, &[&a, &e]);
+    let m = macro_add(d, &t, &a, &e);
+
+    let out = rm_ok(d, &e);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], m.as_str());
+    assert_eq!(removed[0]["status"], "reservation");
+    assert_eq!(removed[0]["assumption_ids"], json!([]));
+    assert_eq!(out["data"]["affected_trees"], json!([t]));
+    assert!(validate_warnings(d, "LONG_ARROW_RESERVATION_PENDING").is_empty());
+}
+
+/// Diamond A→B→E, A→C→E collapsed into A ⇒ E; an ASM on A→B projected by the summary.
+/// Returns `(tree, [a, b, c, e], macro, asm)`.
+fn diamond_overlay(d: &Path) -> (String, [String; 4], String, String) {
+    init(d);
+    let t = new_tree(d, "crt", "diamante");
+    let a = add_node(d, "a", "UDE");
+    let b = add_node(d, "b", "UDE");
+    let c = add_node(d, "c", "UDE");
+    let e = add_node(d, "e", "UDE");
+    attach(d, &t, &[&a, &b, &c, &e]);
+    let ab = connect(d, &t, &a, &b);
+    connect(d, &t, &b, &e);
+    connect(d, &t, &a, &c);
+    connect(d, &t, &c, &e);
+    let asm = assume_add(d, &t, &ab, "b siempre ocurre");
+    let m = collapse(d, &t, &a, &e);
+    (t, [a, b, c, e], m, asm)
+}
+
+// M3 — an interior removal trims the overlay; rm itself is silent about the stale
+// summary, `validate` reports it with exactly the dangling ASM (ADR-016 D-3d).
+#[test]
+fn m3_interior_trim_keeps_overlay_and_validate_reports_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [_, b, c, _], m, asm) = diamond_overlay(d);
+    macro_assume_add(d, &t, &m, "resumen", &[&asm]);
+    let refs_before = tree_json(d, &t)["macro_edges"][0]["assumptions"].clone();
+
+    let out = rm_ok(d, &b);
+
+    assert!(
+        warnings_with(&out, "MACRO_EDGE_REMOVED").is_empty(),
+        "{out}"
+    );
+    assert!(
+        warnings_with(&out, "LONG_ARROW_SUMMARY_STALE").is_empty(),
+        "{out}"
+    );
+    assert_eq!(out["data"]["affected_trees"], json!([t]));
+    let macro_edge = &tree_json(d, &t)["macro_edges"][0];
+    assert_eq!(macro_edge["interior_nodes"], json!([c]));
+    assert_eq!(
+        macro_edge["assumptions"], refs_before,
+        "projection_refs untouched"
+    );
+
+    let stale = validate_warnings(d, "LONG_ARROW_SUMMARY_STALE");
+    assert_eq!(stale.len(), 1, "{stale:?}");
+    assert_eq!(stale[0]["dangling"], json!([asm]));
+    assert_validate_clean(d);
+
+    let inj = add_node(d, "inyeccion", "INJ");
+    run_ok(
+        d,
+        &[
+            "path",
+            "replace",
+            "--tree",
+            &t,
+            "--macro-link",
+            &m,
+            "--by-node",
+            &inj,
+        ],
+    );
+    assert_validate_clean(d);
+}
+
+// M4 — linear overlay; removing its only interior node ⇒ interior_emptied.
+#[test]
+fn m4_linear_overlay_interior_emptied() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [_, b, _], _, m) = linear_overlay(d);
+
+    let out = rm_ok(d, &b);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], m.as_str());
+    assert_eq!(removed[0]["reason"], "interior_emptied");
+    assert_eq!(tree_json(d, &t)["macro_edges"], json!([]));
+    assert_validate_clean(d);
+}
+
+// M5 — removing both endpoints in one batch ⇒ one warning for that macro.
+#[test]
+fn m5_batch_with_both_endpoints_warns_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (_, [a, _, e], _, m) = linear_overlay(d);
+
+    let out = rm_ok(d, &format!("{a},{e}"));
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], m.as_str());
+    assert_eq!(removed[0]["reason"], "endpoint_removed");
+}
+
+// M6 — an unknown ID in the batch ⇒ NODE_NOT_FOUND, nothing pruned.
+#[test]
+fn m6_unknown_id_prunes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (_, [a, _, _], _, _) = linear_overlay(d);
+    let (before, ctr) = (snapshot(d), counters(d));
+
+    let (out, _) = rm(d, &format!("{a},UDE-999"));
+    assert_eq!(out["success"], false);
+    assert_eq!(error_codes(&out), vec!["NODE_NOT_FOUND"]);
+    assert_untouched(d, &before, &ctr);
+}
+
+// M7 — X is an endpoint of a macro in T1 and interior of another in T2; an
+// unrelated macro in T1 stays identical.
+#[test]
+fn m7_each_macro_follows_its_rule_across_trees() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t1 = new_tree(d, "crt", "uno");
+    let t2 = new_tree(d, "crt", "dos");
+    let [x, b, c, p, q, r, a, e] =
+        ["x", "b", "c", "p", "q", "r", "a", "e"].map(|l| add_node(d, l, "UDE"));
+    attach(d, &t1, &[&x, &b, &c, &p, &q, &r]);
+    connect(d, &t1, &x, &b);
+    connect(d, &t1, &b, &c);
+    let m_end = collapse(d, &t1, &x, &c);
+    connect(d, &t1, &p, &q);
+    connect(d, &t1, &q, &r);
+    collapse(d, &t1, &p, &r);
+    attach(d, &t2, &[&a, &x, &c, &e]);
+    connect(d, &t2, &a, &x);
+    connect(d, &t2, &x, &e);
+    connect(d, &t2, &a, &c);
+    connect(d, &t2, &c, &e);
+    let m_int = collapse(d, &t2, &a, &e);
+    let unrelated = tree_json(d, &t1)["macro_edges"][1].clone();
+
+    let out = rm_ok(d, &x);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], m_end.as_str());
+    let tree1 = tree_json(d, &t1);
+    assert_eq!(tree1["macro_edges"], json!([unrelated]));
+    let tree2 = tree_json(d, &t2);
+    assert_eq!(tree2["macro_edges"][0]["id"], m_int.as_str());
+    assert_eq!(tree2["macro_edges"][0]["interior_nodes"], json!([c]));
+    assert_validate_clean(d);
+}
+
+// M8 — after M1, every macro command on the removed macro ⇒ MACRO_EDGE_NOT_FOUND.
+#[test]
+fn m8_removed_macro_is_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [a, _, _], _, m) = linear_overlay(d);
+    rm_ok(d, &a);
+    let inj = add_node(d, "inyeccion", "INJ");
+    let (before, ctr) = (snapshot(d), counters(d));
+
+    let attempts: [Vec<&str>; 3] = [
+        vec![
+            "macro",
+            "expand",
+            "--tree",
+            &t,
+            "--macro-link",
+            &m,
+            "--steps",
+            "s",
+        ],
+        vec!["macro", "promote", "--tree", &t, "--macro-link", &m],
+        vec![
+            "path",
+            "replace",
+            "--tree",
+            &t,
+            "--macro-link",
+            &m,
+            "--by-node",
+            &inj,
+        ],
+    ];
+    for args in attempts {
+        let (out, _) = run_ltp(d, &args);
+        assert_eq!(
+            error_codes(&out),
+            vec!["MACRO_EDGE_NOT_FOUND"],
+            "{args:?}: {out}"
+        );
+        assert_untouched(d, &before, &ctr);
+    }
+}
+
+// M9 — a corrupt tree ⇒ IO_ERROR {tree_id}, nothing removed from the pool (D-4).
+#[test]
+fn m9_corrupt_tree_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (_, [a, _, _], _, _) = linear_overlay(d);
+    let corrupt = new_tree(d, "crt", "zzz-roto");
+    std::fs::write(tree_path(d, &corrupt), "{ not json").unwrap();
+    let (before, ctr) = (snapshot(d), counters(d));
+
+    let (out, _) = rm(d, &a);
+    assert_eq!(out["success"], false);
+    assert_eq!(error_codes(&out), vec!["IO_ERROR"], "{out}");
+    assert_eq!(out["errors"][0]["tree_id"], corrupt.as_str(), "{out}");
+    assert_untouched(d, &before, &ctr);
+}
+
+// M10 — legacy macros (`"active"`, no `assumptions`) written by hand.
+#[test]
+fn m10_legacy_macros() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t = new_tree(d, "crt", "legacy");
+    let quiet = new_tree(d, "crt", "quieto");
+    let [a, b, e, o] = ["a", "b", "e", "o"].map(|l| add_node(d, l, "UDE"));
+    attach(d, &t, &[&a, &b, &e]);
+    let l1 = connect(d, &t, &a, &b);
+    let l2 = connect(d, &t, &b, &e);
+    attach(d, &quiet, &[&o]);
+    let legacy = |id: &str, from: &str, to: &str, nodes: Value, links: Value| {
+        json!({"id": id, "from": from, "to": to, "label": "viejo",
+               "interior_nodes": nodes, "interior_links": links, "status": "active"})
+    };
+    let doomed = legacy("MACRO-050", &a, &e, json!([b]), json!([l1, l2]));
+    let bystander = legacy("MACRO-051", &b, &e, json!([]), json!([]));
+    edit_tree(d, &t, |tr| tr["macro_edges"] = json!([doomed, bystander]));
+    let far = legacy("MACRO-052", &o, &o, json!([]), json!([]));
+    edit_tree(d, &quiet, |tr| tr["macro_edges"] = json!([far]));
+    let quiet_bytes = std::fs::read(tree_path(d, &quiet)).unwrap();
+
+    let out = rm_ok(d, &a);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], "MACRO-050");
+    assert_eq!(removed[0]["status"], "overlay");
+    let mut expected = bystander;
+    expected["status"] = json!("overlay");
+    assert_eq!(tree_json(d, &t)["macro_edges"], json!([expected]));
+    assert_eq!(std::fs::read(tree_path(d, &quiet)).unwrap(), quiet_bytes);
+}
+
+// M11 — deterministic warning order: by tree, then storage order (MACRO-998 before
+// MACRO-1000, no textual sort); after NBR_BRANCH_REMOVED, before REFS_STRIPPED.
+#[test]
+fn m11_warning_order_is_deterministic() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let ta = new_tree(d, "frt", "a");
+    let tb = new_tree(d, "frt", "b");
+    let x = add_node(d, "x", "INJ");
+    let y = add_node(d, "y", "DE");
+    let side = add_node(d, "colateral", "UDE");
+    let referrer = add_node(d, "referente", "UDE");
+    attach(d, &ta, &[&x, &y]);
+    attach(d, &tb, &[&x, &y]);
+    let nbr = nbr_add(d, &ta, &x);
+    nbr_connect(d, &ta, &nbr, &x, &side);
+    let m_a = macro_add(d, &ta, &x, &y);
+    let reservation = |id: &str| {
+        json!({"id": id, "from": x, "to": y, "label": "r",
+               "interior_nodes": [], "interior_links": [], "status": "reservation"})
+    };
+    edit_tree(d, &tb, |tr| {
+        tr["macro_edges"] = json!([reservation("MACRO-998"), reservation("MACRO-1000")])
+    });
+    let path = d.join("nodes").join(format!("{referrer}.json"));
+    let mut raw = read_json(&path);
+    raw["metadata"]["refs"] = json!([{"node": x, "tree": null}]);
+    std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+
+    let out = rm_ok(d, &x);
+
+    assert_eq!(
+        codes_of(&out["warnings"]),
+        vec![
+            "NBR_BRANCH_REMOVED",
+            "MACRO_EDGE_REMOVED",
+            "MACRO_EDGE_REMOVED",
+            "MACRO_EDGE_REMOVED",
+            "REFS_STRIPPED"
+        ],
+        "{out}"
+    );
+    let order: Vec<(String, String)> = warnings_with(&out, "MACRO_EDGE_REMOVED")
+        .iter()
+        .map(|w| {
+            (
+                s(w["tree_id"].as_str().unwrap()),
+                s(w["macro_link"].as_str().unwrap()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            (ta, m_a),
+            (tb.clone(), s("MACRO-998")),
+            (tb, s("MACRO-1000")),
+        ]
+    );
+}
+
+// M12 — CLI ↔ MCP parity for `node rm`.
+#[test]
+fn m12_cli_mcp_parity() {
+    let cli = tempfile::tempdir().unwrap();
+    let mcp = tempfile::tempdir().unwrap();
+    let (_, [a, _, _], _, _) = linear_overlay(cli.path());
+    linear_overlay(mcp.path());
+
+    let cli_out = rm_ok(cli.path(), &a);
+    let mcp_out = mcp_call(mcp.path(), "ltp/node_rm", json!({"ids": [a]}));
+    assert_eq!(mcp_out["success"], true, "{mcp_out}");
+    assert_eq!(cli_out["data"], mcp_out["data"]);
+    assert_eq!(cli_out["warnings"], mcp_out["warnings"]);
+    assert_eq!(snapshot(cli.path()), snapshot(mcp.path()));
+}
+
+// M13 — ghost links (D3/F3): after `link disconnect` the ID stays in interior_links;
+// removing B leaves no live interior link ⇒ interior_emptied. An empty overlay
+// written by hand and not touched by the rm stays identical, without warning.
+#[test]
+fn m13_ghost_links_do_not_keep_an_overlay_alive() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [a, b, e], [l1, _], m) = linear_overlay(d);
+    let empty = json!({"id": "MACRO-077", "from": a, "to": e, "label": "vacía",
+                       "interior_nodes": [], "interior_links": [], "status": "overlay"});
+    edit_tree(d, &t, |tr| {
+        tr["macro_edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(empty.clone())
+    });
+    run_ok(d, &["link", "disconnect", "--tree", &t, "--links", &l1]);
+    assert!(
+        tree_json(d, &t)["macro_edges"][0]["interior_links"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(l1)),
+        "precondition: link disconnect leaves a ghost"
+    );
+
+    let out = rm_ok(d, &b);
+
+    let removed = warnings_with(&out, "MACRO_EDGE_REMOVED");
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["macro_link"], m.as_str());
+    assert_eq!(removed[0]["reason"], "interior_emptied");
+    assert_eq!(tree_json(d, &t)["macro_edges"], json!([empty]));
+}
+
+// M14 — repeated IDs behave like a single one (CLI and MCP); undo is exact.
+#[test]
+fn m14_duplicate_ids_are_deduplicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (_, [a, _, _], _, _) = linear_overlay(d);
+    let before = snapshot(d);
+
+    let out = rm_ok(d, &format!("{a},{a}"));
+    assert_eq!(out["data"]["removed_nodes"], json!([a]));
+    run_ok(d, &["undo"]);
+    assert_eq!(snapshot(d), before, "undo must restore every byte");
+
+    let mcp_out = mcp_call(d, "ltp/node_rm", json!({"ids": [a, a]}));
+    assert_eq!(mcp_out["success"], true, "{mcp_out}");
+    assert_eq!(mcp_out["data"]["removed_nodes"], json!([a]));
+}
+
+fn warnings_with(out: &Value, code: &str) -> Vec<Value> {
+    out["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] == code)
+        .cloned()
+        .collect()
+}
+
+/// Warnings with `code` from a `validate` run, across every tree in `data.details`.
+fn validate_warnings(dir: &Path, code: &str) -> Vec<Value> {
+    let (out, exit) = run_ltp(dir, &["validate"]);
+    assert_eq!(exit, 0, "validate must pass: {out}");
+    out["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| d["warnings"].as_array().unwrap().clone())
+        .filter(|w| w["code"] == code)
+        .collect()
+}

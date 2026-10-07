@@ -79,7 +79,7 @@ pub struct MacroAssumption {
 ///
 /// Máquina de estados sin estados muertos (ADR-013): la trazabilidad histórica la cubren
 /// ADR-009 (snapshots undo) y ADR-002 (JSON git-diffable), por lo que no hay tombstones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MacroEdgeStatus {
     /// Reserva top-down: salto lógico con interior vacío, pendiente de resolución.
@@ -87,6 +87,22 @@ pub enum MacroEdgeStatus {
     /// Resumen no-destructivo de una cadena causa-efecto real coexistente.
     #[serde(alias = "active")] // retrocompat: workspaces previos a Slice 2 escribían "active".
     Overlay,
+}
+
+impl MacroEdgeStatus {
+    /// Nombre en el wire (`snake_case`). Única fuente: `Serialize` delega aquí.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reservation => "reservation",
+            Self::Overlay => "overlay",
+        }
+    }
+}
+
+impl Serialize for MacroEdgeStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
 /// Long arrow: resume una cadena causa-efecto colapsada (`path collapse`).
@@ -224,6 +240,20 @@ mod tests {
         );
         let back: MacroEdge = serde_json::from_str(&json).unwrap();
         assert_eq!(back.status, MacroEdgeStatus::Overlay);
+    }
+
+    // (d) `as_str` es el nombre en el wire: serializa igual y deserializa de vuelta.
+    #[test]
+    fn as_str_pins_wire_names() {
+        for (status, wire) in [
+            (MacroEdgeStatus::Reservation, "reservation"),
+            (MacroEdgeStatus::Overlay, "overlay"),
+        ] {
+            assert_eq!(status.as_str(), wire);
+            assert_eq!(serde_json::to_value(status).unwrap(), wire);
+            let back: MacroEdgeStatus = serde_json::from_value(wire.into()).unwrap();
+            assert_eq!(back, status);
+        }
     }
 
     use crate::link::{EdgeStatus, Operator};

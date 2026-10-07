@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::errors::{LtpError, Result};
 use crate::link::Operator;
-use crate::meta::integrity::redirect_split;
+use crate::meta::integrity::{prune_removed, redirect_split};
 use crate::meta::node_in_tree;
 use crate::node::clr_lint::lint_clr2;
 use crate::node::types::{CrossRef, EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
@@ -975,9 +975,13 @@ pub struct NodeRmData {
 
 /// Execute `node rm` command.
 ///
-/// Removes nodes from the global pool and cleans up all references
-/// in every tree: removes from `nodes[]`, removes edges where the node
-/// appears in `from[]` or `to`, and removes feedback edges referencing it.
+/// Removes nodes from the global pool and cleans up all references in every tree
+/// via [`prune_removed`]: `nodes[]`, trunk, feedback and NBR edges, NBR branches whose
+/// source is removed, and `macro_edges` (ADR-016 D-3). Repeated IDs are deduplicated.
+///
+/// Fail-closed (D-4): every tree is loaded before any write; an unreadable tree aborts
+/// with `IO_ERROR {tree_id}`. Warnings: stale lock, `NBR_BRANCH_REMOVED`,
+/// `MACRO_EDGE_REMOVED` (by tree, then storage order), `REFS_STRIPPED`, `KNOWLEDGE_ORPHANED`.
 pub fn execute_node_rm(
     storage: &dyn Storage,
     ids: &[String],
@@ -1004,7 +1008,15 @@ pub fn execute_node_rm(
         };
     }
 
-    for id in ids {
+    // Repeated IDs behave like a single one (first occurrence wins the order).
+    let mut seen = HashSet::new();
+    let ids: Vec<&str> = ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| seen.insert(*id))
+        .collect();
+
+    for id in &ids {
         if storage.load_node(id).is_err() {
             return CommandOutput {
                 success: false,
@@ -1050,121 +1062,79 @@ pub fn execute_node_rm(
         }
     };
 
-    let id_set: HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let id_set: HashSet<&str> = ids.iter().copied().collect();
+    let fail = |error: OutputError| {
+        let _ = storage.release_lock();
+        CommandOutput {
+            success: false,
+            action: "node_rm".to_string(),
+            workspace: storage.workspace_name().unwrap_or_default(),
+            data: NodeRmData {
+                removed_nodes: vec![],
+                removed_edges_count: 0,
+                affected_trees: vec![],
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![error],
+            warnings: vec![],
+        }
+    };
 
     let tree_ids = match storage.list_tree_ids() {
         Ok(t) => t,
-        Err(e) => {
-            let _ = storage.release_lock();
-            return CommandOutput {
-                success: false,
-                action: "node_rm".to_string(),
-                workspace: ws_name,
-                data: NodeRmData {
-                    removed_nodes: vec![],
-                    removed_edges_count: 0,
-                    affected_trees: vec![],
-                },
-                graph_health: GraphHealth {
-                    valid_dag: true,
-                    orphan_nodes_count: 0,
-                },
-                errors: vec![OutputError::new("IO_ERROR", e.to_string())],
-                warnings: vec![],
-            };
-        }
+        Err(e) => return fail(OutputError::new("IO_ERROR", e.to_string())),
     };
+
+    // Fail-closed (ADR-016 D-4): every tree is loaded before anything is written.
+    let mut trees = Vec::with_capacity(tree_ids.len());
+    for tree_id in tree_ids {
+        match storage.load_tree(&tree_id) {
+            Ok(tree) => trees.push((tree_id, tree)),
+            Err(e) => {
+                return fail(
+                    OutputError::new("IO_ERROR", e.to_string()).with_context("tree_id", tree_id),
+                )
+            }
+        }
+    }
 
     let mut total_removed_edges = 0usize;
     let mut affected_trees = Vec::new();
     let mut nbr_branch_warnings: Vec<OutputWarning> = Vec::new();
+    let mut macro_warnings: Vec<OutputWarning> = Vec::new();
 
-    for tree_id in &tree_ids {
-        let mut tree = match storage.load_tree(tree_id) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        let before_nodes = tree.nodes.len();
-        let before_edges = tree.edges.len();
-        let before_fb = tree.feedback_edges.len();
-
-        tree.nodes
-            .retain(|nr| !id_set.contains(nr.node_ref.as_str()));
-
-        tree.edges.retain(|edge| {
-            let to_removed = id_set.contains(edge.to.as_str());
-            let from_has_removed = edge.from.iter().any(|f| id_set.contains(f.as_str()));
-            !to_removed && !from_has_removed
-        });
-
-        tree.feedback_edges
-            .retain(|fb| !id_set.contains(fb.from.as_str()) && !id_set.contains(fb.to.as_str()));
-
-        // NBR branches: a branch whose source is removed goes away entirely;
-        // otherwise only the branch edges touching a removed node are dropped.
-        let before_branches = tree.nbr_branches.len();
-        let mut nbr_edges_removed = 0usize;
-        tree.nbr_branches.retain(|b| {
-            if id_set.contains(b.source_node.as_str()) {
-                nbr_edges_removed += b.edges.len();
-                nbr_branch_warnings.push(
-                    OutputWarning::new(
-                        "NBR_BRANCH_REMOVED",
-                        format!(
-                            "NBR branch '{}' of tree '{}' removed: its source node was deleted",
-                            b.id, tree.id
-                        ),
-                    )
-                    .with_context("tree_id", serde_json::Value::String(tree.id.clone()))
-                    .with_context("nbr_id", serde_json::Value::String(b.id.clone())),
-                );
-                false
-            } else {
-                true
-            }
-        });
-        for branch in &mut tree.nbr_branches {
-            let before = branch.edges.len();
-            branch.edges.retain(|edge| {
-                !id_set.contains(edge.to.as_str())
-                    && !edge.from.iter().any(|f| id_set.contains(f.as_str()))
-            });
-            nbr_edges_removed += before - branch.edges.len();
+    for (tree_id, mut tree) in trees {
+        let report = prune_removed(&mut tree, &id_set);
+        if !report.changed {
+            continue;
         }
-
-        let edges_removed = (before_edges - tree.edges.len())
-            + (before_fb - tree.feedback_edges.len())
-            + nbr_edges_removed;
-        let tree_changed = tree.nodes.len() != before_nodes
-            || tree.edges.len() != before_edges
-            || tree.feedback_edges.len() != before_fb
-            || tree.nbr_branches.len() != before_branches
-            || nbr_edges_removed > 0;
-
-        if tree_changed {
-            if let Err(e) = storage.save_tree(&tree) {
-                let _ = storage.release_lock();
-                return CommandOutput {
-                    success: false,
-                    action: "node_rm".to_string(),
-                    workspace: ws_name,
-                    data: NodeRmData {
-                        removed_nodes: vec![],
-                        removed_edges_count: 0,
-                        affected_trees: vec![],
-                    },
-                    graph_health: GraphHealth {
-                        valid_dag: true,
-                        orphan_nodes_count: 0,
-                    },
-                    errors: vec![OutputError::new("IO_ERROR", e.to_string())],
-                    warnings: vec![],
-                };
-            }
-            total_removed_edges += edges_removed;
-            affected_trees.push(tree_id.clone());
+        if let Err(e) = storage.save_tree(&tree) {
+            return fail(
+                OutputError::new("IO_ERROR", e.to_string()).with_context("tree_id", tree_id),
+            );
         }
+        nbr_branch_warnings.extend(report.removed_branches.into_iter().map(|nbr_id| {
+            OutputWarning::new(
+                "NBR_BRANCH_REMOVED",
+                format!(
+                    "NBR branch '{}' of tree '{}' removed: its source node was deleted",
+                    nbr_id, tree.id
+                ),
+            )
+            .with_context("tree_id", tree.id.as_str())
+            .with_context("nbr_id", nbr_id)
+        }));
+        macro_warnings.extend(
+            report
+                .removed_macros
+                .into_iter()
+                .map(|m| m.into_warning(&tree.id)),
+        );
+        total_removed_edges += report.edges_removed;
+        affected_trees.push(tree_id);
     }
 
     // Inbound cross-tree refs (ADR-015): strip refs that point at removed nodes.
@@ -1232,7 +1202,7 @@ pub fn execute_node_rm(
     }
 
     let mut removed_nodes = Vec::new();
-    for id in ids {
+    for id in &ids {
         if let Err(e) = storage.delete_node(id) {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -1252,7 +1222,7 @@ pub fn execute_node_rm(
                 warnings: vec![],
             };
         }
-        removed_nodes.push(id.clone());
+        removed_nodes.push(id.to_string());
     }
 
     let _ = storage.release_lock();
@@ -1262,6 +1232,7 @@ pub fn execute_node_rm(
         warnings.push(w);
     }
     warnings.extend(nbr_branch_warnings);
+    warnings.extend(macro_warnings);
     warnings.extend(refs_stripped_warnings);
 
     // KNOWLEDGE_ORPHANED: check if any knowledge items link to the removed nodes

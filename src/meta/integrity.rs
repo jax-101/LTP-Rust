@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use serde::Serialize;
 
 use crate::link::Edge;
-use crate::output::OutputError;
+use crate::output::{OutputError, OutputWarning};
 use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef, Tree};
 
 /// Why `node rm` removed a long arrow (ADR-016 D-3).
@@ -251,6 +251,28 @@ impl RemovedMacro {
             to: m.to,
             assumption_ids,
         }
+    }
+
+    /// `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`.
+    pub fn into_warning(self, tree_id: &str) -> OutputWarning {
+        let cause = match self.reason {
+            MacroRemovalReason::EndpointRemoved => "an endpoint was deleted",
+            MacroRemovalReason::InteriorEmptied => "no interior link is left",
+        };
+        OutputWarning::new(
+            "MACRO_EDGE_REMOVED",
+            format!(
+                "Long arrow '{}' of tree '{}' removed: {}",
+                self.id, tree_id, cause
+            ),
+        )
+        .with_context("tree_id", tree_id)
+        .with_context("macro_link", self.id)
+        .with_context("reason", self.reason.as_str())
+        .with_context("status", self.status.as_str())
+        .with_context("from", self.from)
+        .with_context("to", self.to)
+        .with_context("assumption_ids", self.assumption_ids)
     }
 }
 
@@ -982,5 +1004,32 @@ mod tests {
                 Some(serde_json::Value::String(wire.to_string()))
             );
         }
+    }
+    // `into_warning` carries the full ADR-016 D-3 context; assumption order is kept as stored.
+    #[test]
+    fn removed_macro_warning_context() {
+        let removed = RemovedMacro {
+            id: "MACRO-002".to_string(),
+            reason: MacroRemovalReason::InteriorEmptied,
+            status: MacroEdgeStatus::Overlay,
+            from: "A".to_string(),
+            to: "E".to_string(),
+            assumption_ids: vec!["MASM-1000".to_string(), "MASM-998".to_string()],
+        };
+        let w = serde_json::to_value(removed.into_warning("tree-crt-x")).ok();
+        assert_eq!(
+            w,
+            Some(serde_json::json!({
+                "code": "MACRO_EDGE_REMOVED",
+                "detail": "Long arrow 'MACRO-002' of tree 'tree-crt-x' removed: no interior link is left",
+                "tree_id": "tree-crt-x",
+                "macro_link": "MACRO-002",
+                "reason": "interior_emptied",
+                "status": "overlay",
+                "from": "A",
+                "to": "E",
+                "assumption_ids": ["MASM-1000", "MASM-998"]
+            }))
+        );
     }
 }
