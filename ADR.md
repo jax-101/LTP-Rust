@@ -388,7 +388,7 @@ Decisión
   - (a) Si se borra un extremo, la macro se elimina junto con sus `MacroAssumption` (`reason=endpoint_removed`).
   - (b) Si se borra un nodo interior, sale de `interior_nodes`, y los edges eliminados salen de `interior_links`.
   - (c) Un `Overlay` que se queda sin `interior_links` se elimina (`reason=interior_emptied`).
-  - Cada eliminación emite el warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, from, to, assumption_ids}`.
+  - Cada eliminación emite el warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`. `status` distingue perder una intención top-down (`reservation`, sin rastro en el grafo) de perder un resumen (`overlay`, la cadena interior sigue). `assumption_ids` va en orden de almacenamiento, que es el de creación.
 - D-4: fail-closed. `split` y `rm` cargan todos los árboles antes de escribir. Si alguno no se puede leer, devuelven `IO_ERROR {tree_id}`: 0 bytes escritos y ningún contador consumido.
 - D-5: `validate` amplía `REFERENTIAL_INTEGRITY_VIOLATION` a `nodes[]`, `feedback_edges`, `nbr_branches` (edges y `source_node`) y `macro_edges` (`from`, `to` e `interior_nodes`), con `location` y el ID del contenedor. Un nodo ilegible (`NODE_UNREADABLE`) cuenta como existente, para no duplicar el error.
 - Defensivo: `macro expand` y `path replace` comprueban que los extremos están en `tree.nodes` antes de mintear contadores (`NODE_NOT_IN_TREE`).

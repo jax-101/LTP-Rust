@@ -6,7 +6,7 @@
 
 | # | Decisión | Afecta a | Veredicto |
 |---|---|---|---|
-| 1 | `RemovedMacro` lleva `from`/`to` + `MacroRemovalReason::as_str()` | T3 (warning) | ☐ |
+| 1 | `RemovedMacro` lleva `from`/`to` + `MacroRemovalReason::as_str()` | T3 (warning) | ✅ con cambios |
 | 2 | Regla de "sin duplicar" al sustituir hijos del split | T2 (split) | ☐ |
 | 3 | `interior_emptied` solo si este `rm` recortó la macro | T3 (rm) | ☐ |
 | 4 | Contexto de errores NBR: `nbr_id` (+ `edge_id`) | T5 (validate) | ☐ |
@@ -30,7 +30,11 @@
 
 **Riesgo:** `as_str()` y serde podrían divergir si se añade una variante. Lo cubre el test `reason_wire_names_match_serde` (`:794`).
 
-**Veredicto:** ☐ ✅ ☐ ✏️ ☐ ❓ — Notas:
+**Veredicto:** ✅ aceptado con cambios (revisión Six Hats, 2026-10-07):
+- **N1:** una sola fuente de verdad. Se quita `derive(Serialize)` e `impl Serialize` delega en `as_str()`. El test fija los nombres de wire literales (`reason_wire_names_are_pinned`).
+- **N2:** se añade `status: MacroEdgeStatus` a `RemovedMacro` y al warning `MACRO_EDGE_REMOVED` (aditivo, MINOR). Perder una `Reservation` es perder una intención top-down sin rastro en el grafo; perder un `Overlay` deja la cadena interior.
+- **N3:** se quita el `sort()` de `assumption_ids`. El orden de almacenamiento ya es el de creación (contador `MASM` global y creciente, `push` al final, `rm` con `retain`), así que es numérico. El `sort()` textual ponía `MASM-1000` antes que `MASM-998`; lo reproduce `u4_…` con IDs a ambos lados de 999. M1 se reformula como "orden de almacenamiento". El orden textual de IDs en el resto del repo no se toca (determinista, fuera de alcance).
+- **Para T3:** el warning necesita `status` como string. `MacroEdgeStatus` solo tiene `derive(Serialize)`; aplicar el mismo patrón de N1 o decidirlo en T3. También: ordenar los warnings explícitamente por `(tree_id, macro_link)` (M11), sin fiarse del orden del árbol.
 
 ---
 

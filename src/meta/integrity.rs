@@ -13,8 +13,7 @@ use crate::output::OutputError;
 use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef, Tree};
 
 /// Why `node rm` removed a long arrow (ADR-016 D-3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacroRemovalReason {
     /// The `from` or `to` endpoint of the macro was deleted.
     EndpointRemoved,
@@ -23,12 +22,18 @@ pub enum MacroRemovalReason {
 }
 
 impl MacroRemovalReason {
-    /// Wire name (`snake_case`), the same one serde produces.
+    /// Wire name (`snake_case`). Single source of truth: `Serialize` delegates here.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::EndpointRemoved => "endpoint_removed",
             Self::InteriorEmptied => "interior_emptied",
         }
+    }
+}
+
+impl Serialize for MacroRemovalReason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -39,11 +44,14 @@ pub struct RemovedMacro {
     pub id: String,
     /// Why it was removed.
     pub reason: MacroRemovalReason,
+    /// Lifecycle state it had: losing a `Reservation` loses a top-down intent that is
+    /// nowhere else in the graph; losing an `Overlay` leaves its interior chain in place.
+    pub status: MacroEdgeStatus,
     /// `from` endpoint of the removed macro.
     pub from: String,
     /// `to` endpoint of the removed macro.
     pub to: String,
-    /// IDs of the `MacroAssumption`s destroyed with it, sorted.
+    /// IDs of the `MacroAssumption`s destroyed with it, in stored (creation) order.
     pub assumption_ids: Vec<String>,
 }
 
@@ -237,11 +245,13 @@ fn touches(edge: &Edge, ids: &HashSet<&str>) -> bool {
 
 impl RemovedMacro {
     fn new(m: MacroEdge, reason: MacroRemovalReason) -> Self {
-        let mut assumption_ids: Vec<String> = m.assumptions.into_iter().map(|a| a.id).collect();
-        assumption_ids.sort();
+        // Stored order is creation order (sequential IDs, appended), hence numeric; a text
+        // sort would misplace IDs past 999.
+        let assumption_ids = m.assumptions.into_iter().map(|a| a.id).collect();
         Self {
             id: m.id,
             reason,
+            status: m.status,
             from: m.from,
             to: m.to,
             assumption_ids,
@@ -608,16 +618,19 @@ mod tests {
     #[test]
     fn u4_endpoint_takes_priority_and_is_reported_once() {
         let mut t = diamond();
-        t.macro_edges[0].assumptions = vec![masm("MASM-002"), masm("MASM-001")];
+        // Creation order across the 999 boundary: stored order must be kept, not re-sorted
+        // as text (which would put MASM-1000 before MASM-998).
+        t.macro_edges[0].assumptions = vec![masm("MASM-998"), masm("MASM-1000")];
         let r = prune_removed(&mut t, &ids(&["A", "B", "E"]));
         assert_eq!(
             r.removed_macros,
             vec![RemovedMacro {
                 id: "MACRO-001".into(),
                 reason: MacroRemovalReason::EndpointRemoved,
+                status: MacroEdgeStatus::Overlay,
                 from: "A".into(),
                 to: "E".into(),
-                assumption_ids: vec!["MASM-001".into(), "MASM-002".into()],
+                assumption_ids: vec!["MASM-998".into(), "MASM-1000".into()],
             }]
         );
         assert!(t.macro_edges.is_empty());
@@ -674,6 +687,7 @@ mod tests {
             r.removed_macros[0].reason,
             MacroRemovalReason::EndpointRemoved
         );
+        assert_eq!(r.removed_macros[0].status, MacroEdgeStatus::Reservation);
         assert!(t.macro_edges.is_empty());
     }
 
@@ -790,15 +804,17 @@ mod tests {
         );
     }
 
+    // Wire names are contract (`MACRO_EDGE_REMOVED.reason`); serde delegates to `as_str`.
     #[test]
-    fn reason_wire_names_match_serde() {
-        for r in [
-            MacroRemovalReason::EndpointRemoved,
-            MacroRemovalReason::InteriorEmptied,
+    fn reason_wire_names_are_pinned() {
+        for (r, wire) in [
+            (MacroRemovalReason::EndpointRemoved, "endpoint_removed"),
+            (MacroRemovalReason::InteriorEmptied, "interior_emptied"),
         ] {
+            assert_eq!(r.as_str(), wire);
             assert_eq!(
                 serde_json::to_value(r).ok(),
-                Some(serde_json::Value::String(r.as_str().to_string()))
+                Some(serde_json::Value::String(wire.to_string()))
             );
         }
     }

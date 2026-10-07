@@ -42,12 +42,15 @@ Consecuencias verificadas:
 
 ```rust
 /// Motivo por el que `node rm` elimina una long arrow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+/// `as_str()` es la única fuente del nombre de wire; `impl Serialize` delega en ella.
 pub enum MacroRemovalReason { EndpointRemoved, InteriorEmptied }
 
-/// Long arrow eliminada por la poda.
-pub struct RemovedMacro { pub id: String, pub reason: MacroRemovalReason, pub assumption_ids: Vec<String> }
+/// Long arrow eliminada por la poda (campos movidos desde el `MacroEdge`, sin clones).
+/// `assumption_ids` en orden de almacenamiento (= creación = numérico); sin `sort()` textual.
+pub struct RemovedMacro {
+    pub id: String, pub reason: MacroRemovalReason, pub status: MacroEdgeStatus,
+    pub from: String, pub to: String, pub assumption_ids: Vec<String>,
+}
 
 /// Resultado de podar un árbol tras `node rm`.
 pub struct PruneReport {
@@ -77,7 +80,7 @@ Sin `clone()` innecesarios: `redirect_split` muta en sitio; `prune_removed` calc
 | **T0** | Este plan + **ADR-016** "Integridad global de mutaciones de nodo" (D-1..D-5). | `docs(v0.5.0): plan + ADR-016` |
 | **T1** | `src/meta/integrity.rs` con las 3 funciones + unit tests (§4.1). | `feat(v0.5.0): funciones puras de integridad` |
 | **T2** | `execute_node_split`: carga todos los árboles → valida contexto → mintea IDs → `redirect_split` en memoria → guarda solo los que cambian → refs → borra original. `NodeSplitData.affected_trees: Vec<String>` (ordenado, incluye `--tree`). CLI + MCP (mismo `execute_*`). | `feat(v0.5.0): node split global` |
-| **T3** | `execute_node_rm` usa `prune_removed`; carga previa fail-closed (D-4); warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, from, to, assumption_ids}` en el orden (árbol, macro). | `feat(v0.5.0): node rm poda macro_edges` |
+| **T3** | `execute_node_rm` usa `prune_removed`; carga previa fail-closed (D-4); warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}` en el orden (árbol, macro). | `feat(v0.5.0): node rm poda macro_edges` |
 | **T4** | Defensivo: `macro expand` y `path replace` re-validan que los extremos están en `tree.nodes` **antes** de mintear contadores (`NODE_NOT_IN_TREE`, código existente). | `fix(v0.5.0): extremos de macro en expand/replace` |
 | **T5** | `validate` usa `check_tree_integrity` (sustituye a `check_integrity` sobre el tronco; respeta `--tree`). | `feat(v0.5.0): validate integridad completa` |
 | **T6** | Mutation checks (§4.4) ejecutados y registrados. | — (resultado en PROGRESS) |
@@ -119,8 +122,8 @@ Happy path mínimo, el resto adversarial:
 
 ### 4.3 `node rm` y macros (M)
 
-- **M1** borrar el `from` de un Overlay con 2 `MacroAssumption` ⇒ macro eliminada; `MACRO_EDGE_REMOVED` con `reason=endpoint_removed` y `assumption_ids` ordenados; undo restaura byte a byte.
-- **M2** borrar el `to` de una Reservation pura (sin edges reales) ⇒ macro eliminada, árbol en `affected_trees`; `validate` ya no emite `LONG_ARROW_RESERVATION_PENDING` sobre ella.
+- **M1** borrar el `from` de un Overlay con 2 `MacroAssumption` ⇒ macro eliminada; `MACRO_EDGE_REMOVED` con `reason=endpoint_removed`, `status=overlay` y `assumption_ids` en orden de almacenamiento (creación); undo restaura byte a byte.
+- **M2** borrar el `to` de una Reservation pura (sin edges reales) ⇒ macro eliminada con `status=reservation`, árbol en `affected_trees`; `validate` ya no emite `LONG_ARROW_RESERVATION_PENDING` sobre ella.
 - **M3** diamante colapsado; borrar B ⇒ macro sobrevive recortada, sin warning de eliminación; si el resumen proyectaba ASMs del link de B ⇒ `LONG_ARROW_SUMMARY_STALE` con exactamente esos IDs en `dangling`; `path replace` sobre la superviviente funciona y `validate` queda limpio.
 - **M4** Overlay lineal A→B→E; borrar B ⇒ `reason=interior_emptied`, macro eliminada.
 - **M5** batch `rm A,E` (ambos extremos de la misma macro) ⇒ **un** solo warning para esa macro.
