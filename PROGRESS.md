@@ -72,7 +72,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ## Historial de Avance
 
 ### [v0.5.1 — en curso] — `--dry-run` real + knowledge ilegible visible (PATCH)
-**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b, T2, T3.
+**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b, T2, T3, T4.
 **T1b (añadida con aprobación del usuario, 2026-10-08)**: la comparación byte a byte de T1 destapó un no-determinismo anterior a v0.5.1, que violaba el invariante 1:
 - `check_dag` (`src/validate/dag.rs`) arrancaba el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salían como una rotación arbitraria del ciclo en todo comando que informa de un ciclo.
 - Cuatro lints de `src/validate/clr.rs` (CLR4, CLR4/5, CLR5, CLR7) recorrían un `HashMap` para emitir sus avisos, así que el orden de los warnings de `validate` cambiaba entre ejecuciones (se midió 10/20).
@@ -83,6 +83,32 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 - `CommandOutput::to_json`: si `data` no se puede serializar, devuelve el contrato de error (`INTERNAL_ERROR`, claves canónicas, indent 2) en vez de un panic. El unit `to_json_falls_back_*` fallaba con el panic antes del fix.
 - `link connect --nbr`: el `expect` pasa a `let … else` → `NBR_NOT_FOUND` (helper `nbr_not_found`, compartido con la validación previa). Ese `expect` no era alcanzable, así que la regresión `tests/v051_no_expect.rs` (3 E2E: NBR inexistente, NBR de otro árbol, workspace usable después) ya pasaba antes del fix; queda como guardia del contrato. 749 tests en verde.
 **T3 (D-8b)**: `#![warn(missing_docs)]` en `lib.rs` (con doc `//!` del crate) y `#[allow(missing_docs)]` en los 15 módulos con deuda. La deuda medida al activarlo sin `allow` es de **654 elementos** (655 del plan − `to_json`, documentado en T2). `meta`, `macro_edge` y `macro_assume` quedan exigidos. Sonda: un `pub fn` sin doc en `meta` o `macro_edge` rompe `clippy -D warnings`; en `node` (con `allow`) no. Pagar la deuda de un módulo = quitar su `allow`.
+**T4 — Mutation checks (§4.2 + T1b + T2)**: 20 mutaciones aplicadas de verdad sobre `src/` (y `tests/` en K4b). Cada una se ejecutó con `cargo test --no-fail-fast` sobre las suites indicadas y se revirtió con `git checkout` (árbol limpio al final). El runner está en `target/t4_mutate.py`. **18/18 mutaciones reales detectadas.** Las 2 sondas (K4b y T2b) daban información sobre los tests, no sobre el código.
+
+| # | Mutación | Previsto | Detectada por |
+|---|----------|----------|---------------|
+| K1a | Sin `KNOWLEDGE_LOAD_ERROR` en `status` (CLI) | KL1 | KL1, KL2, KL6 |
+| K1b | Sin `KNOWLEDGE_LOAD_ERROR` en `status` (MCP) | KL2 | KL2, KL6 |
+| K2 | `node rm` bloquea ante un KN ilegible | KL5 | KL5, KL5b |
+| K3 | Aviso también sin `--show-knowledge` (`tree walk`) | KL4, KL7 | KL4. KL7 no puede verlo: su fixture no tiene items ilegibles, así que el aviso extra sale vacío |
+| K4a | Sin la entrada `_knowledge_pool` en `validate` | k5_32 | k5_32 y otros 21 tests de K5 |
+| K4b | Igual que K4a, con `k5_32` en su forma `if let` previa a T-K2 | (sonda) | **Sobrevive**, como se esperaba: prueba que el `if let` era vacuo y justifica T-K2 |
+| D1 | `intercept` devuelve siempre `None` | DR1, DR2, DR4 | DR1, DR1b, DR2, DR3, DR4, DR5, DR7, DR8, DR10, D6, D7 |
+| D2 | Excluir `.ltp/` de la copia | DR6, DR7, DR8 | DR6, DR7, DR8, DR1–DR5, DR10, unit copia |
+| D3 | `rename` en vez de copiar | DR1 | DR1 (huella), DR1b, DR2, DR3, DR5–DR8, DR10, DR11b, 2 unit |
+| D4 | `Drop` sin borrar la copia | DR9 | DR9, DR10, unit `copy_is_deleted_on_drop`, unit D-6 |
+| D5 | Copiar el `cwd` entero | DR10 | Solo el unit `copy_contains_only_managed_files`. El E2E DR10 no puede ver la copia, como ya preveía el plan |
+| D6 | Adquirir el lock real antes de copiar | DR6, DR1 | DR1 (huella) y 10 E2E más. DR6 no: con un lock vivo la adquisición falla sin tocar el fichero |
+| D7a | Sin excepciones nativas (`init`/`undo`/`redo` también se simulan) | DR11 | DR11 |
+| D7b | `child_args` quita todos los `--dry-run` | unit | unit `child_args_removes_only_first_and_stops_at_separator` |
+| D8 | Degradar a ejecución real si falla la simulación | D-6 | E2E D6, D7 |
+| D9 | Mezclar stderr del hijo en stdout | DR1 | **Sobrevivió en la primera pasada**: el hijo nunca escribe en stderr (el único `eprintln!` es el fallo de `current_dir`, imposible en la copia), así que ningún E2E lo ve. Se cerró en `9f48032`: `forward_to` sobre writers explícitos más 2 unit. Re-ejecutada: detectada por `forward_keeps_streams_apart_and_returns_code` |
+| B1 | `check_dag` vuelve a `HashSet` | unit, DR3, t1b | unit `cycle_path_is_deterministic`, E2E `t1b_*` |
+| B2 | Lint CLR4 vuelve a `HashMap` | unit, DR11b, t1b | unit `clr4_warnings_ordered_by_node_id`, E2E `t1b_*` |
+| T2a | `to_json` vuelve al panic | unit | unit `to_json_falls_back_*` |
+| T2b | Quitar la validación temprana de `--nbr` (solo queda el `let-else`) | (sonda: ¿equivalente?) | **No es equivalente**: los 3 E2E de `v051_no_expect` mueren, porque al llegar al `let-else` ya se ha consumido un contador `LINK` y `.ltp/counters.json` cambia. La validación temprana es la guardia real y la regresión la vigila. El `let-else` es una red de seguridad para un camino inalcanzable hoy |
+
+Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte a byte es entre dos procesos, y una sola pasada no basta para ver el desorden. Lo detectan el unit de 50 iteraciones y el E2E de 20 procesos, que se añadieron precisamente por eso.
 
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
