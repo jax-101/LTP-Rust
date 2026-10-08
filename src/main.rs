@@ -269,10 +269,12 @@ enum NodeAction {
         #[arg(long)]
         query: String,
     },
+    /// Split a node into two; rewrites every tree that uses it (global)
     Split {
         id: String,
         #[arg(long, num_args = 2)]
         into: Vec<String>,
+        /// Context tree (the node must be attached); all trees are rewritten
         #[arg(long)]
         tree: String,
     },

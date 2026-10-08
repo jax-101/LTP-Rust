@@ -16,13 +16,13 @@ Hay **dos superficies de integración**, ambas sobre el **mismo motor** y el **m
 ## 1. Obtener el binario
 
 ```bash
-git pull origin main          # o: git checkout v0.4.0  (para fijar una versión)
+git pull origin main          # o: git checkout v0.5.0  (para fijar una versión)
 cargo build --release
 # → target/release/ltp        (CLI)
 # → target/release/ltp-mcp    (servidor MCP)
 ```
 
-Para reproducibilidad, compila desde un tag: `git checkout v0.4.0 && cargo build --release`.
+Para reproducibilidad, compila desde un tag: `git checkout v0.5.0 && cargo build --release`.
 
 ## 2A. Integración por CLI (apps / UI)
 
@@ -86,6 +86,7 @@ Los nombres se corresponden 1:1: subcomando CLI `tree walk` ↔ tool MCP `ltp/tr
 
 ## 4. Estable vs WIP (no construyas contra vaporware)
 
+- ✅ **v0.5.0 — Integridad global (ADR-016)** — `node split` reescribe **todos** los árboles que usan el nodo (`data.affected_trees`, nuevo). `node rm` poda también las flechas largas (warning nuevo `MACRO_EDGE_REMOVED`). Ambos son fail-closed ante un árbol ilegible (`IO_ERROR {tree_id}`). `macro expand`/`promote` y `path replace` vuelven a comprobar los extremos (`NODE_NOT_IN_TREE` / `NODE_NOT_FOUND`). **`validate` es más estricto**: `REFERENTIAL_INTEGRITY_VIOLATION` cubre todas las estructuras (`location`/`field`), así que un workspace dañado por versiones anteriores que antes pasaba ahora falla. Flujo recomendado: tras `rm`/`split` con `affected_trees` no vacío, ejecuta `validate` sobre esos árboles. Todo es aditivo: el gate `>= 0.4.0` sigue valiendo, y `>= 0.5.0` si dependes de `affected_trees` en `split`.
 - ✅ **v0.4.0 — RFC-002 Slice 1** — `refs` entre nodos (`metadata.refs`, `--ref NODE[@TREE]`, MCP `refs`/`add_refs`/`rm_refs`), meta-grafo **inferido y sin tipo** (`tree relation list` / `ltp/tree_relation_list`, ADR-015), warnings `_meta_graph` en `validate` (`DANGLING_NODE_REF`, `NORM_REF_MISSING`, `NODE_UNREADABLE`) e integridad de ramas NBR y refs en `node rm`/`node split`.
 - ✅ **v0.3.0** — tipo de nodo `CSF`, lógica de árbol derivada del tipo (ADR-014: GT/EC/PRT de necesidad, `tree walk` con orden por defecto según la lógica, CLR #4 solo en suficiencia) y error `INVALID_ORDER`.
 - ✅ **v0.2.0** — implementado y con contrato estable: núcleo determinista (grafo causal, DAG, integridad referencial), Knowledge Pool, historial undo/redo, y la flecha larga (Slice 1 `macro-assume` + Slice 2 `macro add/expand/promote`).

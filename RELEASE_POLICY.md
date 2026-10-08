@@ -80,5 +80,5 @@ La "API pública" del motor es el **contrato MCP/CLI**: nombres de tools, sus pa
 
 - **CLI**: `ltp --version` → `ltp 0.2.0+a1b2c3d4`.
 - **MCP**: enviar `initialize`, leer `result.serverInfo.version` → `0.2.0+a1b2c3d4`.
-- **Feature-gating**: parsear el core antes de `+`; `>= 0.2.0` ⇒ ciclo de vida de la flecha larga (`macro add/expand/promote`) disponible; `>= 0.3.0` ⇒ tipo `CSF`, lógica de árbol derivada del tipo (ADR-014) e `INVALID_ORDER` en `tree walk`; `>= 0.4.0` ⇒ `refs` entre nodos, `tree relation list` (meta-grafo inferido, RFC-002 S1) y warnings `_meta_graph` en `validate`.
+- **Feature-gating**: parsear el core antes de `+`; `>= 0.2.0` ⇒ ciclo de vida de la flecha larga (`macro add/expand/promote`) disponible; `>= 0.3.0` ⇒ tipo `CSF`, lógica de árbol derivada del tipo (ADR-014) e `INVALID_ORDER` en `tree walk`; `>= 0.4.0` ⇒ `refs` entre nodos, `tree relation list` (meta-grafo inferido, RFC-002 S1) y warnings `_meta_graph` en `validate`; `>= 0.5.0` ⇒ `node split` global con `affected_trees`, warning `MACRO_EDGE_REMOVED` en `node rm` e integridad referencial completa en `validate` (ADR-016).
 - **Reproducir código/docs exactos**: `git checkout <sha>` (el fragmento tras `+`, quitando `.dirty` si aparece).

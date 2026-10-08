@@ -8,9 +8,9 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | RFC-002 Slice 1 — refs entre nodos + meta-grafo inferido (ADR-015) |
-| **Último release** | v0.4.0 (2026-10-06) — MINOR: RFC-002 Slice 1 (refs, `tree relation list`, warnings `_meta_graph`) |
-| **Último bugfix** | `node rm`/`node split` respetan ramas NBR y refs; `validate` reporta nodos ilegibles (`NODE_UNREADABLE`) |
+| **Última fase completada** | v0.5.0 — integridad referencial global (ADR-016) |
+| **Último release** | v0.5.0 (2026-10-08) — MINOR: `node split` global, `node rm` poda macros (`MACRO_EDGE_REMOVED`), `validate` con integridad completa |
+| **Último bugfix** | `split` solo reescribía `--tree`; `rm` ignoraba `macro_edges`; expand/promote/replace materializaban macros colgantes; `rm A,A` |
 | **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
@@ -23,7 +23,8 @@
 | **Tests CSF + lógica de árbol** | 36/36 |
 | **Tests v0.3.1 (contadores + roles EC)** | 15/15 |
 | **Tests RFC-002 Slice 1** | 46/46 |
-| **Tests totales** | 628 |
+| **Tests v0.5.0 (integridad)** | 61/61 (38 E2E + 23 unit) |
+| **Tests totales** | 687 |
 
 ---
 
@@ -70,9 +71,9 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
-### [v0.5.0 — en curso] — Integridad referencial global (MINOR)
+### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
-**Naturaleza**: Cierra los huecos registrados en v0.4.0 (plan `PLAN_v050-integrity.md`, ADR-016). T0–T5 implementadas; T6 = mutation checks; T7 (release) pendiente.
+**Naturaleza**: Cierra los huecos registrados en v0.4.0 (plan `PLAN_v050-integrity.md`, ADR-016). T0–T7 completadas (8 paquetes). Funciones puras `redirect_split`, `prune_removed` y `check_tree_integrity` en `src/meta/integrity.rs` (semilla de `ltp-core`); `node split` global con `affected_trees`; `node rm` poda macros con `MACRO_EDGE_REMOVED`; ambos son fail-closed; los extremos de macro se comprueban en expand/promote/replace; `validate` revisa la integridad de todas las estructuras.
 **Mutation checks (T6, §4.5)**: 24 mutaciones aplicadas de verdad sobre `src/`. Cada una se ejecutó contra `cargo test --lib --test v050_integrity` y después se revirtió (`git status src/` limpio al final). **24/24 detectadas, 0 supervivientes**.
 
 | # | Mutación | Detectada por (UATs E2E / unit) |
@@ -103,7 +104,24 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | 24 | Tratar nodos ilegibles como ausentes en validate | V3 |
 
 **Lectura**: las mutaciones 2, 7, 13, 16, 17 y 24 solo las detecta un UAT cada una (S2, S11, M3, M11, M14, V3). Esos tests no se pueden quitar sin perder cobertura.
+**UATs**: S1–S16 (split), M1–M14 (rm y macros), D1–D2 (comprobación de extremos), V1–V5 (validate; V4a/V4b reproducen la corrupción exacta de v0.4.0) + 23 unit. Decisión tomada en T5: un extremo adjunto pero ausente del pool ⇒ `NODE_NOT_FOUND`.
 **Tests totales**: 628 → 687
+**Factor de escala**: 1.0x (8 paquetes; las correcciones fueron fixtures de tests y un hueco detectado por V4a que se resolvió dentro del paquete)
+**Docs**: ADR-016, ENGINE_SPEC (`node rm`/`split`, `path replace`, `macro expand`/`promote`, `validate`), USAGE_GUIDE §5.1/§9/§11, INTEGRATION §4, RELEASE_POLICY (gate `>= 0.5.0`), CHANGELOG `[0.5.0]`, README, descripción MCP y ayuda CLI de `node split`/`node rm`, tag `v0.5.0`.
+**Huecos cerrados**: los dos de v0.4.0 (`split` solo reescribía `--tree`; `rm` ignoraba `macro_edges`).
+**Huecos registrados (fuera de alcance, plan §6)**:
+- Los hijos de un split pierden el `role` del original (en EC puede romper reglas de rol).
+- El split no reescribe ni avisa de los knowledge links al original.
+- `tree detach` de un extremo de macro deja la macro apuntando a un nodo desadjuntado (expand/replace lo bloquean, pero no se previene).
+- `--force` de `node rm` sigue sin uso.
+- Los comandos `link` no mantienen `interior_links` (dejan links fantasma), y `validate` no detecta Overlays sin interior ni links fantasma. Arreglarlo requiere un código nuevo.
+- `link` emite `REFERENTIAL_INTEGRITY_VIOLATION` sin contexto.
+- Ninguna mutación emite `LONG_ARROW_SUMMARY_STALE`.
+- Escrituras parciales sin rollback ante un fallo de E/S a mitad.
+- Labels vacíos sin validar al crear nodos.
+- Un nodo que solo vive en ramas NBR no se puede partir.
+- Los nodos ilegibles se saltan al reescribir refs.
+- Validación XOR de EC y `--dry-run` (heredados).
 
 ### [Release v0.4.0] — RFC-002 Slice 1: refs + meta-grafo inferido (MINOR)
 **Fecha**: 2026-10-06

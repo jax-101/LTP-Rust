@@ -99,6 +99,14 @@ Elimina nodos del pool global y todos sus edges asociados en todas las vistas, i
 
 - Si un nodo eliminado es el `source_node` de una rama NBR, la rama se elimina: warning `NBR_BRANCH_REMOVED {tree_id, nbr_id}`.
 - Las refs entrantes desde otros nodos se eliminan: un warning `REFS_STRIPPED {referencing, node_ids}` por nodo afectado (`node_ids` ordenado). Deshacible con `undo`.
+- *(Desde v0.5.0, ADR-016 D-3.)* Long arrows (`macro_edges`) de todos los árboles:
+  - Si se borra un extremo (`from`/`to`), la macro se elimina con sus `MacroAssumption`.
+  - Si se borra un nodo interior, se quita de `interior_nodes`, y los edges eliminados se quitan de `interior_links`.
+  - Un `overlay` al que este `rm` ha tocado y que se queda sin ningún link interior vivo (presente en `edges`) se elimina.
+  - Cada macro eliminada emite `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`, con `reason` = `endpoint_removed` | `interior_emptied`. `assumption_ids` va en orden de almacenamiento y la eliminación se puede deshacer con `undo`.
+  - Las macros que el `rm` no toca no se modifican. Las `projection_refs` de una superviviente tampoco: `validate` las señala con `LONG_ARROW_SUMMARY_STALE`. Regla: *una mutación avisa de lo que destruye; `validate`, de lo que queda inconsistente*.
+- *(Desde v0.5.0.)* **Fail-closed**: se cargan todos los árboles antes de escribir nada. Si alguno no se puede leer, se devuelve `IO_ERROR {tree_id}` sin escribir ningún byte. Los IDs repetidos en la entrada se deduplican.
+- Orden de warnings: lock obsoleto → `NBR_BRANCH_REMOVED` → `MACRO_EDGE_REMOVED` (por árbol y después en orden de almacenamiento) → `REFS_STRIPPED` → `KNOWLEDGE_ORPHANED`. `data`: `{ removed_nodes, removed_edges_count, affected_trees }`. Si `affected_trees` no está vacío, conviene ejecutar `validate` sobre esos árboles.
 
 #### `ltp node inspect <ID>`
 
@@ -114,7 +122,15 @@ Busca nodos por contenido de label (substring match).
 
 #### `ltp node split <ID> --into "<label_1>" "<label_2>" --tree <TREE_ID>`
 
-Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al primer nodo y salientes al segundo. Elimina el nodo original. Ambos hijos heredan `refs` y metadata extra (status `active`). Las refs entrantes de otros nodos se reescriben para apuntar a **ambos** hijos (conservando el pin). En ramas NBR del árbol: `source_node` y los `to` entrantes → primer hijo; los `from` → segundo hijo. Caso de uso principal: CLR #2 (entidad con ideas mezcladas).
+Divide una entidad con dos ideas en dos nodos. Hereda conexiones entrantes al primer nodo y salientes al segundo. Elimina el nodo original. Ambos hijos heredan `refs` y metadata extra (status `active`). Las refs entrantes de otros nodos se reescriben para apuntar a **ambos** hijos (conservando el pin). Caso de uso principal: CLR #2 (entidad con ideas mezcladas).
+
+**Global desde v0.5.0 (ADR-016 D-1/D-2).** El nodo pertenece al pool, así que el split reescribe **todos** los árboles donde aparece, no solo `--tree`. `--tree` sigue siendo obligatorio como árbol de contexto: si el nodo no está en su `nodes[]`, devuelve `NODE_NOT_IN_TREE`. La redirección sigue una regla única: lo **entrante** va al primer hijo y lo **saliente**, al segundo.
+- Al primer hijo van: el `to` de los edges del tronco y de las ramas NBR, el `to` del feedback, el `to` de las macros y el `source_node` de las NBR.
+- Al segundo hijo van: el `from[]` de los edges, el `from` del feedback y el `from` de las macros.
+- En `nodes[]` y en `interior_nodes`, el original se sustituye **en su posición** por los hijos que aún no estén. Una entrada existente nunca se mueve y conserva su `role`.
+- Un nodo que solo aparece en ramas NBR también se reescribe.
+
+Solo se guardan los árboles que cambian. Es **fail-closed**: carga todos los árboles antes de mintear IDs o escribir. Un árbol ilegible devuelve `IO_ERROR {tree_id}` sin escribir nada y sin consumir contadores, también si es el de `--tree`. `data`: `{ original_id, new_nodes, tree_id, affected_trees }`, donde `affected_trees` está ordenado e incluye siempre `tree_id`. Conviene ejecutar `validate` sobre esos árboles.
 
 ---
 
@@ -344,6 +360,8 @@ Desglosa un supuesto convirtiéndolo en un nodo intermedio explícito (INT) dent
 
 Reemplaza un sub-grafo colapsado por una Inyección, marcando la cadena táctica previa como `superseded`.
 
+*(Desde v0.5.0.)* Antes de marcar nada o mintear IDs, comprueba los extremos de la macro. Si uno no está en `nodes[]` del árbol, devuelve `NODE_NOT_IN_TREE {node_id}`; si está adjunto pero no existe en el pool, `NODE_NOT_FOUND {node_id}`. Se comprueba primero `from`. Así una macro colgante, dañada por versiones anteriores, no materializa edges rotos.
+
 #### `ltp macro add --tree <ID> --from <ID1> --to <ID2> --label "<label>"`
 
 Declara **top-down** un salto lógico (CLR #1, "flecha larga"): crea un `macro_edge` en estado `reservation` con interior vacío (`MACRO-xxx`), representando una relación `from → to` que el analista cree válida pero cuyos pasos intermedios aún no ha articulado (ADR-013). No valida topología (la reserva es independiente del grafo táctico) y **no** afecta `valid_dag` (ADR-010: fuera del DAG). Es la operación inversa a `path collapse` (que resume una cadena real existente, `overlay`).
@@ -356,7 +374,7 @@ Materializa una reserva en una cadena `INT` explícita (transición `reservation
 
 Los edges son reales ⇒ **bloquea ciclos**: pre-valida el DAG antes de persistir; si la cadena cerraría un ciclo devuelve `CIRCULAR_DEPENDENCY_DETECTED` (contexto `cycle_path`, `valid_dag: false`) sin crear ningún `INT`/`LINK` ni mutar el estado en disco (mismo contrato que `link connect`).
 
-Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro ya es `overlay`), `STEPS_REQUIRED` (sin labels no vacías), `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_nodes: [INT…], created_links: [LINK…], status: "overlay" }`.
+Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro ya es `overlay`), `NODE_NOT_IN_TREE` / `NODE_NOT_FOUND` (desde v0.5.0: el extremo no está adjunto, o está adjunto pero no existe en el pool; contexto `node_id`; se comprueba antes de crear nada), `STEPS_REQUIRED` (sin labels no vacías), `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_nodes: [INT…], created_links: [LINK…], status: "overlay" }`.
 
 #### `ltp macro promote --tree <ID> --macro-link <MACRO_ID>`
 
@@ -364,7 +382,7 @@ Acepta el salto como causalidad directa y consume la reserva (transición `reser
 
 El edge es real ⇒ **bloquea ciclos** con el mismo contrato que `expand`: el pre-check DAG precede al minteo de los `ASM` migrados, de modo que un ciclo bloqueado no consume la reserva ni quema el contador `ASM`.
 
-Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro es `overlay`; usar `path replace`), `NODE_NOT_IN_TREE`, `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_link, migrated_assumptions: [ASM…], from, to }`.
+Errores: `TREE_NOT_FOUND`, `MACRO_EDGE_NOT_FOUND`, `NOT_A_RESERVATION` (la macro es `overlay`; usar `path replace`), `NODE_NOT_IN_TREE`, `NODE_NOT_FOUND` (desde v0.5.0: extremo adjunto pero ausente del pool), `CIRCULAR_DEPENDENCY_DETECTED`. `data`: `{ macro_link, created_link, migrated_assumptions: [ASM…], from, to }`.
 
 ---
 
@@ -393,7 +411,13 @@ Ejecuta validaciones en dos niveles:
 **Bloqueantes (errors):**
 - DFS de 3 colores sobre `edges` (excluye `feedback_edges`): verifica que los árboles de suficiencia (CRT, FRT, TT) sean DAGs puros. Retorna `CIRCULAR_DEPENDENCY_DETECTED` si hay ciclos. El error incluye `cycle_path` (array de IDs de nodos formando el ciclo exacto).
 - Valida edges dentro de cada `nbr_branches[]` como DAGs independientes (con `cycle_path` en caso de ciclo).
-- Integridad referencial: todo nodo referenciado en edges existe en `/nodes/`.
+- Integridad referencial: todo nodo referenciado existe en `/nodes/`. Desde v0.5.0 (ADR-016 D-5) se comprueban todas las estructuras del árbol, en este orden fijo: `nodes[]` → `edges` → `feedback_edges` → `nbr_branches` (edges y `source_node`) → `macro_edges` (`from`, `to`, `interior_nodes`). Así se detectan también los workspaces dañados por `node split`/`node rm` de v0.4.x. Se emite `REFERENTIAL_INTEGRITY_VIOLATION` por cada hueco, en `data.details[].errors`, con este contexto:
+  - `tree_id` y `node_id` (el nodo ausente).
+  - `location`: `nodes` | `edges` | `feedback_edges` | `nbr_branches` | `macro_edges`.
+  - `field`: `ref` | `from` | `to` | `source_node` | `interior_nodes`.
+  - El ID del contenedor: `edge_id`, `feedback_id`, `nbr_id` (más `edge_id` si es un edge de rama) o `macro_link`.
+
+  Un nodo que está en disco pero no se puede leer cuenta como existente: lo señala `NODE_UNREADABLE` y no se duplica como violación. Los comandos `link` emiten el mismo código **sin contexto** (solo `detail`).
 - EC: exactamente 1 nodo con role `"objective"`, al menos 2 con role `"requirement"` vinculados al objective, al menos 1 `"prerequisite"` por cada requirement, al menos 1 conector XOR entre prerrequisitos incompatibles. Soporta N ramas. Los nodos referenciados pueden ser de cualquier tipo del pool global — el role es contextual a la vista.
 
 **Advertencias (warnings):**

@@ -4,7 +4,7 @@ Motor **determinista** (Rust) para el *Logical Thinking Process* (LTP) de H. Wil
 
 El motor valida **topología** (DAG), **integridad referencial** e **IDs únicos**; **nunca evalúa semántica** — eso lo hace el consumidor (una UI o un agente LLM). Separación estricta de responsabilidades (ADR-001).
 
-**Estado**: `v0.4.0` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo, la flecha larga (macro-edges) y **RFC-002 Slice 1** (refs entre nodos y meta-grafo inferido, ADR-015). Los slices siguientes de RFC-002 son diseño, no implementado.
+**Estado**: `v0.5.0` (ver [CHANGELOG.md](CHANGELOG.md)). Estables: núcleo determinista, Knowledge Pool, historial undo/redo, la flecha larga (macro-edges), **RFC-002 Slice 1** (refs entre nodos y meta-grafo inferido, ADR-015) e integridad referencial global en `node split`/`node rm`/`validate` (ADR-016). Los slices siguientes de RFC-002 son diseño, no implementado.
 
 ## Empieza aquí según quién eres
 

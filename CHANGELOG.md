@@ -6,6 +6,30 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
+Integridad referencial global de las mutaciones de nodo (ADR-016, plan `PLAN_v050-integrity.md`). Es MINOR: el warning `MACRO_EDGE_REMOVED` y el campo `affected_trees` de `node split` son aditivos. `validate` se vuelve más estricto con el código que ya existía.
+
+### Added
+
+- **`node split` → `data.affected_trees`**: los árboles reescritos, ordenados; incluye siempre `--tree`.
+- **Warning `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`** en `node rm`, con `reason` = `endpoint_removed` | `interior_emptied`.
+
+### Changed
+
+- **`node split` es global**: reescribe todos los árboles donde aparece el nodo (tronco, ramas NBR, feedback y flechas largas). Lo entrante va al primer hijo y lo saliente, al segundo. En `nodes[]`/`interior_nodes` los hijos ocupan la posición del original. `--tree` sigue siendo el árbol de contexto obligatorio.
+- **`validate`**: `REFERENTIAL_INTEGRITY_VIOLATION` cubre `nodes[]`, `feedback_edges`, ramas NBR (`source_node` y edges) y `macro_edges` (`from`, `to`, `interior_nodes`), con contexto `tree_id`, `node_id`, `location`, `field` y el ID del contenedor. Los workspaces dañados por versiones anteriores que antes pasaban ahora fallan: estaban rotos. Un nodo ilegible no cuenta como violación.
+- **`node rm` y `node split` son fail-closed**: cargan todos los árboles antes de escribir, y un árbol ilegible da `IO_ERROR {tree_id}` sin escribir nada ni consumir contadores.
+- Descripciones MCP y ayuda CLI de `node split`/`node rm` actualizadas.
+
+### Fixed
+
+- **`node split` dejaba referencias colgantes**: borraba el nodo del pool pero solo reescribía `--tree`, y ni siquiera ahí tocaba el feedback ni las flechas largas.
+- **`node rm` ignoraba `macro_edges`**: las flechas largas quedaban con extremos o interiores colgantes. Ahora se podan o se eliminan con aviso.
+- **`macro expand`, `macro promote` y `path replace`** materializaban edges rotos sobre una flecha larga colgante. Ahora comprueban los extremos antes de crear nada: `NODE_NOT_IN_TREE` si no está adjunto y `NODE_NOT_FOUND` si está adjunto pero ausente del pool.
+- **`node rm A,A`** borraba el nodo y después fallaba sin entrada de undo. Ahora los IDs repetidos se deduplican.
+- `node rm`/`node split` se saltaban en silencio los árboles ilegibles (`continue`), lo que producía justamente esta corrupción.
+
 ## [0.4.0] - 2026-10-06
 
 RFC-002 Slice 1 (ADR-015): refs entre nodos y meta-grafo inferido. Cambio aditivo (MINOR): los nodos sin refs se serializan byte-idénticos a v0.3.x.

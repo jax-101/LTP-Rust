@@ -342,7 +342,7 @@ Los knowledge items sin vincular funcionan como "inbox" de informacion pendiente
 
 **Errores bloqueantes** (hay que corregir):
 - Ciclos en el grafo (tautologia)
-- Integridad referencial rota
+- Integridad referencial rota. Desde v0.5.0 se revisa todo el arbol (nodos, edges, feedback, ramas NBR y flechas largas), asi que un workspace danado por versiones anteriores puede empezar a fallar aqui: estaba roto, ahora se ve. Cada error indica `location` y `field` para saber que reparar
 - EC sin estructura valida
 
 **Warnings** (oportunidades de mejora):
@@ -534,7 +534,7 @@ Yo: "Crea el PRT — que obstaculos hay para implementar?"
 
 1. **Registra TODO como knowledge primero** — incluso antes de construir el grafo. El inbox es tu memoria externa.
 
-2. **Valida frecuentemente** — cada 3-5 operaciones. Corregir a tiempo es mas barato.
+2. **Valida frecuentemente** — cada 3-5 operaciones. Corregir a tiempo es mas barato. Y siempre despues de `node rm` o `node split` con `affected_trees` no vacio: valida esos arboles. `split` es global (reescribe todos los arboles que usan el nodo), y `rm` avisa con `NBR_BRANCH_REMOVED` / `MACRO_EDGE_REMOVED` de las ramas y flechas largas que destruye. Lo que queda inconsistente (p. ej. un resumen de flecha larga obsoleto) solo lo detecta `validate`.
 
 3. **Marca el status epistemico** — un CRT lleno de hipotesis no verificadas es un castillo de naipes. Haz visible lo que sabes vs. lo que supones.
 
@@ -583,6 +583,8 @@ Todos prefijados con `ltp/` (ej. `ltp/node_add`, `ltp/knowledge_add`, `ltp/tree_
 | "Workspace not initialized" | Ejecuta `ltp/init` primero |
 | "WORKSPACE_LOCKED" | Otro proceso tiene el lock. Si es stale, se auto-libera |
 | "UNDO_STATE_DIVERGED" | Editaste archivos manualmente. Usa `ltp/history_check` y luego `ltp/history_invalidate` |
+| Un `node rm` borro una flecha larga (`MACRO_EDGE_REMOVED`) | Se borro un extremo o el overlay se quedo sin interior. El warning lista los `assumption_ids` perdidos; `undo` lo revierte |
+| `macro expand`/`path replace` devuelve `NODE_NOT_FOUND` o `NODE_NOT_IN_TREE` sobre un extremo | La flecha larga apunta a un nodo borrado o desadjuntado (dano de versiones < 0.5.0 o un `tree detach`). Ejecuta `validate` y repara el extremo |
 | "INVALID_ORDER" en `tree_walk` | `order` solo admite `topological` o `reverse` (en minusculas). Omitelo para usar el orden de la logica del arbol |
 | El walk de un GT sale "al reves" respecto a antes | Desde ADR-014 el GT recorre en `reverse` (desde el objetivo). Pide `order: topological` para el orden anterior |
 | Tools no aparecen en la sesion | Verifica con `claude mcp list` que `ltp` esta registrado |

@@ -61,7 +61,7 @@ pub fn all_tools() -> Vec<ToolDefinition> {
     ));
     tools.push(tool(
         "ltp/node_rm",
-        "Remove nodes from the pool",
+        "Remove nodes from the pool and prune every tree (edges, NBR branches, long arrows); destroyed structures are reported as warnings",
         json!({
             "type": "object",
             "properties": {
@@ -109,13 +109,13 @@ pub fn all_tools() -> Vec<ToolDefinition> {
     ));
     tools.push(tool(
         "ltp/node_split",
-        "Split a node into two",
+        "Split a node into two. Global: rewrites every tree that uses the node (data.affected_trees); run validate on them afterwards",
         json!({
             "type": "object",
             "properties": {
                 "id": { "type": "string", "description": "Node ID to split" },
                 "into": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "Two labels for the resulting nodes" },
-                "tree": { "type": "string", "description": "Tree context" }
+                "tree": { "type": "string", "description": "Context tree (node must be attached); all trees are rewritten" }
             },
             "required": ["id", "into", "tree"]
         }),
