@@ -72,13 +72,16 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ## Historial de Avance
 
 ### [v0.5.1 — en curso] — `--dry-run` real + knowledge ilegible visible (PATCH)
-**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b.
+**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b, T2.
 **T1b (añadida con aprobación del usuario, 2026-10-08)**: la comparación byte a byte de T1 destapó un no-determinismo anterior a v0.5.1, que violaba el invariante 1:
 - `check_dag` (`src/validate/dag.rs`) arrancaba el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salían como una rotación arbitraria del ciclo en todo comando que informa de un ciclo.
 - Cuatro lints de `src/validate/clr.rs` (CLR4, CLR4/5, CLR5, CLR7) recorrían un `HashMap` para emitir sus avisos, así que el orden de los warnings de `validate` cambiaba entre ejecuciones (se midió 10/20).
 
 **Fix**: `BTreeMap`/`BTreeSet`. El DFS arranca por el ID menor y los avisos salen ordenados por nodo. El resto de `HashMap` del motor se revisó: solo hacen búsquedas, y `tree walk` ya ordenaba su cola.
 **Tests**: 5 unit (50 iteraciones en el mismo proceso) + el E2E `t1b_*` (20 procesos). DR3 y DR11b vuelven a comparar byte a byte. Los tres E2E fallaban con el código anterior.
+**T2 (D-8a)**: no queda ningún `.expect()`/`.unwrap()` en código de producción (comprobado con un escaneo de `src/` fuera de `#[cfg(test)]`).
+- `CommandOutput::to_json`: si `data` no se puede serializar, devuelve el contrato de error (`INTERNAL_ERROR`, claves canónicas, indent 2) en vez de un panic. El unit `to_json_falls_back_*` fallaba con el panic antes del fix.
+- `link connect --nbr`: el `expect` pasa a `let … else` → `NBR_NOT_FOUND` (helper `nbr_not_found`, compartido con la validación previa). Ese `expect` no era alcanzable, así que la regresión `tests/v051_no_expect.rs` (3 E2E: NBR inexistente, NBR de otro árbol, workspace usable después) ya pasaba antes del fix; queda como guardia del contrato. 749 tests en verde.
 
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08

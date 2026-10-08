@@ -98,8 +98,25 @@ impl<T: Serialize> CommandOutput<T> {
         self
     }
 
+    /// Canonical pretty JSON. If `data` cannot be serialized, returns the
+    /// error contract (`INTERNAL_ERROR`) instead of panicking.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(self).expect("serialization should not fail")
+        serde_json::to_string_pretty(self).unwrap_or_else(|e| {
+            let fallback = serde_json::json!({
+                "success": false,
+                "action": self.action,
+                "workspace": self.workspace,
+                "data": null,
+                "graph_health": { "valid_dag": true, "orphan_nodes_count": 0 },
+                "errors": [{
+                    "code": "INTERNAL_ERROR",
+                    "detail": format!("output serialization failed: {e}"),
+                }],
+                "warnings": [],
+            });
+            // `Display` of a `Value` cannot fail; `{:#}` is the 2-space pretty form.
+            format!("{fallback:#}")
+        })
     }
 }
 
@@ -119,5 +136,66 @@ pub fn error_output(
         },
         errors,
         warnings: vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A payload whose serialization always fails.
+    struct Unserializable;
+
+    impl Serialize for Unserializable {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("boom"))
+        }
+    }
+
+    #[test]
+    fn to_json_falls_back_to_error_contract_when_serialization_fails() {
+        let json = CommandOutput::ok("node_add", "ws \"q\"", Unserializable).to_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["success"], false);
+        assert_eq!(value["action"], "node_add");
+        assert_eq!(value["workspace"], "ws \"q\"");
+        assert_eq!(value["data"], serde_json::Value::Null);
+        assert_eq!(value["graph_health"]["valid_dag"], true);
+        assert_eq!(value["graph_health"]["orphan_nodes_count"], 0);
+        assert_eq!(value["errors"][0]["code"], "INTERNAL_ERROR");
+        assert!(value["errors"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("boom"));
+        assert_eq!(value["warnings"], serde_json::json!([]));
+        // Canonical key order, 2-space indent, like the regular output.
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "action",
+                "data",
+                "errors",
+                "graph_health",
+                "success",
+                "warnings",
+                "workspace"
+            ]
+        );
+        assert!(json.starts_with("{\n  \""), "{json}");
+    }
+
+    #[test]
+    fn to_json_regular_output_unchanged() {
+        let json = CommandOutput::ok("status", "ws", 7).to_json();
+        assert_eq!(
+            json,
+            serde_json::to_string_pretty(&CommandOutput::ok("status", "ws", 7)).unwrap()
+        );
     }
 }

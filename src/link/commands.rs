@@ -79,6 +79,28 @@ pub struct LinkFeedbackRmData {
 
 // --- Command implementations ---
 
+/// `NBR_NOT_FOUND` output of `link connect --nbr` (the lock is already released).
+fn nbr_not_found(ws_name: String, tree_id: &str, nid: &str) -> CommandOutput<LinkConnectData> {
+    CommandOutput {
+        success: false,
+        action: "link_connect".to_string(),
+        workspace: ws_name,
+        data: LinkConnectData {
+            created_links: vec![],
+            tree_id: tree_id.to_string(),
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new(
+            "NBR_NOT_FOUND",
+            format!("NBR '{}' not found in tree '{}'", nid, tree_id),
+        )],
+        warnings: vec![],
+    }
+}
+
 /// Execute `link connect`.
 pub fn execute_link_connect(
     storage: &dyn Storage,
@@ -188,24 +210,7 @@ pub fn execute_link_connect(
     if let Some(nid) = nbr_id {
         if !tree.nbr_branches.iter().any(|b| b.id == nid) {
             let _ = storage.release_lock();
-            return CommandOutput {
-                success: false,
-                action: "link_connect".to_string(),
-                workspace: ws_name,
-                data: LinkConnectData {
-                    created_links: vec![],
-                    tree_id: tree_id.to_string(),
-                },
-                graph_health: GraphHealth {
-                    valid_dag: true,
-                    orphan_nodes_count: 0,
-                },
-                errors: vec![OutputError::new(
-                    "NBR_NOT_FOUND",
-                    format!("NBR '{}' not found in tree '{}'", nid, tree_id),
-                )],
-                warnings: vec![],
-            };
+            return nbr_not_found(ws_name, tree_id, nid);
         }
     }
 
@@ -338,11 +343,10 @@ pub fn execute_link_connect(
 
     if let Some(nid) = nbr_id {
         // Insert into NBR branch and validate NBR DAG
-        let nbr_branch = tree
-            .nbr_branches
-            .iter_mut()
-            .find(|b| b.id == nid)
-            .expect("NBR existence validated above");
+        let Some(nbr_branch) = tree.nbr_branches.iter_mut().find(|b| b.id == nid) else {
+            let _ = storage.release_lock();
+            return nbr_not_found(ws_name, tree_id, nid);
+        };
 
         let mut nbr_edges: Vec<Edge> = nbr_branch.edges.clone();
         nbr_edges.extend(new_edges.iter().cloned());
