@@ -189,10 +189,15 @@ pub fn intercept(cli: &Cli, cwd: &Path) -> Option<i32> {
 /// Forwards the child's stdout and stderr byte for byte and returns its exit
 /// code (1 if it was killed by a signal).
 fn forward(output: &Output) -> i32 {
+    forward_to(&mut io::stdout(), &mut io::stderr(), output)
+}
+
+/// [`forward`] over explicit writers, so the stream routing is unit-testable.
+fn forward_to(out: &mut impl Write, err: &mut impl Write, output: &Output) -> i32 {
     // A closed stdout/stderr leaves nothing to report to; the code still counts.
-    let _ = io::stdout().write_all(&output.stdout);
-    let _ = io::stdout().flush();
-    let _ = io::stderr().write_all(&output.stderr);
+    let _ = out.write_all(&output.stdout);
+    let _ = out.flush();
+    let _ = err.write_all(&output.stderr);
     output.status.code().unwrap_or(1)
 }
 
@@ -410,6 +415,33 @@ mod tests {
         assert!(DryRunCopy::create(ws.path(), base.path()).is_err());
         assert!(fs::read_dir(base.path()).unwrap().next().is_none());
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forward_keeps_streams_apart_and_returns_code() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(1 << 8), // exit code 1
+            stdout: b"{\"success\": false}\n".to_vec(),
+            stderr: b"warning on stderr\n".to_vec(),
+        };
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(forward_to(&mut out, &mut err, &output), 1);
+        assert_eq!(out, output.stdout);
+        assert_eq!(err, output.stderr);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forward_killed_child_is_code_1() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(9), // SIGKILL
+            stdout: vec![],
+            stderr: vec![],
+        };
+        assert_eq!(forward_to(&mut Vec::new(), &mut Vec::new(), &output), 1);
     }
 
     #[test]
