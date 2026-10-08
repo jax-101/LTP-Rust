@@ -6,6 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-08
+
+"El motor no calla" (plan `PLAN_v051.md`, ADR-017, adenda D-K5 a ADR-016). Es PATCH: hace cumplir promesas ya documentadas, sin campos, códigos ni flags nuevos.
+
+### Fixed
+
+- **`--dry-run` escribía en disco** en todos los comandos salvo `init`, `undo` y `redo` (`node add --dry-run` creaba el nodo). Ahora el CLI ejecuta el comando real sobre una copia temporal de lo que gestiona LTP (`ltp.config.json`, `nodes/`, `trees/`, `knowledge/`, `.ltp/` sin `tmp/`) y la descarta. El output y el código de salida son idénticos a los de la ejecución real, y el workspace no cambia ni un byte: ni contadores, ni historial, ni lock. Si la simulación no se puede montar, devuelve `IO_ERROR` (`action: "dry_run"`) sin ejecutar nada. `init`/`undo`/`redo` conservan su `--dry-run` nativo.
+- **Un knowledge ilegible se descartaba en silencio** en `status` (CLI y MCP), `validate`, `tree walk --show-knowledge`, `trace --show-knowledge` y `node rm` (que perdía `KNOWLEDGE_ORPHANED`). Ahora cada uno emite `KNOWLEDGE_LOAD_ERROR {id}`, el código que ya usaba `knowledge list`, en orden de ID. `node rm` avisa y no bloquea. `knowledge_health` tiene una sola implementación para CLI y MCP.
+- **No-determinismo entre ejecuciones** (invariante 1): `cycle_path` de `CIRCULAR_DEPENDENCY_DETECTED` salía como una rotación arbitraria del ciclo, y el orden de los warnings CLR4, CLR4/5, CLR5 y CLR7 de `validate` cambiaba de un proceso a otro. Ahora el DFS arranca por el ID menor y los avisos salen ordenados por nodo.
+- Sin `.expect()` en producción: si la serialización falla, `to_json` devuelve el contrato de error (`INTERNAL_ERROR`) en vez de abortar, y `link connect --nbr` devuelve `NBR_NOT_FOUND` por un camino tipado.
+
+### Changed
+
+- Lint `missing_docs` activo en la librería: los módulos nuevos deben documentarse; la deuda existente (654 elementos en 15 módulos) queda congelada con `allow` explícitos.
+- Tests: 14 UATs del Knowledge Pool que faltaban o tenían aserciones vacuas (`if let` que nunca fallaba), y las suites `v051_dry_run`, `v051_knowledge_unreadable` y `v051_no_expect`.
+
 ## [0.5.0] - 2026-10-08
 
 Integridad referencial global de las mutaciones de nodo (ADR-016, plan `PLAN_v050-integrity.md`). Es MINOR: el warning `MACRO_EDGE_REMOVED` y el campo `affected_trees` de `node split` son aditivos. `validate` se vuelve más estricto con el código que ya existía.

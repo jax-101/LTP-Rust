@@ -8,13 +8,13 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | v0.5.0 — integridad referencial global (ADR-016) |
-| **Último release** | v0.5.0 (2026-10-08) — MINOR: `node split` global, `node rm` poda macros (`MACRO_EDGE_REMOVED`), `validate` con integridad completa |
-| **Último bugfix** | `split` solo reescribía `--tree`; `rm` ignoraba `macro_edges`; expand/promote/replace materializaban macros colgantes; `rm A,A` |
+| **Última fase completada** | v0.5.1 — `--dry-run` real + knowledge ilegible visible (ADR-017) |
+| **Último release** | v0.5.1 (2026-10-08) — PATCH: `--dry-run` real en todo el CLI, `KNOWLEDGE_LOAD_ERROR` en vez de silencio, salidas deterministas entre procesos |
+| **Último bugfix** | `--dry-run` escribía en disco; knowledge ilegible descartado en silencio en 6 sitios; `cycle_path` y orden de warnings CLR no deterministas; 2 `.expect()` en producción |
 | **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
-| **UATs Knowledge Pool** | 220/239 |
+| **UATs Knowledge Pool** | 234/239 |
 | **Tests F13** | 11/11 |
 | **Tests F14** | 6/6 |
 | **Tests Slice 1 (macro-assume)** | 40/40 |
@@ -24,7 +24,8 @@
 | **Tests v0.3.1 (contadores + roles EC)** | 15/15 |
 | **Tests RFC-002 Slice 1** | 46/46 |
 | **Tests v0.5.0 (integridad)** | 61/61 (38 E2E + 23 unit) |
-| **Tests totales** | 687 |
+| **Tests v0.5.1** | 50/50 (17 E2E dry-run + 10 E2E knowledge ilegible + 3 E2E no-expect + 13 unit `dry_run` + 7 unit determinismo/`to_json`), más 14 UATs KP |
+| **Tests totales** | 751 |
 
 ---
 
@@ -36,12 +37,12 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 |------|---------|-----------|-------------|--------|------|-------|
 | K1 | Fundación (schema, storage, init, counters) | 8% | 8% | ✅ Completada | 16/16 | |
 | K2 | CRUD (add/edit/rm/inspect/list) | 18% | 18% | ✅ Completada | 47/47 | 40 integration tests |
-| K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 31/37 | 31 integration tests |
+| K3 | Linking (link/unlink, validación refs) | 15% | 15% | ✅ Completada | 37/37 | 37 integration tests (6 añadidos en v0.5.1 T-K2) |
 | K4 | Campo epistémico en nodos | 10% | 10% | ✅ Completada | 19/19 | 19 integration tests |
-| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | ✅ Completada | 38/51 | 38 integration tests |
+| K5 | Integración (status/validate/trace/node rm) | 20% | 20% | ✅ Completada | 46/51 | 46 integration tests (8 añadidos en v0.5.1 T-K2; K5.40 fijado) |
 | K6 | Tests E2E (workflows hypothesis-driven) | 12% | 12% | ✅ Completada | 31/31 | 31 E2E tests |
 | K7 | MCP Server (knowledge tools) | 17% | 17% | ✅ Completada | 38/38 | 38 integration tests |
-| | **TOTAL** | **100%** | **100%** | | **220/239** | |
+| | **TOTAL** | **100%** | **100%** | | **234/239** | |
 
 ---
 
@@ -71,8 +72,9 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
-### [v0.5.1 — en curso] — `--dry-run` real + knowledge ilegible visible (PATCH)
-**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b, T2, T3, T4.
+### [Release v0.5.1] — `--dry-run` real + knowledge ilegible visible (PATCH)
+**Fecha**: 2026-10-08
+**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). T0–T5 completadas, más T1b (aprobada durante T1). Cierra el hueco heredado "`--dry-run` en mutaciones" de v0.4.0/v0.5.0.
 **T1b (añadida con aprobación del usuario, 2026-10-08)**: la comparación byte a byte de T1 destapó un no-determinismo anterior a v0.5.1, que violaba el invariante 1:
 - `check_dag` (`src/validate/dag.rs`) arrancaba el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salían como una rotación arbitraria del ciclo en todo comando que informa de un ciclo.
 - Cuatro lints de `src/validate/clr.rs` (CLR4, CLR4/5, CLR5, CLR7) recorrían un `HashMap` para emitir sus avisos, así que el orden de los warnings de `validate` cambiaba entre ejecuciones (se midió 10/20).
@@ -109,6 +111,15 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | T2b | Quitar la validación temprana de `--nbr` (solo queda el `let-else`) | (sonda: ¿equivalente?) | **No es equivalente**: los 3 E2E de `v051_no_expect` mueren, porque al llegar al `let-else` ya se ha consumido un contador `LINK` y `.ltp/counters.json` cambia. La validación temprana es la guardia real y la regresión la vigila. El `let-else` es una red de seguridad para un camino inalcanzable hoy |
 
 Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte a byte es entre dos procesos, y una sola pasada no basta para ver el desorden. Lo detectan el unit de 50 iteraciones y el E2E de 20 procesos, que se añadieron precisamente por eso.
+
+**Fuera de alcance, registrado (§5 del plan)**:
+- `dry_run` en MCP (los 72 tools; hoy solo `ltp/undo` y `ltp/redo`): es contrato nuevo, va como MINOR (v0.6.0) y reutilizaría el mecanismo de ADR-017 D-1.
+- Documentar los 654 elementos públicos sin `///`: la deuda queda congelada por T3, no saldada.
+- Dividir `main.rs` (2280 líneas).
+- Carrera de ADR-017 D-3: un escritor concurrente durante la copia puede dar una simulación de un estado intermedio (la misma ventana que una lectura de hoy). Documentada en ENGINE_SPEC §2.0 e INTEGRATION §2A.
+- Los heredados de v0.5.0 (§6 de `PLAN_v050-integrity.md`), listados arriba.
+- **Hueco nuevo**: `load_pool` sigue callando si falla `list_knowledge_ids` (por ejemplo, `knowledge/` ilegible como directorio): devuelve un pool vacío sin aviso. D-K5 cubre los items ilegibles, no el listado.
+- El `let-else` de `link connect --nbr` (T2) consumiría un contador `LINK` si llegara a alcanzarse (sonda T2b). Hoy es inalcanzable gracias a la validación temprana.
 
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
@@ -160,7 +171,7 @@ Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte
 - Labels vacíos sin validar al crear nodos.
 - Un nodo que solo vive en ramas NBR no se puede partir.
 - Los nodos ilegibles se saltan al reescribir refs.
-- Validación XOR de EC y `--dry-run` (heredados).
+- Validación XOR de EC y `--dry-run` (heredados). `--dry-run`: **cerrado en v0.5.1**.
 
 ### [Release v0.4.0] — RFC-002 Slice 1: refs + meta-grafo inferido (MINOR)
 **Fecha**: 2026-10-06
@@ -170,7 +181,7 @@ Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte
 **Tests totales**: 582 → 628
 **Factor de escala**: 1.0x (6 paquetes, esfuerzo ≈ estimado; correcciones limitadas a lints de clippy y drift aditivo de goldens)
 **Docs**: ENGINE_SPEC (refs, `tree relation list`, códigos nuevos, `_meta_graph`), USAGE_GUIDE §6.6, INTEGRATION (mínima `v0.4.0`, §4), RELEASE_POLICY (gate `>= 0.4.0`), CHANGELOG `[0.4.0]`, README, contract/README, tag `v0.4.0`.
-**Huecos registrados (fuera de alcance)**: `node split` borra el nodo globalmente pero solo reescribe el árbol indicado (preexistente); `node rm` ignora `macro_edges`; validación XOR de EC; `--dry-run` en mutaciones.
+**Huecos registrados (fuera de alcance)**: `node split` borra el nodo globalmente pero solo reescribe el árbol indicado (preexistente); `node rm` ignora `macro_edges`; validación XOR de EC; `--dry-run` en mutaciones (cerrado en v0.5.1).
 
 ### [Release v0.3.1] — Rebuild de contadores + roles EC (PATCH)
 **Fecha**: 2026-10-06

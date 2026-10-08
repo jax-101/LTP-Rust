@@ -16,13 +16,13 @@ Hay **dos superficies de integración**, ambas sobre el **mismo motor** y el **m
 ## 1. Obtener el binario
 
 ```bash
-git pull origin main          # o: git checkout v0.5.0  (para fijar una versión)
+git pull origin main          # o: git checkout v0.5.1  (para fijar una versión)
 cargo build --release
 # → target/release/ltp        (CLI)
 # → target/release/ltp-mcp    (servidor MCP)
 ```
 
-Para reproducibilidad, compila desde un tag: `git checkout v0.5.0 && cargo build --release`.
+Para reproducibilidad, compila desde un tag: `git checkout v0.5.1 && cargo build --release`.
 
 ## 2A. Integración por CLI (apps / UI)
 
@@ -30,7 +30,7 @@ Modelo: **spawnea `ltp` una vez por comando**. No hay estado en memoria entre ll
 
 - **Invocación**: `ltp <subcomando> [args]` (p. ej. `ltp tree walk <treeId>`, `ltp link connect --tree ...`).
 - **Workspace = directorio de trabajo (`cwd`)**. ⚠️ El CLI **no** tiene flag `--workspace`: el motor opera sobre el `cwd` del proceso. Tu consumidor debe fijar el *current directory* al workspace al spawnear (p. ej. `Command::new(bin).current_dir(workspace)`).
-- **Salida**: JSON canónico (`CommandOutput`) por **stdout**. `--human` da texto legible (no lo parsees); `--dry-run` simula la operación sin escribir a disco.
+- **Salida**: JSON canónico (`CommandOutput`) por **stdout**. `--human` da texto legible (no lo parsees). `--dry-run` (fiable desde v0.5.1) ejecuta el comando real sobre una copia temporal del workspace: devuelve exactamente el mismo output y código de salida que la ejecución real, y no toca ni un byte del workspace (tampoco `.ltp/`: ni contadores, ni historial, ni lock). Sirve para previsualizar `node rm`/`node split` y ver sus `affected_trees` y warnings. Si la simulación no se puede montar, devuelve `IO_ERROR` con `action: "dry_run"` y no ejecuta nada. Si otro proceso escribe durante la copia, la simulación puede ver un estado intermedio (la misma ventana que un comando de solo lectura). En v0.5.0 y anteriores, `--dry-run` **escribía** salvo en `init`/`undo`/`redo`: exige `>= 0.5.1` antes de confiar en él. Detalle: ENGINE_SPEC §2.0.
 - **Errores de proceso**: si `stdout` viene vacío, lee `stderr` (fallo antes de producir salida JSON).
 - **Handshake / feature-gate**: `ltp --version` → `X.Y.Z+<sha>[.dirty]`. Parsea el *core* antes de `+` y exige `>= 0.4.0` (antes de `0.4.0` no existen `refs` en los nodos ni `tree relation list`; antes de `0.3.0`, `tree walk` sin `--order` recorre siempre en `topological` y los GT tienen lógica `sufficiency`). El fragmento tras `+` es el commit exacto (`git checkout <sha>` reproduce código y docs).
 
@@ -87,6 +87,7 @@ Los nombres se corresponden 1:1: subcomando CLI `tree walk` ↔ tool MCP `ltp/tr
 ## 4. Estable vs WIP (no construyas contra vaporware)
 
 - ✅ **v0.5.0 — Integridad global (ADR-016)** — `node split` reescribe **todos** los árboles que usan el nodo (`data.affected_trees`, nuevo). `node rm` poda también las flechas largas (warning nuevo `MACRO_EDGE_REMOVED`). Ambos son fail-closed ante un árbol ilegible (`IO_ERROR {tree_id}`). `macro expand`/`promote` y `path replace` vuelven a comprobar los extremos (`NODE_NOT_IN_TREE` / `NODE_NOT_FOUND`). **`validate` es más estricto**: `REFERENTIAL_INTEGRITY_VIOLATION` cubre todas las estructuras (`location`/`field`), así que un workspace dañado por versiones anteriores que antes pasaba ahora falla. Flujo recomendado: tras `rm`/`split` con `affected_trees` no vacío, ejecuta `validate` sobre esos árboles. Todo es aditivo: el gate `>= 0.4.0` sigue valiendo, y `>= 0.5.0` si dependes de `affected_trees` en `split`.
+- ✅ **v0.5.1 — El motor no calla (ADR-017, PATCH)** — `--dry-run` real en todo el CLI (antes escribía salvo en `init`/`undo`/`redo`); exige `>= 0.5.1` si previsualizas. Un knowledge ilegible ya no se descarta en silencio: `status`, `validate`, `tree walk --show-knowledge`, `trace --show-knowledge` y `node rm` emiten `KNOWLEDGE_LOAD_ERROR {id}` (código ya existente), y `status` cuenta solo los items legibles, igual en CLI y MCP. `cycle_path` y el orden de los warnings de `validate` son deterministas entre ejecuciones. Sin campos ni códigos nuevos.
 - ✅ **v0.4.0 — RFC-002 Slice 1** — `refs` entre nodos (`metadata.refs`, `--ref NODE[@TREE]`, MCP `refs`/`add_refs`/`rm_refs`), meta-grafo **inferido y sin tipo** (`tree relation list` / `ltp/tree_relation_list`, ADR-015), warnings `_meta_graph` en `validate` (`DANGLING_NODE_REF`, `NORM_REF_MISSING`, `NODE_UNREADABLE`) e integridad de ramas NBR y refs en `node rm`/`node split`.
 - ✅ **v0.3.0** — tipo de nodo `CSF`, lógica de árbol derivada del tipo (ADR-014: GT/EC/PRT de necesidad, `tree walk` con orden por defecto según la lógica, CLR #4 solo en suficiencia) y error `INVALID_ORDER`.
 - ✅ **v0.2.0** — implementado y con contrato estable: núcleo determinista (grafo causal, DAG, integridad referencial), Knowledge Pool, historial undo/redo, y la flecha larga (Slice 1 `macro-assume` + Slice 2 `macro add/expand/promote`).

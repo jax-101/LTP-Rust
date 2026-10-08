@@ -53,6 +53,17 @@ El motor `ltp-engine` NO intenta adivinar flujos de trabajo ni empaquetar comand
 
 Toda la interacción con el sistema se expone tanto en la CLI de Rust como en el Servidor MCP. Todos los comandos soportan `--json`.
 
+### 2.0. Flags globales
+
+- `--human`: salida legible en vez de JSON (no apta para parsear).
+- `--dry-run` (desde v0.5.1, ADR-017): ejecuta el comando real sobre una **copia temporal** del workspace y la descarta. El output (stdout, stderr y código de salida) es idéntico al de la ejecución real: mismos datos, warnings, errores e IDs, y sin campos nuevos. Garantías:
+  - El workspace real queda intacto byte a byte, incluido `.ltp/`: no se consumen contadores, no se crea historial y no se adquiere ni se repara el lock.
+  - Se copian solo `ltp.config.json`, `nodes/`, `trees/`, `knowledge/` y `.ltp/` (sin `.ltp/tmp/`), ficheros regulares y sin seguir symlinks. El resto del directorio no se copia. Como la copia incluye `.ltp/`, la simulación se comporta como la ejecución real ante un lock activo (`WORKSPACE_LOCKED`), un lock obsoleto (aviso, pero el lock real sigue en disco) o un batch abierto.
+  - Si la simulación no se puede montar (directorio temporal inutilizable, fallo al copiar o al lanzar el proceso), devuelve `IO_ERROR` con `action: "dry_run"` y código 1, **sin ejecutar nada** sobre el workspace real.
+  - Excepciones: `init`, `undo` y `redo` conservan su `--dry-run` nativo (§2.13).
+  - Carrera conocida: si otro proceso escribe mientras se copia el workspace, la simulación puede ver un estado intermedio, igual que cualquier comando de solo lectura. Una mutación concurrente que tenga el lock hace que la simulación falle igual que la ejecución real.
+  - Solo en el CLI: en el servidor MCP, `dry_run` existe únicamente en `ltp/undo` y `ltp/redo` (el nativo).
+
 ---
 
 ### 2.1. Workspace
@@ -68,6 +79,7 @@ Diagnóstico de salud determinista del workspace:
 - Reporta causas raíz sin resolver o supuestos invalidados.
 - Retorna el recuento global de entidades por tipo.
 - Reporta feedback loops (cantidad, tipo positive/negative).
+- `knowledge_health` (KNOWLEDGE_SPEC §6.1), igual en CLI y MCP. Desde v0.5.1 cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` y no se cuenta.
 
 ---
 
@@ -106,7 +118,7 @@ Elimina nodos del pool global y todos sus edges asociados en todas las vistas, i
   - Cada macro eliminada emite `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`, con `reason` = `endpoint_removed` | `interior_emptied`. `assumption_ids` va en orden de almacenamiento y la eliminación se puede deshacer con `undo`.
   - Las macros que el `rm` no toca no se modifican. Las `projection_refs` de una superviviente tampoco: `validate` las señala con `LONG_ARROW_SUMMARY_STALE`. Regla: *una mutación avisa de lo que destruye; `validate`, de lo que queda inconsistente*.
 - *(Desde v0.5.0.)* **Fail-closed**: se cargan todos los árboles antes de escribir nada. Si alguno no se puede leer, se devuelve `IO_ERROR {tree_id}` sin escribir ningún byte. Los IDs repetidos en la entrada se deduplican.
-- Orden de warnings: lock obsoleto → `NBR_BRANCH_REMOVED` → `MACRO_EDGE_REMOVED` (por árbol y después en orden de almacenamiento) → `REFS_STRIPPED` → `KNOWLEDGE_ORPHANED`. `data`: `{ removed_nodes, removed_edges_count, affected_trees }`. Si `affected_trees` no está vacío, conviene ejecutar `validate` sobre esos árboles.
+- Orden de warnings: lock obsoleto → `NBR_BRANCH_REMOVED` → `MACRO_EDGE_REMOVED` (por árbol y después en orden de almacenamiento) → `REFS_STRIPPED` → `KNOWLEDGE_ORPHANED` → `KNOWLEDGE_LOAD_ERROR` (uno por knowledge ilegible; no bloquea, desde v0.5.1). `data`: `{ removed_nodes, removed_edges_count, affected_trees }`. Si `affected_trees` no está vacío, conviene ejecutar `validate` sobre esos árboles.
 
 #### `ltp node inspect <ID>`
 
@@ -198,7 +210,7 @@ Recorrido ordenado del árbol completo para auditoría sistemática (JSON por de
 - `role` puede ser `null` (solo obligatorio en EC).
 - `incoming_edges` / `outgoing_edges` son arrays de **IDs de edge (LINK)**, no objetos. Para operator/assumptions/from/to de un edge concreto: `ltp link inspect <id>`. Un mismo edge AND aparece en el `outgoing_edges` de cada causa.
 - Sin `--order`, el orden se deriva de la lógica del árbol (ADR-014): `topological` en suficiencia (CRT/FRT/TT), desde causas raíz hacia efectos; `reverse` en necesidad (GT/EC/PRT), desde el objetivo hacia los prerrequisitos. `--order` explícito siempre manda y `data.order` informa del orden aplicado. Solo se aceptan `topological` y `reverse` (sensible a mayúsculas); cualquier otro valor falla con `INVALID_ORDER` antes de buscar el árbol (`data.order` devuelve el valor recibido y `nodes` vacío).
-- `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**.
+- `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**. Con el flag, cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1); sin él no se lee el pool.
 - **No incluye feedback edges** (viven en `feedback_edges`, fuera del DAG): obtenlas con `ltp link feedback-list`.
 
 > Flags reservados **sin efecto actual** (se parsean pero se ignoran en el dispatch): `--show-origin`, `--expand-nbr`.
@@ -341,6 +353,7 @@ Motor de exploración del grafo:
 - `--depth N`: filtra por profundidad.
 - Incluye `feedback_edges` por defecto; excluir con `--no-feedback`.
 - Con `--nbr` incluye también los edges de las NBR branches.
+- `--show-knowledge` (KNOWLEDGE_SPEC §6.4): añade el knowledge de cada nodo; cada item ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1).
 
 ---
 
@@ -432,6 +445,7 @@ Ejecuta validaciones en dos niveles:
 - Nodos huérfanos dentro del tree (attached pero sin edges). Excepción (ADR-013): los extremos de un `macro_edge` en estado `reservation` se consideran conectados (el salto lógico ya los relaciona), por lo que no disparan `ORPHAN_NODE_IN_TREE`.
 - Flecha larga en estado `reservation` sin resolver: `LONG_ARROW_RESERVATION_PENDING` (CLR #1, contexto `macro_link`/`from`/`to`) recuerda que el salto está pendiente de `macro expand` o `macro promote`. No bloquea (ADR-010).
 - *(Meta-grafo, entrada sintética `_meta_graph`, desde v0.4.0.)* `DANGLING_NODE_REF {node_id, ref_node, ref_tree, reason}` con `reason` = `node_missing` | `tree_missing` | `not_in_tree` (refs rotas por edición manual o binarios antiguos). `NORM_REF_MISSING {node_id, trees}`: solo si el workspace tiene ≥1 GT; una UDE adjunta a un CRT o presente en una rama NBR sin ref a una norma (NC, CSF u OBJ) adjunta a un GT (respetando el pin). Un warning por nodo, `trees` ordenado. `NODE_UNREADABLE {node_id}`: nodo listado en disco que no se puede cargar (antes se saltaba en silencio). Con `--tree`, solo nodos de ese árbol (tronco o ramas NBR). La entrada solo aparece si hay warnings.
+- *(Knowledge Pool, entrada sintética `_knowledge_pool`.)* Avisos de KNOWLEDGE_SPEC §6.2. Desde v0.5.1 van primero los `KNOWLEDGE_LOAD_ERROR {id}` de los items ilegibles, en orden de ID; los demás avisos se calculan sobre los legibles.
 - Higiene de resumen de flecha larga (Slice 1): `LONG_ARROW_SUMMARY_STALE` (proyecciones colgantes o supuestos interiores sin mapear) y `MACRO_ASSUMPTION_UNGROUNDED` (macro-assume sobre un `overlay` con interior no vacío pero sin `projection_refs`).
 
 ---

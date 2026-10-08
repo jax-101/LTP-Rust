@@ -413,6 +413,17 @@ Cuando vas a hacer muchas operaciones relacionadas:
 
 Si algo sale mal: `"Deshaz todo"` — revierte el batch completo de una vez.
 
+### 6.4b. Previsualizar operaciones destructivas (`--dry-run`, v0.5.1)
+
+Antes de un `node rm` o un `node split`, que desde v0.5.0 reescriben todos los árboles donde aparece el nodo, conviene ver el efecto sin aplicarlo. Desde la terminal, en el directorio del workspace:
+
+```bash
+ltp node rm UDE-003 --dry-run      # affected_trees, MACRO_EDGE_REMOVED, KNOWLEDGE_ORPHANED...
+ltp node split RC-002 --into "Causa A" "Causa B" --tree tree-crt-main --dry-run
+```
+
+El output es exactamente el que daría la ejecución real, IDs incluidos, pero el workspace no cambia: ni nodos, ni contadores, ni historial. Si te convence, repite el comando sin `--dry-run`. Funciona con cualquier comando del CLI; `undo`/`redo` tienen su propio `--dry-run`. El servidor MCP solo lo ofrece en undo/redo, así que desde Claude pide que lo ejecute por terminal.
+
 ### 6.5. Feedback loops
 
 Para modelar ciclos de retroalimentacion (que refuerzan o estabilizan):

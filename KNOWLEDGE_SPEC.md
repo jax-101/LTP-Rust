@@ -313,6 +313,19 @@ Muestra detalle completo de un knowledge item incluyendo todos sus campos y link
 
 ## 6. Interacción con Comandos Existentes
 
+### 6.0. Items ilegibles (desde v0.5.1, ADR-016 D-K5)
+
+Un `knowledge/KN-xxx.json` que no se puede leer o parsear **nunca se descarta en silencio**. Cada comando que recorre el pool emite un warning `KNOWLEDGE_LOAD_ERROR {id}` por item ilegible, en orden de ID, con `detail` "Failed to load {id}: {error}" (la misma forma que ya usaba `knowledge list`), y sigue adelante con los items legibles:
+
+| Comando | Dónde aparece el aviso |
+|---------|------------------------|
+| `status` (CLI y MCP, mismo cálculo) | `warnings`; `knowledge_health` cuenta solo los items legibles |
+| `validate` | Primero en la entrada `_knowledge_pool` de `data.details`; los avisos epistémicos de los items legibles se mantienen |
+| `tree walk` / `trace` | Solo con `--show-knowledge`; sin el flag el output no cambia |
+| `node rm` | Después de `KNOWLEDGE_ORPHANED`; **no bloquea** el borrado |
+
+Regla: lo ilegible que una mutación escribe, bloquea; lo ilegible que solo lee, se avisa; nunca se calla. `node rm` no escribe knowledge, así que un item ilegible solo le resta precisión al aviso de huérfanos (no se sabe si apuntaba al nodo borrado), y el fichero queda intacto.
+
 ### 6.1. `ltp status`
 
 Añade sección de knowledge al reporte de salud:
