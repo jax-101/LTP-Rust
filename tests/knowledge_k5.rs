@@ -431,18 +431,17 @@ fn k5_15_validate_hypothesis_not_ungrounded() {
     init_workspace(dir);
 
     // Default epistemic = hypothesis
-    add_node(dir, "Hypothesis node", "UDE");
+    let hypothesis = add_node(dir, "Hypothesis node", "UDE");
+    // Control: a fact with 0 supports must be flagged, so the pool check ran.
+    let fact = add_node(dir, "Fact node", "UDE");
+    run_ltp(dir, &["node", "edit", &fact, "--epistemic", "fact"]);
 
     let (json, _) = run_ltp(dir, &["validate"]);
-    let details = json["data"]["details"].as_array().unwrap();
-    let kp = details.iter().find(|d| d["tree_id"] == "_knowledge_pool");
-    if let Some(kp) = kp {
-        let warnings = kp["warnings"].as_array().unwrap();
-        assert!(
-            !warnings.iter().any(|w| w["code"] == "EPISTEMIC_UNGROUNDED"),
-            "UNGROUNDED only applies to fact nodes"
-        );
-    }
+    assert_eq!(
+        nodes_with(&json, "EPISTEMIC_UNGROUNDED"),
+        vec![fact],
+        "UNGROUNDED only applies to fact nodes, not {hypothesis}"
+    );
 }
 
 #[test]
@@ -810,19 +809,8 @@ fn k5_32_validate_tree_filter_only_reports_tree_nodes() {
     run_ltp(dir, &["tree", "attach", "--tree", &tree_id, "--node", &n1]);
 
     let (json, _) = run_ltp(dir, &["validate", "--tree", &tree_id]);
-    let details = json["data"]["details"].as_array().unwrap();
-    let kp = details.iter().find(|d| d["tree_id"] == "_knowledge_pool");
-    if let Some(kp) = kp {
-        let warnings = kp["warnings"].as_array().unwrap();
-        // n1 should appear, n2 should NOT
-        let has_n2 = warnings
-            .iter()
-            .any(|w| w["node_id"].as_str().map(|s| s == n2).unwrap_or(false));
-        assert!(
-            !has_n2,
-            "Node not in tree should not appear in tree-filtered validate"
-        );
-    }
+    // n1 (in the tree) is reported; n2 (outside) is not.
+    assert_eq!(nodes_with(&json, "EPISTEMIC_UNGROUNDED"), vec![n1]);
 }
 
 #[test]
@@ -842,19 +830,16 @@ fn k5_34_validate_healthy_pool_no_warnings() {
     link_knowledge(dir, &kn2, &node_id, "supports");
     edit_knowledge_status(dir, &kn2, "verified");
 
+    // A fact with 2 verified supports: no knowledge warning at all
+    // (UPGRADEABLE does not apply to facts).
     let (json, _) = run_ltp(dir, &["validate"]);
-    let details = json["data"]["details"].as_array().unwrap();
-    let kp = details.iter().find(|d| d["tree_id"] == "_knowledge_pool");
-    if let Some(kp) = kp {
-        let warnings = kp["warnings"].as_array().unwrap();
-        // Should only be EPISTEMIC_UPGRADEABLE (fact with 2 supports is fine)
-        assert!(
-            !warnings.iter().any(|w| w["code"] == "EPISTEMIC_UNGROUNDED"
-                || w["code"] == "EPISTEMIC_CONTRADICTED"
-                || w["code"] == "DANGLING_KNOWLEDGE_REF"),
-            "Healthy pool should have no negative warnings"
-        );
-    }
+    assert_eq!(pool_warnings(&json), Vec::<Value>::new());
+
+    // Control: refuting both supports makes the same fixture ungrounded.
+    edit_knowledge_status(dir, &kn1, "refuted");
+    edit_knowledge_status(dir, &kn2, "refuted");
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert_eq!(nodes_with(&json, "EPISTEMIC_UNGROUNDED"), vec![node_id]);
 }
 
 // ========================================================================
@@ -1074,23 +1059,19 @@ fn k5_44_node_rm_undo_resolves_dangling() {
     let kn = add_knowledge(dir, "Evidence", "measurement", "src");
     link_knowledge(dir, &kn, &node_id, "supports");
 
-    // Remove + undo
+    // Control: after rm the ref dangles.
     run_ltp(dir, &["node", "rm", &node_id, "--force"]);
-    run_ltp(dir, &["undo"]);
-
-    // Validate should show no dangling
     let (json, _) = run_ltp(dir, &["validate"]);
-    let details = json["data"]["details"].as_array().unwrap();
-    let kp = details.iter().find(|d| d["tree_id"] == "_knowledge_pool");
-    if let Some(kp) = kp {
-        let warnings = kp["warnings"].as_array().unwrap();
-        assert!(
-            !warnings
-                .iter()
-                .any(|w| w["code"] == "DANGLING_KNOWLEDGE_REF"),
-            "After undo, ref should resolve again"
-        );
-    }
+    assert_eq!(dangling_targets(&json), vec![node_id.clone()]);
+
+    // After undo it resolves again.
+    run_ltp(dir, &["undo"]);
+    assert!(dir.join("nodes").join(format!("{node_id}.json")).exists());
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert!(
+        dangling_targets(&json).is_empty(),
+        "After undo, ref should resolve again: {json}"
+    );
 }
 
 // ========================================================================
@@ -1217,4 +1198,365 @@ fn k5_50_status_with_corrupt_knowledge_file() {
     assert_eq!(code, 0);
     let kh = &json["data"]["knowledge_health"];
     assert_eq!(kh["total"], 1, "Only valid item counted");
+}
+
+// ========================================================================
+// v0.5.1 T-K2: K5 UATs completed (audit 2026-10-08)
+// ========================================================================
+
+/// Warnings of the `_knowledge_pool` entry of a `validate` output
+/// (empty when the entry is absent, i.e. the pool produced no warning).
+fn pool_warnings(validate: &Value) -> Vec<Value> {
+    validate["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["tree_id"] == "_knowledge_pool")
+        .map(|d| d["warnings"].as_array().unwrap().clone())
+        .unwrap_or_default()
+}
+
+/// `node_id` of every pool warning with `code`, in output order.
+fn nodes_with(validate: &Value, code: &str) -> Vec<String> {
+    pool_warnings(validate)
+        .iter()
+        .filter(|w| w["code"] == code)
+        .map(|w| w["node_id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// `target` of every `DANGLING_KNOWLEDGE_REF`, in output order.
+fn dangling_targets(validate: &Value) -> Vec<String> {
+    pool_warnings(validate)
+        .iter()
+        .filter(|w| w["code"] == "DANGLING_KNOWLEDGE_REF")
+        .map(|w| w["target"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn run_ok(dir: &std::path::Path, args: &[&str]) -> Value {
+    let (json, code) = run_ltp(dir, args);
+    assert_eq!(code, 0, "ltp {args:?} failed: {json}");
+    json
+}
+
+/// Chain `RC-001 → INT-001 → UDE-001` in a CRT. Returns the tree ID.
+fn chain3(dir: &std::path::Path) -> String {
+    let a = add_node(dir, "A", "RC");
+    let b = add_node(dir, "B", "INT");
+    let c = add_node(dir, "C", "UDE");
+    let tree = add_tree(dir, "crt", "chain");
+    for n in [&a, &b, &c] {
+        run_ok(dir, &["tree", "attach", "--tree", &tree, "--node", n]);
+    }
+    for (from, to) in [(&a, &b), (&b, &c)] {
+        run_ok(
+            dir,
+            &[
+                "link", "connect", "--tree", &tree, "--from", from, "--to", to,
+            ],
+        );
+    }
+    tree
+}
+
+#[test]
+fn k5_7_validate_dangling_ref_to_removed_assumption() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let tree = chain3(dir);
+    run_ok(
+        dir,
+        &[
+            "assume", "add", "--tree", &tree, "--link", "LINK-001", "--text", "P",
+        ],
+    );
+    let kn = add_knowledge(dir, "Context", "observation", "src");
+    link_knowledge(dir, &kn, "ASM-001", "contextualizes");
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert!(dangling_targets(&json).is_empty(), "{json}");
+
+    run_ok(dir, &["assume", "rm", "--tree", &tree, "--asm", "ASM-001"]);
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert_eq!(dangling_targets(&json), vec!["ASM-001"]);
+    let w = pool_warnings(&json);
+    assert_eq!(w[0]["knowledge_id"], kn);
+}
+
+#[test]
+fn k5_16_validate_assumption_not_ungrounded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let assumption = add_node(dir, "Assumed", "UDE");
+    run_ok(
+        dir,
+        &["node", "edit", &assumption, "--epistemic", "assumption"],
+    );
+    let fact = add_node(dir, "Fact control", "UDE");
+    run_ok(dir, &["node", "edit", &fact, "--epistemic", "fact"]);
+
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert_eq!(nodes_with(&json, "EPISTEMIC_UNGROUNDED"), vec![fact]);
+}
+
+#[test]
+fn k5_19_validate_refuted_contradiction_no_warning() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let node = add_node(dir, "Fact", "UDE");
+    run_ok(dir, &["node", "edit", &node, "--epistemic", "fact"]);
+    let kn = add_knowledge(dir, "Counter", "measurement", "src");
+    link_knowledge(dir, &kn, &node, "contradicts");
+    edit_knowledge_status(dir, &kn, "refuted");
+
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert!(
+        nodes_with(&json, "EPISTEMIC_CONTRADICTED").is_empty(),
+        "{json}"
+    );
+    // The pool check ran on this node: it is still ungrounded.
+    assert_eq!(nodes_with(&json, "EPISTEMIC_UNGROUNDED"), vec![node]);
+}
+
+#[test]
+fn k5_22_validate_one_contradicted_per_verified_contradiction() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let node = add_node(dir, "Fact", "UDE");
+    run_ok(dir, &["node", "edit", &node, "--epistemic", "fact"]);
+    let mut contradicting = Vec::new();
+    for i in 0..3 {
+        let kn = add_knowledge(dir, &format!("C{i}"), "measurement", "src");
+        link_knowledge(dir, &kn, &node, "contradicts");
+        edit_knowledge_status(dir, &kn, "verified");
+        contradicting.push(kn);
+    }
+    for i in 0..5 {
+        let kn = add_knowledge(dir, &format!("S{i}"), "measurement", "src");
+        link_knowledge(dir, &kn, &node, "supports");
+        edit_knowledge_status(dir, &kn, "verified");
+    }
+
+    let (json, _) = run_ltp(dir, &["validate"]);
+    let contradicted: Vec<Value> = pool_warnings(&json)
+        .into_iter()
+        .filter(|w| w["code"] == "EPISTEMIC_CONTRADICTED")
+        .collect();
+    assert_eq!(contradicted.len(), 3, "{json}");
+    let kns: Vec<&str> = contradicted
+        .iter()
+        .map(|w| {
+            assert_eq!(w["node_id"], node);
+            w["knowledge_id"].as_str().unwrap()
+        })
+        .collect();
+    assert_eq!(kns, contradicting);
+    // Supports do not cancel contradictions, and the fact is grounded.
+    assert!(nodes_with(&json, "EPISTEMIC_UNGROUNDED").is_empty());
+}
+
+#[test]
+fn k5_25_validate_upgradeable_with_three_supports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let node = add_node(dir, "Hypothesis", "RC");
+    for i in 0..3 {
+        let kn = add_knowledge(dir, &format!("S{i}"), "measurement", "src");
+        link_knowledge(dir, &kn, &node, "supports");
+        edit_knowledge_status(dir, &kn, "verified");
+    }
+
+    let (json, _) = run_ltp(dir, &["validate"]);
+    let up: Vec<Value> = pool_warnings(&json)
+        .into_iter()
+        .filter(|w| w["code"] == "EPISTEMIC_UPGRADEABLE")
+        .collect();
+    assert_eq!(up.len(), 1, "{json}");
+    assert_eq!(up[0]["node_id"], node);
+    assert_eq!(up[0]["verified_supports"], 3);
+}
+
+#[test]
+fn k5_33_validate_without_filter_is_global() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let shared = add_node(dir, "In two trees", "UDE");
+    let loose = add_node(dir, "In no tree", "UDE");
+    for n in [&shared, &loose] {
+        run_ok(dir, &["node", "edit", n, "--epistemic", "fact"]);
+    }
+    for name in ["t1", "t2"] {
+        let tree = add_tree(dir, "crt", name);
+        run_ok(dir, &["tree", "attach", "--tree", &tree, "--node", &shared]);
+    }
+
+    let (json, _) = run_ltp(dir, &["validate"]);
+    // One warning per node (not per tree), including the node in no tree.
+    assert_eq!(
+        nodes_with(&json, "EPISTEMIC_UNGROUNDED"),
+        vec![shared, loose]
+    );
+    // Knowledge warnings live only in the pool entry, never in tree entries.
+    for d in json["data"]["details"].as_array().unwrap() {
+        if d["tree_id"] != "_knowledge_pool" {
+            assert!(
+                !d["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|w| w["code"] == "EPISTEMIC_UNGROUNDED"),
+                "{d}"
+            );
+        }
+    }
+}
+
+#[test]
+fn k5_38_trace_lists_every_relation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let tree = chain3(dir);
+    let sup = add_knowledge(dir, "Sup", "measurement", "src");
+    link_knowledge(dir, &sup, "UDE-001", "supports");
+    edit_knowledge_status(dir, &sup, "verified");
+    run_ok(dir, &["knowledge", "edit", &sup, "--confidence", "high"]);
+    let con = add_knowledge(dir, "Con", "measurement", "src");
+    link_knowledge(dir, &con, "UDE-001", "contradicts");
+    edit_knowledge_status(dir, &con, "refuted");
+    run_ok(dir, &["knowledge", "edit", &con, "--confidence", "low"]);
+    let ctx = add_knowledge(dir, "Ctx", "observation", "src");
+    link_knowledge(dir, &ctx, "UDE-001", "contextualizes");
+
+    let json = run_ok(
+        dir,
+        &[
+            "trace",
+            "UDE-001",
+            "--tree",
+            &tree,
+            "--direction",
+            "upstream",
+            "--show-knowledge",
+        ],
+    );
+    let entry = json["data"]["chain"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["node"] == "UDE-001")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        entry["knowledge"],
+        serde_json::json!([
+            {"id": sup, "relation": "supports", "status": "verified", "confidence": "high"},
+            {"id": con, "relation": "contradicts", "status": "refuted", "confidence": "low"},
+            {"id": ctx, "relation": "contextualizes", "status": "unverified", "confidence": "medium"}
+        ])
+    );
+}
+
+/// K5.40 (semantics fixed in v0.5.1): `--depth N` cuts the BFS; every node
+/// that stays in the chain (the origin and those at depth ≤ N) gets its
+/// knowledge, and nodes beyond the limit are absent. `data.depth` echoes
+/// the requested limit (`null` = unlimited).
+#[test]
+fn k5_40_trace_depth_limits_knowledge_to_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let tree = chain3(dir);
+    for node in ["RC-001", "INT-001", "UDE-001"] {
+        let kn = add_knowledge(dir, &format!("On {node}"), "measurement", "src");
+        link_knowledge(dir, &kn, node, "supports");
+    }
+    let args = [
+        "trace",
+        "UDE-001",
+        "--tree",
+        tree.as_str(),
+        "--direction",
+        "upstream",
+        "--show-knowledge",
+    ];
+
+    let mut limited = args.to_vec();
+    limited.extend(["--depth", "1"]);
+    let json = run_ok(dir, &limited);
+    assert_eq!(json["data"]["depth"], 1);
+    let chain: Vec<(String, Value)> = json["data"]["chain"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e["node"].as_str().unwrap().to_string(),
+                e["knowledge"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        chain,
+        vec![
+            (
+                "UDE-001".to_string(),
+                serde_json::json!([{"id": "KN-003", "relation": "supports", "status": "unverified", "confidence": "medium"}])
+            ),
+            (
+                "INT-001".to_string(),
+                serde_json::json!([{"id": "KN-002", "relation": "supports", "status": "unverified", "confidence": "medium"}])
+            ),
+        ]
+    );
+
+    let json = run_ok(dir, &args);
+    assert_eq!(json["data"]["depth"], Value::Null);
+    assert_eq!(json["data"]["chain"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn k5_49_validate_dangling_ref_to_removed_feedback() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let tree = chain3(dir);
+    run_ok(
+        dir,
+        &[
+            "link", "feedback", "--tree", &tree, "--from", "UDE-001", "--to", "RC-001", "--type",
+            "negative",
+        ],
+    );
+    run_ok(
+        dir,
+        &[
+            "link", "feedback", "--tree", &tree, "--from", "INT-001", "--to", "RC-001", "--type",
+            "positive",
+        ],
+    );
+    let kn = add_knowledge(dir, "Loop", "observation", "src");
+    link_knowledge(dir, &kn, "FB-002", "supports");
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert!(dangling_targets(&json).is_empty(), "{json}");
+
+    run_ok(
+        dir,
+        &[
+            "link",
+            "feedback-rm",
+            "--tree",
+            &tree,
+            "--feedback",
+            "FB-002",
+        ],
+    );
+    let (json, _) = run_ltp(dir, &["validate"]);
+    assert_eq!(dangling_targets(&json), vec!["FB-002"]);
 }

@@ -1222,45 +1222,251 @@ fn k3_16_link_to_nbr_edge() {
 }
 
 // === K3.12: Link to edge with status broken (permitted) ===
-#[test]
-fn k3_12_link_to_broken_edge() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path();
-    init_workspace(dir);
 
-    let n1 = add_node(dir, "Cause", "RC");
-    let n2 = add_node(dir, "Effect", "UDE");
-    let tree_id = new_tree(dir, "crt", "Broken test");
-    attach_node(dir, &tree_id, &n1);
-    attach_node(dir, &tree_id, &n2);
-    let edge_id = connect_nodes(dir, &tree_id, &n1, &n2);
+// --- v0.5.1 T-K2: K3.12–K3.23 completed (audit 2026-10-08) -------------------
 
-    // Invalidate the edge (makes it broken)
-    let (_, code) = run_ltp(
-        dir,
-        &[
-            "link", "feedback", "--tree", &tree_id, "--from", &n2, "--to", &n1, "--type",
-            "negative",
-        ],
-    );
-    // Whether or not this specific command exists, just test that linking to an existing edge works
-    // regardless of edge status — the motor doesn't judge status
-    let _ = code;
+fn run_ok(dir: &std::path::Path, args: &[&str]) -> Value {
+    let (json, code) = run_ltp(dir, args);
+    assert_eq!(code, 0, "ltp {args:?} failed: {json}");
+    assert_eq!(json["success"], true, "ltp {args:?}: {json}");
+    json
+}
 
-    // Link knowledge to the edge (even if status changed)
-    let kn_id = add_knowledge(dir, "Evidence for broken edge");
-    let (json, code) = run_ltp(
+/// `knowledge link` must succeed and `knowledge inspect` must show the link
+/// with its resolved label and type.
+fn assert_link_resolves(
+    dir: &std::path::Path,
+    kn: &str,
+    target: &str,
+    relation: &str,
+    target_type: &str,
+    target_label: &str,
+) {
+    run_ok(
         dir,
         &[
             "knowledge",
             "link",
-            &kn_id,
+            kn,
             "--to",
-            &edge_id,
+            target,
             "--relation",
-            "contradicts",
+            relation,
         ],
     );
-    assert_eq!(code, 0);
-    assert_eq!(json["success"], true);
+    let inspect = run_ok(dir, &["knowledge", "inspect", kn]);
+    let links = inspect["data"]["links"].as_array().unwrap();
+    let link = links
+        .iter()
+        .find(|l| l["target"] == target)
+        .unwrap_or_else(|| panic!("link to {target} missing: {inspect}"));
+    assert_eq!(link["relation"], relation);
+    assert_eq!(link["target_type"], target_type, "{link}");
+    assert_eq!(link["target_label"], target_label, "{link}");
+}
+
+/// RC-001 → UDE-001 in a CRT with ASM-001 on LINK-001. Returns (tree, link).
+fn chain_with_assumption(dir: &std::path::Path) -> (String, String) {
+    init_workspace(dir);
+    let n1 = add_node(dir, "Cause", "RC");
+    let n2 = add_node(dir, "Effect", "UDE");
+    let tree = new_tree(dir, "crt", "k3");
+    attach_node(dir, &tree, &n1);
+    attach_node(dir, &tree, &n2);
+    let link = connect_nodes(dir, &tree, &n1, &n2);
+    run_ok(
+        dir,
+        &[
+            "assume", "add", "--tree", &tree, "--link", &link, "--text", "Premise",
+        ],
+    );
+    (tree, link)
+}
+
+fn tree_json(dir: &std::path::Path, tree: &str) -> Value {
+    let raw = std::fs::read_to_string(dir.join("trees").join(format!("{tree}.json"))).unwrap();
+    serde_json::from_str(&raw).unwrap()
+}
+
+// === K3.12: Link to a node whose metadata.status is `invalidated` ===
+#[test]
+fn k3_12_link_to_invalidated_node() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let node = add_node(dir, "Discarded effect", "UDE");
+    // No CLI sets a node to `invalidated`: write it as an older version could.
+    let path = dir.join("nodes").join(format!("{node}.json"));
+    let mut raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    raw["metadata"]["status"] = Value::String("invalidated".into());
+    std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+    assert_eq!(
+        run_ok(dir, &["node", "inspect", &node])["data"]["status"],
+        "invalidated"
+    );
+
+    let kn = add_knowledge(dir, "Evidence");
+    assert_link_resolves(dir, &kn, &node, "contradicts", "node", "Discarded effect");
+}
+
+// === K3.13: Link to an edge broken by a real `invalidate` ===
+#[test]
+fn k3_13_link_to_broken_edge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (tree, link) = chain_with_assumption(dir);
+    let inv = run_ok(
+        dir,
+        &[
+            "invalidate",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--asm",
+            "ASM-001",
+        ],
+    );
+    assert_eq!(inv["data"]["link_status"], "broken");
+    assert_eq!(tree_json(dir, &tree)["edges"][0]["status"], "broken");
+
+    let kn = add_knowledge(dir, "Evidence for broken edge");
+    assert_link_resolves(dir, &kn, &link, "contradicts", "edge", "RC-001 -> UDE-001");
+}
+
+// === K3.14: Link to an assumption with status `invalid` ===
+#[test]
+fn k3_14_link_to_invalid_assumption() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (tree, link) = chain_with_assumption(dir);
+    run_ok(
+        dir,
+        &[
+            "invalidate",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--asm",
+            "ASM-001",
+        ],
+    );
+    assert_eq!(
+        tree_json(dir, &tree)["edges"][0]["assumptions"][0]["status"],
+        "invalid"
+    );
+
+    let kn = add_knowledge(dir, "Context");
+    assert_link_resolves(
+        dir,
+        &kn,
+        "ASM-001",
+        "contextualizes",
+        "assumption",
+        "Premise",
+    );
+}
+
+// === K3.17: Link to a feedback edge (`FB-xxx`) ===
+#[test]
+fn k3_17_link_to_feedback_edge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (tree, _) = chain_with_assumption(dir);
+    let fb = run_ok(
+        dir,
+        &[
+            "link", "feedback", "--tree", &tree, "--from", "UDE-001", "--to", "RC-001", "--type",
+            "negative",
+        ],
+    )["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(fb, "FB-001");
+
+    let kn = add_knowledge(dir, "Loop evidence");
+    assert_link_resolves(
+        dir,
+        &kn,
+        &fb,
+        "supports",
+        "feedback_edge",
+        "UDE-001 -> RC-001",
+    );
+}
+
+// === K3.21: link → invalidate the assumption → inspect still resolves ===
+#[test]
+fn k3_21_link_survives_assumption_invalidation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (tree, link) = chain_with_assumption(dir);
+    let kn = add_knowledge(dir, "Context");
+    assert_link_resolves(
+        dir,
+        &kn,
+        "ASM-001",
+        "contextualizes",
+        "assumption",
+        "Premise",
+    );
+
+    run_ok(
+        dir,
+        &[
+            "invalidate",
+            "--tree",
+            &tree,
+            "--link",
+            &link,
+            "--asm",
+            "ASM-001",
+        ],
+    );
+    let inspect = run_ok(dir, &["knowledge", "inspect", &kn]);
+    let links = inspect["data"]["links"].as_array().unwrap();
+    assert_eq!(links.len(), 1, "{inspect}");
+    assert_eq!(links[0]["target"], "ASM-001");
+    assert_eq!(links[0]["target_type"], "assumption");
+    assert_eq!(links[0]["target_label"], "Premise");
+}
+
+// === K3.23: a link hidden inside a collapsed macro stays resolvable ===
+#[test]
+fn k3_23_link_to_interior_link_of_collapse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_workspace(dir);
+    let a = add_node(dir, "A", "RC");
+    let b = add_node(dir, "B", "INT");
+    let c = add_node(dir, "C", "UDE");
+    let tree = new_tree(dir, "crt", "k3-23");
+    for n in [&a, &b, &c] {
+        attach_node(dir, &tree, n);
+    }
+    let ab = connect_nodes(dir, &tree, &a, &b);
+    connect_nodes(dir, &tree, &b, &c);
+    let kn = add_knowledge(dir, "Interior evidence");
+    assert_link_resolves(dir, &kn, &ab, "supports", "edge", "RC-001 -> INT-001");
+
+    run_ok(
+        dir,
+        &[
+            "path", "collapse", "--tree", &tree, "--from", &a, "--to", &c, "--label", "Summary",
+        ],
+    );
+    let t = tree_json(dir, &tree);
+    let interior = &t["macro_edges"][0]["interior_links"];
+    assert!(
+        interior.as_array().unwrap().iter().any(|l| *l == ab),
+        "{ab} must be interior to the macro: {t}"
+    );
+
+    let inspect = run_ok(dir, &["knowledge", "inspect", &kn]);
+    let link = &inspect["data"]["links"][0];
+    assert_eq!(link["target"], ab);
+    assert_eq!(link["target_type"], "edge");
+    assert_eq!(link["target_label"], "RC-001 -> INT-001");
 }
