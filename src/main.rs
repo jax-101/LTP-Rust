@@ -1,3 +1,5 @@
+mod dry_run;
+
 use std::process;
 
 use clap::{Parser, Subcommand};
@@ -1140,6 +1142,11 @@ fn main() {
             process::exit(1);
         }
     };
+
+    // ADR-017: simulate on a disposable copy; the copy is gone before we exit.
+    if let Some(code) = dry_run::intercept(&cli, &cwd) {
+        process::exit(code);
+    }
 
     let storage = FsStorage::new(cwd.clone());
     let full_command: String = std::env::args().collect::<Vec<_>>().join(" ");

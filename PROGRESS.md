@@ -71,6 +71,14 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
+### [v0.5.1 — en curso] — `--dry-run` real + knowledge ilegible visible (PATCH)
+**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1.
+**Hallazgo en T1 (anterior a v0.5.1, fuera de alcance; pendiente de decisión)**: el motor no es determinista en dos sitios, lo que viola el invariante 1:
+- `check_dag` (`src/validate/dag.rs:31`) arranca el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salen como una rotación arbitraria del ciclo. Afecta a todo comando que informa de un ciclo.
+- `lint_clr4_insufficiency` y `lint_clr4_5_implicit_or` (`src/validate/clr.rs`) recorren un `HashMap`, así que el orden de `CLR4_INSUFFICIENT_CAUSE` y `CLR4_5_IMPLICIT_OR_REVIEW` en `validate` cambia entre ejecuciones (se midió 10/20).
+
+DR3 y DR11b comparan esos outputs módulo rotación u orden (`canonical_cycle`, `canonical_validate`); el resto de UATs `--dry-run` comparan byte a byte.
+
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
 **Naturaleza**: Cierra los huecos registrados en v0.4.0 (plan `PLAN_v050-integrity.md`, ADR-016). T0–T7 completadas (8 paquetes). Funciones puras `redirect_split`, `prune_removed` y `check_tree_integrity` en `src/meta/integrity.rs` (semilla de `ltp-core`); `node split` global con `affected_trees`; `node rm` poda macros con `MACRO_EDGE_REMOVED`; ambos son fail-closed; los extremos de macro se comprueban en expand/promote/replace; `validate` revisa la integridad de todas las estructuras.
