@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::errors::{LtpError, Result};
 use crate::link::Edge;
@@ -11,8 +11,8 @@ enum Color {
 }
 
 pub fn check_dag(edges: &[Edge], tree_id: &str) -> Result<()> {
-    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut all_nodes: HashSet<&str> = HashSet::new();
+    let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut all_nodes: BTreeSet<&str> = BTreeSet::new();
 
     for edge in edges {
         for from_node in &edge.from {
@@ -25,7 +25,7 @@ pub fn check_dag(edges: &[Edge], tree_id: &str) -> Result<()> {
         all_nodes.insert(edge.to.as_str());
     }
 
-    let mut colors: HashMap<&str, Color> = all_nodes.iter().map(|&n| (n, Color::White)).collect();
+    let mut colors: BTreeMap<&str, Color> = all_nodes.iter().map(|&n| (n, Color::White)).collect();
     let mut path: Vec<&str> = Vec::new();
 
     for &node in &all_nodes {
@@ -45,8 +45,8 @@ pub fn check_dag(edges: &[Edge], tree_id: &str) -> Result<()> {
 /// DFS that returns the cycle path when a back-edge is found.
 fn find_cycle<'a>(
     node: &'a str,
-    adjacency: &HashMap<&'a str, Vec<&'a str>>,
-    colors: &mut HashMap<&'a str, Color>,
+    adjacency: &BTreeMap<&'a str, Vec<&'a str>>,
+    colors: &mut BTreeMap<&'a str, Color>,
     path: &mut Vec<&'a str>,
 ) -> Option<Vec<String>> {
     colors.insert(node, Color::Gray);
@@ -150,5 +150,25 @@ mod tests {
             make_edge("L3", vec!["B", "C"], "D"),
         ];
         assert!(check_dag(&edges, "test-tree").is_ok());
+    }
+
+    /// Invariante 1: el ciclo reportado no depende de la semilla de un
+    /// BTreeSet. El DFS arranca por el ID menor y sigue el orden de las aristas.
+    #[test]
+    fn cycle_path_is_deterministic() {
+        let edges = vec![
+            make_edge("L1", vec!["C"], "A"),
+            make_edge("L2", vec!["B"], "C"),
+            make_edge("L3", vec!["A"], "B"),
+            make_edge("L4", vec!["Z"], "Y"),
+        ];
+        for _ in 0..50 {
+            match check_dag(&edges, "t") {
+                Err(LtpError::CircularDependencyDetected { cycle_path, .. }) => {
+                    assert_eq!(cycle_path, vec!["A", "B", "C", "A"]);
+                }
+                other => panic!("expected a cycle, got {other:?}"),
+            }
+        }
     }
 }

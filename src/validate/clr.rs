@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::link::{Edge, Operator};
 use crate::node::{Node, NodeType};
@@ -9,7 +9,7 @@ pub fn lint_clr5_mag_weights(edges: &[Edge]) -> Vec<OutputWarning> {
     let mut warnings = Vec::new();
 
     // Group MAG edges by destination node
-    let mut mag_groups: HashMap<&str, Vec<&Edge>> = HashMap::new();
+    let mut mag_groups: BTreeMap<&str, Vec<&Edge>> = BTreeMap::new();
     for edge in edges {
         if edge.operator == Operator::Mag {
             mag_groups.entry(edge.to.as_str()).or_default().push(edge);
@@ -133,7 +133,7 @@ pub fn lint_clr2(nodes: &[Node]) -> Vec<OutputWarning> {
 
 /// CLR#4: Nodes with only 1 incoming SINGLE edge are candidates for insufficiency.
 pub fn lint_clr4_insufficiency(edges: &[Edge]) -> Vec<OutputWarning> {
-    let mut incoming: HashMap<&str, Vec<&Edge>> = HashMap::new();
+    let mut incoming: BTreeMap<&str, Vec<&Edge>> = BTreeMap::new();
 
     for edge in edges {
         incoming.entry(edge.to.as_str()).or_default().push(edge);
@@ -166,7 +166,7 @@ pub fn lint_clr4_insufficiency(edges: &[Edge]) -> Vec<OutputWarning> {
 /// CLR#4/#5: Multiple SINGLE edges to the same node = implicit OR (each independently sufficient).
 /// Advisory: confirm each cause alone produces the effect, or group with AND/MAG if co-dependent.
 pub fn lint_clr4_5_implicit_or(edges: &[Edge]) -> Vec<OutputWarning> {
-    let mut incoming: HashMap<&str, Vec<&Edge>> = HashMap::new();
+    let mut incoming: BTreeMap<&str, Vec<&Edge>> = BTreeMap::new();
 
     for edge in edges {
         if edge.operator == Operator::Single {
@@ -239,7 +239,7 @@ pub fn lint_clr4_5_excessive_and(edges: &[Edge]) -> Vec<OutputWarning> {
 /// CLR#6: Type inversion — high-level nodes (UDE, DE) in `from` pointing to low-level (RC, INT).
 pub fn lint_clr6_type_inversion(
     edges: &[Edge],
-    node_map: &HashMap<String, Node>,
+    node_map: &BTreeMap<String, Node>,
 ) -> Vec<OutputWarning> {
     let high_level: HashSet<NodeType> = [NodeType::Ude, NodeType::De].into();
     let low_level: HashSet<NodeType> = [NodeType::Rc, NodeType::Int].into();
@@ -288,9 +288,9 @@ pub fn lint_clr6_type_inversion(
 /// CLR#7: Intangible nodes (observable: false) with <2 outgoing edges lack predicted effect.
 pub fn lint_clr7_intangible(
     edges: &[Edge],
-    node_map: &HashMap<String, Node>,
+    node_map: &BTreeMap<String, Node>,
 ) -> Vec<OutputWarning> {
-    let mut outgoing_count: HashMap<&str, usize> = HashMap::new();
+    let mut outgoing_count: BTreeMap<&str, usize> = BTreeMap::new();
 
     for edge in edges {
         for from_id in &edge.from {
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn clr6_type_inversion_detected() {
-        let mut node_map = HashMap::new();
+        let mut node_map = BTreeMap::new();
         node_map.insert(
             "UDE-001".to_string(),
             make_node("UDE-001", NodeType::Ude, true),
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn clr7_intangible_no_predicted() {
-        let mut node_map = HashMap::new();
+        let mut node_map = BTreeMap::new();
         node_map.insert(
             "RC-001".to_string(),
             make_node("RC-001", NodeType::Rc, false),
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn clr7_intangible_with_2_outgoing_no_warning() {
-        let mut node_map = HashMap::new();
+        let mut node_map = BTreeMap::new();
         node_map.insert(
             "RC-001".to_string(),
             make_node("RC-001", NodeType::Rc, false),
@@ -562,5 +562,101 @@ mod tests {
         ];
         let warnings = lint_clr5_mag_weights(&edges);
         assert!(warnings.is_empty());
+    }
+
+    /// Invariante 1: los avisos CLR#4 salen ordenados por nodo destino,
+    /// no en el orden de un BTreeMap.
+    #[test]
+    fn clr4_warnings_ordered_by_node_id() {
+        let edges = vec![
+            make_edge_op("L1", vec!["A"], "Z", Operator::Single),
+            make_edge_op("L2", vec!["B"], "M", Operator::Single),
+            make_edge_op("L3", vec!["C"], "Q", Operator::Single),
+            make_edge_op("L4", vec!["D"], "K", Operator::Single),
+        ];
+        for _ in 0..50 {
+            let nodes: Vec<String> = lint_clr4_insufficiency(&edges)
+                .iter()
+                .map(|w| {
+                    w.context["node_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(nodes, vec!["K", "M", "Q", "Z"]);
+        }
+    }
+
+    #[test]
+    fn clr4_5_warnings_ordered_by_node_id() {
+        let mut edges = Vec::new();
+        for (i, to) in ["Z", "M", "Q", "K"].iter().enumerate() {
+            edges.push(make_edge_op(
+                &format!("L{i}a"),
+                vec!["A"],
+                to,
+                Operator::Single,
+            ));
+            edges.push(make_edge_op(
+                &format!("L{i}b"),
+                vec!["B"],
+                to,
+                Operator::Single,
+            ));
+        }
+        for _ in 0..50 {
+            let nodes: Vec<String> = lint_clr4_5_implicit_or(&edges)
+                .iter()
+                .map(|w| {
+                    w.context["node_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(nodes, vec!["K", "M", "Q", "Z"]);
+        }
+    }
+
+    #[test]
+    fn clr5_warnings_ordered_by_target() {
+        let edges: Vec<Edge> = ["Z", "M", "Q", "K"]
+            .iter()
+            .enumerate()
+            .map(|(i, to)| make_edge_op(&format!("L{i}"), vec!["A", "B"], to, Operator::Mag))
+            .collect();
+        for _ in 0..50 {
+            let targets: Vec<String> = lint_clr5_mag_weights(&edges)
+                .iter()
+                .map(|w| {
+                    w.context["to_node"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(targets, vec!["K", "M", "Q", "Z"]);
+        }
+    }
+
+    #[test]
+    fn clr7_warnings_ordered_by_node_id() {
+        for _ in 0..50 {
+            let node_map = ["Z", "M", "Q", "K"]
+                .iter()
+                .map(|id| (id.to_string(), make_node(id, NodeType::Int, false)))
+                .collect();
+            let nodes: Vec<String> = lint_clr7_intangible(&[], &node_map)
+                .iter()
+                .map(|w| {
+                    w.context["node_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(nodes, vec!["K", "M", "Q", "Z"]);
+        }
     }
 }

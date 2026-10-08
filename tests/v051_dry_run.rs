@@ -520,27 +520,6 @@ fn assert_dry_matches_real(template: &Path, args: &[&str], first: bool) -> Run {
     actual
 }
 
-/// Like [`assert_dry_matches_real`], but compares the JSON outputs after
-/// `canon` (only for outputs the engine itself does not emit deterministically).
-fn assert_dry_matches_real_by(
-    template: &Path,
-    args: &[&str],
-    first: bool,
-    canon: fn(Value) -> Value,
-) -> Run {
-    let (simulated, actual) = dry_and_real(template, args, first);
-    assert_eq!(
-        (simulated.code, &simulated.stderr),
-        (actual.code, &actual.stderr)
-    );
-    assert_eq!(
-        canon(json(&simulated)),
-        canon(json(&actual)),
-        "dry-run output differs for {args:?}"
-    );
-    actual
-}
-
 /// Runs `args` with `--dry-run` on one copy of `template` and for real on a
 /// twin copy; asserts the dry-run copy is untouched. Returns (simulated, real).
 fn dry_and_real(template: &Path, args: &[&str], first: bool) -> (Run, Run) {
@@ -559,27 +538,6 @@ fn dry_and_real(template: &Path, args: &[&str], first: bool) -> (Run, Run) {
         "--dry-run wrote to disk: {dry_args:?}"
     );
     (simulated, actual)
-}
-
-/// The DFS of `check_dag` starts from a HashSet (pre-existing, logged in
-/// PROGRESS), so the reported cycle is an arbitrary rotation: compare the
-/// cycle as a set of nodes and drop the rotation-dependent `detail`.
-fn canonical_cycle(mut v: Value) -> Value {
-    for err in v["errors"].as_array_mut().unwrap() {
-        if let Some(path) = err.get_mut("cycle_path") {
-            let mut nodes: Vec<String> = path
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|n| n.as_str().unwrap().to_string())
-                .collect();
-            nodes.sort();
-            nodes.dedup();
-            *path = serde_json::json!(nodes);
-            err["detail"] = Value::Null;
-        }
-    }
-    v
 }
 
 // --- DR1: every mutation --------------------------------------------------------
@@ -670,22 +628,20 @@ fn dr3_failing_simulation_same_error_no_write() {
     let template = tempfile::tempdir().unwrap();
     rich_workspace(template.path());
 
-    let cycle = assert_dry_matches_real_by(
+    let cycle = assert_dry_matches_real(
         template.path(),
         &[
             "link", "connect", "--tree", MAIN, "--from", "UDE-001", "--to", "RC-001",
         ],
         false,
-        canonical_cycle,
     );
     assert_eq!(cycle.code, 1);
+    let cycle = json(&cycle);
+    assert_eq!(error_codes(&cycle), vec!["CIRCULAR_DEPENDENCY_DETECTED"]);
+    // T1b: the DFS starts at the smallest node ID, so the rotation is fixed.
     assert_eq!(
-        error_codes(&json(&cycle)),
-        vec!["CIRCULAR_DEPENDENCY_DETECTED"]
-    );
-    assert_eq!(
-        canonical_cycle(json(&cycle))["errors"][0]["cycle_path"],
-        serde_json::json!(["INT-001", "RC-001", "UDE-001"])
+        cycle["errors"][0]["cycle_path"],
+        serde_json::json!(["INT-001", "UDE-001", "RC-001", "INT-001"])
     );
 
     let missing = assert_dry_matches_real(template.path(), &["node", "rm", "NOPE-999"], true);
@@ -940,27 +896,11 @@ fn dr11b_read_only_commands_identical() {
             "{args:?}"
         );
     }
-    // `validate` emits the CLR#4 warnings in HashMap order (pre-existing,
-    // logged in PROGRESS): compare each tree's warnings as a multiset.
-    let sim = run(dir, &["validate", "--dry-run"]);
-    let real = run(dir, &["validate"]);
-    assert_eq!((sim.code, &sim.stderr), (real.code, &real.stderr));
     assert_eq!(
-        canonical_validate(json(&sim)),
-        canonical_validate(json(&real))
+        run(dir, &["validate", "--dry-run"]),
+        run(dir, &["validate"])
     );
     assert_eq!(fingerprint(dir), before);
-}
-
-/// `validate` output with every `details[].warnings` sorted.
-fn canonical_validate(mut v: Value) -> Value {
-    for detail in v["data"]["details"].as_array_mut().unwrap() {
-        detail["warnings"]
-            .as_array_mut()
-            .unwrap()
-            .sort_by_key(|w| w.to_string());
-    }
-    v
 }
 
 // --- DR12: no workspace ---------------------------------------------------------------------
@@ -1023,4 +963,48 @@ fn d7_dry_run_inside_child_is_io_error() {
     assert_eq!(r.code, 1, "{}", r.stdout);
     assert_eq!(error_codes(&json(&r)), vec!["IO_ERROR"]);
     assert_eq!(fingerprint(dir), before);
+}
+
+// --- T1b: deterministic output across processes ------------------------------------------------
+
+/// Invariant 1: every process gets a fresh hash seed, so an output built by
+/// iterating a HashMap/HashSet changes between runs. Twenty runs must agree.
+#[test]
+fn t1b_validate_and_cycle_outputs_stable_across_processes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    rich_workspace(dir);
+    // CLR#7 needs intangible nodes; CLR#5 a MAG group.
+    for id in ["INT-001", "INT-002", "RC-004"] {
+        run_ok(dir, &["node", "edit", id, "--observable", "false"]);
+    }
+    let cycle = [
+        "link", "connect", "--tree", MAIN, "--from", "UDE-001", "--to", "RC-001",
+    ];
+    let first_validate = run(dir, &["validate"]);
+    let first_cycle = run(dir, &cycle);
+    assert_eq!(first_cycle.code, 1);
+    let codes: Vec<String> = json(&first_validate)["data"]["details"][0]["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["code"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        codes
+            .iter()
+            .filter(|c| *c == "CLR4_INSUFFICIENT_CAUSE")
+            .count()
+            >= 2
+            && codes
+                .iter()
+                .filter(|c| *c == "CLR7_INTANGIBLE_NO_PREDICTED")
+                .count()
+                >= 2,
+        "fixture must exercise several warnings of each lint: {codes:?}"
+    );
+    for _ in 0..20 {
+        assert_eq!(run(dir, &["validate"]), first_validate);
+        assert_eq!(run(dir, &cycle), first_cycle);
+    }
 }

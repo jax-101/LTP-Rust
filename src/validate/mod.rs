@@ -7,7 +7,7 @@ pub mod orphans;
 
 pub use dag::check_dag;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::Serialize;
 use tracing::{debug, info};
@@ -166,7 +166,7 @@ pub fn execute_validate<S: Storage>(
 
         // Load nodes referenced in this tree for CLR checks
         let tree_node_ids: Vec<&str> = tree.nodes.iter().map(|n| n.node_ref.as_str()).collect();
-        let mut node_map: HashMap<String, crate::node::Node> = HashMap::new();
+        let mut node_map: BTreeMap<String, crate::node::Node> = BTreeMap::new();
         let mut nodes_for_clr2 = Vec::new();
 
         for nid in &tree_node_ids {

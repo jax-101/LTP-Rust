@@ -72,12 +72,13 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 ## Historial de Avance
 
 ### [v0.5.1 — en curso] — `--dry-run` real + knowledge ilegible visible (PATCH)
-**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1.
-**Hallazgo en T1 (anterior a v0.5.1, fuera de alcance; pendiente de decisión)**: el motor no es determinista en dos sitios, lo que viola el invariante 1:
-- `check_dag` (`src/validate/dag.rs:31`) arranca el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salen como una rotación arbitraria del ciclo. Afecta a todo comando que informa de un ciclo.
-- `lint_clr4_insufficiency` y `lint_clr4_5_implicit_or` (`src/validate/clr.rs`) recorren un `HashMap`, así que el orden de `CLR4_INSUFFICIENT_CAUSE` y `CLR4_5_IMPLICIT_OR_REVIEW` en `validate` cambia entre ejecuciones (se midió 10/20).
+**Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). Hechas: T0, T-K1, T-K2, T1, T1b.
+**T1b (añadida con aprobación del usuario, 2026-10-08)**: la comparación byte a byte de T1 destapó un no-determinismo anterior a v0.5.1, que violaba el invariante 1:
+- `check_dag` (`src/validate/dag.rs`) arrancaba el DFS recorriendo un `HashSet`, así que `cycle_path` y el `detail` de `CIRCULAR_DEPENDENCY_DETECTED` salían como una rotación arbitraria del ciclo en todo comando que informa de un ciclo.
+- Cuatro lints de `src/validate/clr.rs` (CLR4, CLR4/5, CLR5, CLR7) recorrían un `HashMap` para emitir sus avisos, así que el orden de los warnings de `validate` cambiaba entre ejecuciones (se midió 10/20).
 
-DR3 y DR11b comparan esos outputs módulo rotación u orden (`canonical_cycle`, `canonical_validate`); el resto de UATs `--dry-run` comparan byte a byte.
+**Fix**: `BTreeMap`/`BTreeSet`. El DFS arranca por el ID menor y los avisos salen ordenados por nodo. El resto de `HashMap` del motor se revisó: solo hacen búsquedas, y `tree walk` ya ordenaba su cola.
+**Tests**: 5 unit (50 iteraciones en el mismo proceso) + el E2E `t1b_*` (20 procesos). DR3 y DR11b vuelven a comparar byte a byte. Los tres E2E fallaban con el código anterior.
 
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
