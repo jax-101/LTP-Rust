@@ -70,6 +70,41 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
+### [v0.5.0 — en curso] — Integridad referencial global (MINOR)
+**Fecha**: 2026-10-08
+**Naturaleza**: Cierra los huecos registrados en v0.4.0 (plan `PLAN_v050-integrity.md`, ADR-016). T0–T5 implementadas; T6 = mutation checks; T7 (release) pendiente.
+**Mutation checks (T6, §4.5)**: 24 mutaciones aplicadas de verdad sobre `src/`. Cada una se ejecutó contra `cargo test --lib --test v050_integrity` y después se revirtió (`git status src/` limpio al final). **24/24 detectadas, 0 supervivientes**.
+
+| # | Mutación | Detectada por (UATs E2E / unit) |
+|---|----------|---------------------------------|
+| 1 | Split solo sobre el árbol `--tree` | S1, S2, S3, S4, S5, S6, S11, S12 |
+| 2 | Ignorar la membresía solo-rama NBR | S2 |
+| 3 | No redirigir `source_node` | S3 + unit `redirect_covers_*` |
+| 4 | No redirigir feedback | S4 + unit `redirect_covers_*` |
+| 5 | Intercambiar first/second en macro from/to | S5, S6 + unit `redirect_covers_*` |
+| 6 | Hijos al final en vez de en posición | S14 + U2, U2b, U2c |
+| 7 | Guardar todos los árboles aunque no cambien | S11 |
+| 8 | `continue` en árbol ilegible (split y rm) | S9, S9b, M9 |
+| 9 | Mintear IDs antes de cargar árboles | S7, S9, S9b, S12 |
+| 10 | Sin eliminación por extremo | M1, M2, M5, M7, M8, M10, M11 + U4 |
+| 11 | Sin recorte de interior | M3, M4, M7, M13 + U5, D3 ×3 |
+| 12 | Sin eliminar Overlays vacíos | M4, M13 + D3 ×2 |
+| 13 | Limpiar `projection_refs` en la poda | M3 |
+| 14 | Comprobar lista vacía en vez de links vivos | M13 + D3 (solo links fantasma) |
+| 15 | Sin deduplicar por macro | M1, M2, M5, M7, M8, M10 + U4 |
+| 16 | Ordenar warnings de macro textualmente | M11 |
+| 17 | Sin deduplicar IDs de entrada en `rm` | M14 |
+| 18 | Sin re-validar extremos en expand/replace/promote | D1, D2, V4a, V4b |
+| 19 | Extremos sin comprobar el pool (T5) | V4a + unit `macro_endpoints_*` |
+| 20 | `check_tree_integrity` sin macros | V1, V2, V4a, V4b + U6 |
+| 21 | … sin feedback | V1, V2 + U6 |
+| 22 | … sin NBR | V1, V2 + U6 |
+| 23 | … sin `nodes[]` | V1, V2, V4a + U6 |
+| 24 | Tratar nodos ilegibles como ausentes en validate | V3 |
+
+**Lectura**: las mutaciones 2, 7, 13, 16, 17 y 24 solo las detecta un UAT cada una (S2, S11, M3, M11, M14, V3). Esos tests no se pueden quitar sin perder cobertura.
+**Tests totales**: 628 → 687
+
 ### [Release v0.4.0] — RFC-002 Slice 1: refs + meta-grafo inferido (MINOR)
 **Fecha**: 2026-10-06
 **Naturaleza**: Primer slice de RFC-002 sobre JSON (arquitectura de dos velocidades). Nueva línea de trabajo fuera del 100% del motor base; **no** altera ese %. Plan `PLAN_v031-and-rfc002-slice1.md`, decisiones D-1..D-10 en ADR-015 (D-4: relaciones sin tipo).
