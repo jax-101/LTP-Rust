@@ -44,7 +44,7 @@ Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalim
 | **CRT** | **(b)** T05 feedback norma | **(d)** T32 extends | **(a)** T06 core_conflict | **(c)** T07 salto directo | **(c)** T27 anticipacion riesgo | **(c)** T08 accion emergencia |
 | **EC** | **(b)** T09 redefinicion meta | **(b)** T10 revision causal | **(d)** T33 self_revision | **(a)** T11 injection | **(c)** T28 risk pre-FRT | **(c)** T12 implementacion directa |
 | **FRT** | **(c)** T13 revision meta | **(b)** T14 revision | **(b)** T15 challenges | **(d)** T34 extends | **(a)** T29 risk_check | **(a)** T16 prerequisite/tactical |
-| **NBR** | **(c)** T21 revision meta riesgo | **(b)** T22 realidad oculta | **(b)** T23 nuevo conflicto | **(a)** T24 trimming | **(d)** T35 extends | **(b)** T25 obstaculos riesgo |
+| **NBR** | **(b)** T21 revision meta riesgo | **(b)** T22 realidad oculta | **(b)** T23 nuevo conflicto | **(a)** T24 trimming | **(d)** T35 extends | **(b)** T25 obstaculos riesgo |
 | **PRT/TT** | **(b)** T17 revision meta | **(b)** T18 realidad cambiada | **(c)** T19 nuevo conflicto | **(b)** T20 feedback futuro | **(b)** T30 riesgos impl. | **(d)** T36 self_revision |
 
 ### Leyenda de colores logicos
@@ -486,11 +486,13 @@ Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalim
 
 | Dimension | Detalle |
 |-----------|---------|
-| **Viabilidad** | **(c) Patron Avanzado** — Raro. Solo cuando los riesgos cuestionan la meta misma |
+| **Viabilidad** | **(b) Retroalimentacion/Ajuste** — Conexion estructural implicita en todo NBR |
 | **Logic transition** | suf → nec |
 | **relation_type** | `revision` |
 
-**Por que (Desencadenante):** El NBR revela que incluso con la mejor INJ disponible, los efectos colaterales son tan graves y sistémicos que la meta misma se vuelve cuestionable. No es un problema de la INJ — es que *cualquier* intervencion hacia esa meta genera riesgos inaceptables. El trigger es: "la meta produce riesgos inherentes que ninguna inyeccion puede mitigar".
+**Conexion estructural**: toda UDE colateral del NBR es "mala" porque viola una norma del GT (CSF/NC). El NBR pregunta: "esta INJ, mientras resuelve UDEs del CRT, ¿crea nuevas violaciones de normas del GT?" Esto significa que la conexion NBR→GT no es rara — es implicita en cada NBR. Toda UDE colateral referencia al menos un CSF/NC del GT violado en el futuro. Es la misma norma-bisagra que opera en el CRT (presente, por violacion) y en el FRT (futuro, por cumplimiento), aplicada ahora al NBR (futuro, por violacion colateral de la INJ).
+
+**Por que (Desencadenante):** En su forma explicita, esta transicion se materializa cuando los efectos colaterales son tan graves y sistemicos que la meta misma se vuelve cuestionable. Pero de forma implicita, todo NBR conecta con el GT: cada UDE colateral referencia una norma que la INJ viola en el futuro. El trigger explicito es: "la meta produce riesgos inherentes que ninguna inyeccion puede mitigar". El trigger implicito es: "¿que normas del GT viola esta INJ como efecto colateral?"
 
 **Para que (Proposito):**
 1. **Cuestionar la meta antes de optimizar la solucion**: si el destino es toxico, mejorar la ruta no ayuda.
@@ -815,7 +817,8 @@ Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalim
 | **Challenges** | T15, T19, T23 | Conflictos que obligan a buscar alternativas (incluyendo recursion NBR→EC) |
 | **Revision post-implementacion** | T17, T18, T20, T30 | La implementacion cambia la comprension (incluyendo riesgos emergentes) |
 | **Saltos acelerados** | T07, T08, T12, T28 | Atajos para situaciones con poco conflicto/riesgo (incluyendo filtro pre-FRT) |
-| **Patrones estrategicos** | T02, T03, T04, T13, T21, T26, T27 | Uso avanzado: greenfield, benchmark, evolucion de meta, risk proactivo |
+| **Patrones estrategicos** | T02, T03, T04, T13, T26, T27 | Uso avanzado: greenfield, benchmark, evolucion de meta, risk proactivo |
+| **Retroalimentacion NBR→GT** | T21 | Conexion estructural: toda UDE colateral referencia una norma violada del GT |
 | **Absorcion operativa** | T25 | NBRs menores que se convierten en obstaculos de implementacion |
 | **Auto-revision** | T31, T32, T33, T34, T35, T36 | Refinamiento interno sin cambio de herramienta |
 
@@ -824,9 +827,9 @@ Clasificacion de cada transicion: **(a)** Estandar/Secuencial, **(b)** Retroalim
 | Tier | Transiciones | Descripcion |
 |------|-------------|-------------|
 | **Tier 1 — Esenciales** | T01, T06, T11, T16, T29, T24 | Flujo canonico incluyendo NBR + trimming. Todo analisis LTP las usa. |
-| **Tier 2 — Frecuentes** | T05, T10, T14, T15, T18, T20, T22, T23, T25, T31-T36 | Loops correctivos, challenges, auto-revision. Analisis serios las usan regularmente. |
+| **Tier 2 — Frecuentes** | T05, T10, T14, T15, T18, T20, T21, T22, T23, T25, T31-T36 | Loops correctivos, challenges, auto-revision, retroalimentacion NBR→GT. Analisis serios las usan regularmente. |
 | **Tier 3 — Situacionales** | T07, T09, T12, T13, T17, T19, T28, T30 | Patrones que se activan en contextos especificos. No en todo analisis. |
-| **Tier 4 — Excepcionales** | T02, T03, T04, T08, T21, T26, T27 | Patrones avanzados: greenfield, emergencias, conflictos estructurales, risk proactivo sobre norma. |
+| **Tier 4 — Excepcionales** | T02, T03, T04, T08, T26, T27 | Patrones avanzados: greenfield, emergencias, risk proactivo sobre norma. |
 
 ### 4.3. Alternancia de logica en las transiciones
 
@@ -863,7 +866,7 @@ El NBR es la herramienta con mayor densidad de retroalimentacion:
 | NBR → CRT (T22) | Revision | Moderado. Algunos NBRs revelan realidad oculta. |
 | NBR → NBR (T35) | Recursion | Moderado. Trimmings con sus propios riesgos. |
 | NBR → PRT/TT (T25) | Absorcion | Frecuente. NBRs menores se gestionan operativamente. |
-| NBR → GT (T21) | Revision meta | Raro. Solo cuando los riesgos cuestionan la meta. |
+| NBR → GT (T21) | Revision meta | Estructural (implicito en toda UDE colateral del NBR). Explicito cuando los riesgos cuestionan la meta. |
 | EC → NBR (T28) | Filtro | Situacional. Util con multiples INJs candidatas. |
 | CRT → NBR (T27) | Anticipacion | Raro. Pre-evaluacion hipotetica. |
 | GT → NBR (T26) | Proactivo | Muy raro. Sanity check de la norma. |
@@ -883,6 +886,17 @@ El NBR es la herramienta con mayor densidad de retroalimentacion:
 | PRT/TT → PRT/TT (T36) | Aprendizaje durante la ejecucion | Normal. El plan siempre se refina al ejecutar |
 
 **Hallazgo**: las auto-transiciones son saludables si convergen (cada iteracion produce cambios menores). Si no convergen, son señal de un problema mas profundo que requiere cambiar de herramienta (transicion inter-arbol).
+
+### 4.7. La naturaleza dual del NBR
+
+El NBR tiene una dualidad que la matriz 6×6 no debe oscurecer:
+
+- **Como herramienta analitica**: el NBR es un proceso separado con sus propios artefactos (UDEs colaterales, trimming INJs), comandos (`nbr_add`, `nbr_inspect`, etc.) y relaciones con otros arboles. Esto justifica las 10 transiciones del Grupo F.
+- **Como sub-proceso del FRT**: el NBR es un paso de aseguramiento de calidad que **completa** el FRT. El ciclo FRT→NBR→trimming→FRT' es iterativo. Un FRT sin NBR es un FRT incompleto — es un modelo optimista del futuro, no un modelo realista. Varias derivaciones de NBR sobre un mismo FRT producen un FRT mas completo y robusto.
+
+**Implicacion para la matriz**: las transiciones T29 (FRT→NBR) y T24 (NBR→FRT trimming) son mas "pasos internos de un proceso iterativo" que "transiciones entre herramientas independientes". Esto no invalida su existencia en la matriz (las transiciones son reales y trazables), pero contextualiza que el FRT y el NBR forman un par acoplado — similar a como PRT y TT se tratan como unidad por su acoplamiento funcional.
+
+**La conexion estructural con el GT**: el NBR ademas conecta estructuralmente con el GT, porque toda UDE colateral es "mala" en la medida en que viola una norma. Esta es la norma-bisagra ampliada (ver RFC-002, seccion 13.2): el GT es el arbitro universal que define que es bueno (DE, FRT) y que es malo (UDE en presente via CRT, UDE colateral en futuro via NBR).
 
 ---
 
@@ -989,7 +1003,7 @@ GT ──(T01)──→ CRT ──(T06)──→ EC ──(T11)──→ FRT ─
  │               │               │              │              ├──(T23)──→ EC₂ (recursion)    │
  │               │               │              │              ├──(T22)──→ CRT (revision)     │
  │               │               │              │              ├──(T25)──→ PRT (absorcion)    │
- │               │               │              │              └──(T21)──→ GT  (raro)         │
+ │               │               │              │              └──(T21)──→ GT  (estructural)  │
  │               │               │              │                                             │
  │               │               │              ├──────────(T15)──→ EC  (challenge)           │
  │               │               │              └──────────(T14)──→ CRT (revision)            │
@@ -1014,5 +1028,6 @@ GT ──(T01)──→ CRT ──(T06)──→ EC ──(T11)──→ FRT ─
 
 | Fecha | Cambio |
 |-------|--------|
+| 2026-09-12 | T21 (NBR→GT) reclasificado de (c) Tier 4 a (b) Tier 2: conexion estructural implicita en toda UDE colateral del NBR. Seccion 4.7 nueva: naturaleza dual del NBR (herramienta analitica + sub-proceso del FRT). Norma-bisagra ampliada referenciada desde apendice. |
 | 2026-09-12 | Expansion a 36 transiciones: GRUPO F (T21-T30, NBR como 6.ª herramienta), GRUPO G (T31-T36, auto-transiciones). Matriz actualizada de 5×5 a 6×6. Sintesis ampliada con secciones 4.5 (NBR como amplificador) y 4.6 (auto-transiciones como indicador de madurez). Mapping actualizado con 5 nuevos relation_types (benchmark, strategic_roadmap, emergency_action, trimming, self_revision). Validacion ampliada con 4 nuevos warnings. Seccion 7 con diagrama de flujo canonico expandido. |
 | 2026-09-11 | Creacion: auditoria completa de 20 transiciones, matriz 5×5, mapping a relation_types, implicaciones para el motor |

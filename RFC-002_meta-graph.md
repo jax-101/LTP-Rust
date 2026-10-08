@@ -2010,12 +2010,35 @@ Los CSF y NC del Goal Tree son la **norma** — la definicion de como deberia fu
 | CSF-002 "Entregas on-time" | **Violada** | UDE-001 "Indice de satisfaccion del cliente <60%" | CRT | Un CSF violado puede derivar UDEs de nivel mas alto |
 | CSF-002 "Entregas on-time" | **Cumplida** | DE-001 "Indice de satisfaccion >90%" | FRT | El DE a nivel CSF es mas estrategico |
 
+#### Norma-bisagra ampliada: el GT como arbitro universal
+
+El diagrama anterior muestra dos manifestaciones de la norma (presente y futuro deseado). Pero el NBR introduce una tercera: la norma violada en el **futuro** como efecto colateral de la INJ. El diagrama completo es:
+
+```
+                         GT (norma)
+                        /    |     \
+              [violada     [violada     [cumplida
+              presente]     futuro]      futuro]
+                 ↓            ↓            ↓
+    UDE (CRT)    UDE colateral (NBR)    DE (FRT)
+```
+
+| Norma (GT) | Estado | Contexto temporal | Resultado | Arbol |
+|---|---|---|---|---|
+| NC-003 "On-time ≥95%" | Violada | Presente | UDE-003 "28% llegan tarde" | CRT |
+| NC-003 "On-time ≥95%" | Cumplida | Futuro (con INJ) | DE-003 "97% on-time" | FRT |
+| NC-008 "Autonomia operativa" | Violada | Futuro (por INJ) | UDE colateral "Conductores pierden autonomia de ruta" | NBR |
+
+El GT es el **arbitro universal**: define que es bueno (DE) y que es malo (UDE) tanto en presente (CRT) como en futuro (FRT/NBR). Toda UDE colateral del NBR es "mala" porque viola una norma del GT — la misma norma cuyo cumplimiento genera DEs en el FRT. El NBR completa el modelo del futuro: el FRT dice "que sale bien si la INJ funciona"; el NBR dice "que sale mal como efecto colateral". Ambos juicios los emite el GT.
+
 **Reglas criticas**:
 1. El UDE **no ES** la NC — es su manifestacion negativa observable. "Entregas on-time ≥95%" (NC) ≠ "28% llegan tarde" (UDE).
 2. El DE **no ES** la NC — es su manifestacion positiva observable. "Entregas on-time ≥95%" (NC) ≠ "97% on-time" (DE).
 3. La relacion no es directa (NC → UDE). Es: NC [violada] → se **deriva** un UDE que captura el efecto observable.
 4. Cada UDE del CRT deberia poder trazarse a al menos una NC/CSF violada del GT. Si no puede, el GT esta incompleto (ver T05, CRT→GT feedback).
 5. Cada DE del FRT deberia ser el opuesto de un UDE del CRT, y por tanto, evidencia de una NC/CSF cumplida.
+6. Cada UDE colateral del NBR deberia poder trazarse a al menos una NC/CSF del GT violada en el futuro. Si no puede, el GT esta incompleto O la UDE colateral no es realmente un problema.
+7. El GT es el arbitro universal: define que es bueno (DE) y que es malo (UDE) tanto en presente (CRT) como en futuro (FRT/NBR). Sin GT, no hay criterio para juzgar si un efecto es deseable o indeseable.
 
 ### 13.3. Matriz completa de transformaciones cross-tree
 
@@ -2097,7 +2120,7 @@ La matriz de transformacion de tipos de nodo aporta tres cosas al meta-grafo y a
 
 1. **Precision en los handoffs**: el `projection_map` y los `handoff_nodes` de las tree_relations ahora saben no solo QUE nodo cruza, sino DE QUE TIPO era en el arbol origen y EN QUE TIPO se convierte en el destino. La naturaleza de la transformacion (derivacion, compresion, recontextualizacion, inversion, etc.) es metadata valiosa.
 
-2. **El concepto de norma-bisagra**: los CSF/NC del GT no se convierten directamente en UDEs o DEs. Se **derivan** por violacion (→ UDE) o por cumplimiento (→ DE). Esto es fundamental para que `validate` verifique que cada UDE del CRT tiene ancla en la norma, y que cada DE del FRT evidencia cumplimiento de la norma.
+2. **El concepto de norma-bisagra ampliada**: los CSF/NC del GT no se convierten directamente en UDEs o DEs. Se **derivan** por violacion (→ UDE) o por cumplimiento (→ DE). La bisagra ahora incluye tres manifestaciones: UDE en presente (CRT, violacion), DE en futuro (FRT, cumplimiento), y UDE colateral en futuro (NBR, violacion por la INJ). El GT es el arbitro universal. Esto es fundamental para que `validate` verifique que cada UDE del CRT tiene ancla en la norma, que cada DE del FRT evidencia cumplimiento, y que cada UDE colateral del NBR referencia una norma violada en el futuro.
 
 3. **Espacio de fuentes de la EC**: documentar todas las combinaciones posibles de tipos fuente para los 5 nodos EC permite al motor y al agente generar `projection_map` mas precisos, y al agente generar supuestos mas ricos sabiendo exactamente que tipo de nodo cuestiona cada edge.
 
@@ -2652,4 +2675,5 @@ Cada nivel de recursion genera un **escenario hijo** (parent_scenario apunta al 
 | 2026-09-11 | Seccion 11 corregida: matiz norma-bisagra (CSF/NC no son UDE/DE directamente, se derivan por violacion/cumplimiento). B/C pueden ser CSF y/o NC. |
 | 2026-09-11 | Seccion 13: Matriz de transformacion de tipos de nodo entre arboles — nivel micro que complementa las 20 transiciones macro. Espacio de fuentes de la EC. |
 | 2026-09-11 | Q18-Q20 nuevas (transformation_type, validacion norma-bisagra, espacio de fuentes EC en motor) |
+| 2026-09-12 | Seccion 13.2 ampliada: norma-bisagra con 3 manifestaciones (CRT presente, FRT futuro, NBR futuro colateral). GT como arbitro universal. Reglas 6-7 nuevas. |
 | 2026-09-12 | Seccion 14: Six Hats de escenarios como ramas de futuros alternativos — branch_point enriquecido, recursion controlada, scout-commit-pivot, comparacion estructurada, escenarios parciales |
