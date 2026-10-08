@@ -234,17 +234,30 @@ pub fn prune_removed(tree: &mut Tree, ids: &HashSet<&str>) -> PruneReport {
     report
 }
 
-/// Checks that both endpoints of `m` are attached to `tree` (`from` first).
+/// Checks that both endpoints of `m` are attached to `tree` and exist in `pool`.
 ///
 /// Shared by `macro expand`, `macro promote` and `path replace` before they mint anything
 /// (ADR-016): a macro left dangling by `tree detach` or by pre-v0.5.0 data must not
-/// materialize edges onto a node outside the tree. Fails with `NODE_NOT_IN_TREE {node_id}`.
-pub fn check_macro_endpoints(tree: &Tree, m: &MacroEdge) -> Result<(), OutputError> {
+/// materialize edges onto a missing node. Per endpoint (`from` first): not attached ⇒
+/// `NODE_NOT_IN_TREE {node_id}`; attached but absent from the pool (v0.4.0 split damage) ⇒
+/// `NODE_NOT_FOUND {node_id}`.
+pub fn check_macro_endpoints(
+    tree: &Tree,
+    m: &MacroEdge,
+    pool: &HashSet<String>,
+) -> Result<(), OutputError> {
     for endpoint in [&m.from, &m.to] {
         if !tree.nodes.iter().any(|n| &n.node_ref == endpoint) {
             return Err(OutputError::new(
                 "NODE_NOT_IN_TREE",
                 format!("Node '{endpoint}' is not attached to tree '{}'", tree.id),
+            )
+            .with_context("node_id", endpoint.as_str()));
+        }
+        if !pool.contains(endpoint) {
+            return Err(OutputError::new(
+                "NODE_NOT_FOUND",
+                format!("Node '{endpoint}' not found in pool"),
             )
             .with_context("node_id", endpoint.as_str()));
         }
@@ -1051,19 +1064,22 @@ mod tests {
             }))
         );
     }
-    // Endpoints must be attached: `from` is reported first; a fully attached macro passes.
+    // Per endpoint, `from` first: attachment is checked before pool existence.
     #[test]
-    fn macro_endpoints_must_be_attached() {
-        let t = tree(&["A", "E"]);
-        assert!(check_macro_endpoints(&t, &overlay("MACRO-001", "A", "E", &[], &[])).is_ok());
-        for (from, to, missing) in [("X", "E", "X"), ("A", "Y", "Y"), ("X", "Y", "X")] {
-            let err = check_macro_endpoints(&t, &overlay("MACRO-001", from, to, &[], &[]))
+    fn macro_endpoints_must_be_attached_and_exist() {
+        let t = tree(&["A", "E", "G"]);
+        let pool = pool(&["A", "E"]);
+        let check = |from: &str, to: &str| {
+            check_macro_endpoints(&t, &overlay("MACRO-001", from, to, &[], &[]), &pool)
                 .err()
-                .map(|e| (e.code.clone(), ctx(&e, "node_id").map(str::to_string)));
-            assert_eq!(
-                err,
-                Some(("NODE_NOT_IN_TREE".to_string(), Some(missing.to_string())))
-            );
-        }
+                .map(|e| (e.code.clone(), ctx(&e, "node_id").map(str::to_string)))
+        };
+        assert_eq!(check("A", "E"), None);
+        let err = |code: &str, node: &str| Some((code.to_string(), Some(node.to_string())));
+        assert_eq!(check("X", "E"), err("NODE_NOT_IN_TREE", "X"));
+        assert_eq!(check("A", "Y"), err("NODE_NOT_IN_TREE", "Y"));
+        assert_eq!(check("G", "E"), err("NODE_NOT_FOUND", "G"));
+        assert_eq!(check("A", "G"), err("NODE_NOT_FOUND", "G"));
+        assert_eq!(check("G", "Y"), err("NODE_NOT_FOUND", "G"));
     }
 }

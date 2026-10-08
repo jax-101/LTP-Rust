@@ -1403,3 +1403,250 @@ fn d2_replace_rejects_detached_endpoint() {
         assert_ne!(interior["metadata"]["status"], "superseded");
     }
 }
+
+// --- V: validate, full referential integrity ---------------------------------
+
+/// `validate` (optionally `--tree`) ⇒ `(output, REFERENTIAL_INTEGRITY_VIOLATION errors)`.
+fn integrity_errors(dir: &Path, tree: Option<&str>) -> (Value, Vec<Value>) {
+    let mut args = vec!["validate"];
+    if let Some(t) = tree {
+        args.extend(["--tree", t]);
+    }
+    let (out, _) = run_ltp(dir, &args);
+    let errors = out["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| d["errors"].as_array().unwrap().clone())
+        .filter(|e| e["code"] == "REFERENTIAL_INTEGRITY_VIOLATION")
+        .collect();
+    (out, errors)
+}
+
+/// `(node_id, location, field)` of each violation, in output order.
+fn slots(errors: &[Value]) -> Vec<(String, String, String)> {
+    errors
+        .iter()
+        .map(|e| {
+            let f = |k: &str| e[k].as_str().unwrap_or("").to_string();
+            (f("node_id"), f("location"), f("field"))
+        })
+        .collect()
+}
+
+/// FRT with every structure: trunk A→B→C, feedback C→A, NBR on B with B→C, overlay A ⇒ C.
+fn full_tree(d: &Path, name: &str) -> String {
+    let t = new_tree(d, "frt", name);
+    let a = add_node(d, "a", "INJ");
+    let b = add_node(d, "b", "DE");
+    let c = add_node(d, "c", "UDE");
+    attach(d, &t, &[&a, &b, &c]);
+    connect(d, &t, &a, &b);
+    connect(d, &t, &b, &c);
+    feedback(d, &t, &c, &a);
+    let nbr = nbr_add(d, &t, &b);
+    nbr_connect(d, &t, &nbr, &b, &c);
+    collapse(d, &t, &a, &c);
+    t
+}
+
+/// Hand-written damage (simulates v0.4.0): one distinct ghost per slot.
+fn damage(d: &Path, t: &str) {
+    edit_tree(d, t, |tr| {
+        tr["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"ref": "UDE-901", "role": null}));
+        tr["edges"][0]["from"] = json!(["UDE-902"]);
+        tr["edges"][1]["to"] = json!("UDE-903");
+        tr["feedback_edges"][0]["from"] = json!("UDE-904");
+        tr["nbr_branches"][0]["source_node"] = json!("UDE-905");
+        tr["nbr_branches"][0]["edges"][0]["to"] = json!("UDE-906");
+        tr["macro_edges"][0]["from"] = json!("UDE-907");
+        tr["macro_edges"][0]["to"] = json!("UDE-908");
+        tr["macro_edges"][0]["interior_nodes"] = json!(["UDE-909"]);
+    });
+}
+
+// V1 — one violation per damaged slot, with location/field/container, in fixed order.
+#[test]
+fn v1_every_structure_is_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t = full_tree(d, "danado");
+    damage(d, &t);
+
+    let (out, errors) = integrity_errors(d, None);
+
+    assert_eq!(out["success"], false, "{out}");
+    let expect = |n: &str, l: &str, f: &str| (s(n), s(l), s(f));
+    assert_eq!(
+        slots(&errors),
+        vec![
+            expect("UDE-901", "nodes", "ref"),
+            expect("UDE-902", "edges", "from"),
+            expect("UDE-903", "edges", "to"),
+            expect("UDE-904", "feedback_edges", "from"),
+            expect("UDE-905", "nbr_branches", "source_node"),
+            expect("UDE-906", "nbr_branches", "to"),
+            expect("UDE-907", "macro_edges", "from"),
+            expect("UDE-908", "macro_edges", "to"),
+            expect("UDE-909", "macro_edges", "interior_nodes"),
+        ],
+        "{errors:?}"
+    );
+    for e in &errors {
+        assert_eq!(e["tree_id"], t.as_str());
+    }
+    assert_eq!(errors[1]["edge_id"], "LINK-001");
+    assert_eq!(errors[3]["feedback_id"], "FB-001");
+    assert_eq!(errors[4]["nbr_id"], "NBR-001");
+    assert_eq!(errors[5]["nbr_id"], "NBR-001");
+    assert_eq!(errors[5]["edge_id"], "LINK-003");
+    assert_eq!(errors[8]["macro_link"], "MACRO-001");
+}
+
+// V2 — `validate --tree T` only reports T's violations.
+#[test]
+fn v2_tree_filter_is_respected() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t1 = full_tree(d, "uno");
+    let t2 = full_tree(d, "dos");
+    damage(d, &t1);
+    damage(d, &t2);
+
+    let (_, errors) = integrity_errors(d, Some(&t2));
+    assert_eq!(errors.len(), 9, "{errors:?}");
+    assert!(errors.iter().all(|e| e["tree_id"] == t2.as_str()));
+
+    let (_, all) = integrity_errors(d, None);
+    assert_eq!(all.len(), 18);
+}
+
+// V3 — a node on disk but unreadable counts as existing: only NODE_UNREADABLE.
+#[test]
+fn v3_unreadable_node_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t = full_tree(d, "ilegible");
+    let node = tree_json(d, &t)["nodes"][1]["ref"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::fs::write(d.join("nodes").join(format!("{node}.json")), "{ roto").unwrap();
+
+    let (out, errors) = integrity_errors(d, None);
+    assert!(errors.is_empty(), "{errors:?}");
+    let unreadable = validate_warnings_of(&out, "NODE_UNREADABLE");
+    assert_eq!(unreadable.len(), 1, "{out}");
+    assert_eq!(unreadable[0]["node_id"], node.as_str());
+}
+
+fn validate_warnings_of(out: &Value, code: &str) -> Vec<Value> {
+    out["data"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| d["warnings"].as_array().unwrap().clone())
+        .filter(|w| w["code"] == code)
+        .collect()
+}
+
+// V4a — exact v0.4.0 split damage (S1): T2 still points at the deleted original.
+// `validate` detects it; X is still attached, so the materializers refuse it with
+// NODE_NOT_FOUND (attached but absent from the pool).
+#[test]
+fn v4a_legacy_split_damage_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    init(d);
+    let t1 = new_tree(d, "crt", "uno");
+    let t2 = new_tree(d, "crt", "dos");
+    let [x, y, z] = ["x", "y", "z"].map(|l| add_node(d, l, "UDE"));
+    attach(d, &t1, &[&x, &y]);
+    attach(d, &t2, &[&x, &y, &z]);
+    connect(d, &t2, &x, &y);
+    let m = macro_add(d, &t2, &x, &z);
+    // Old split: X deleted from the pool, only T1 rewritten.
+    edit_tree(d, &t1, |tr| tr["nodes"] = json!([{"ref": y, "role": null}]));
+    std::fs::remove_file(d.join("nodes").join(format!("{x}.json"))).unwrap();
+
+    let (_, errors) = integrity_errors(d, None);
+    let expect = |l: &str, f: &str| (x.clone(), s(l), s(f));
+    assert_eq!(
+        slots(&errors),
+        vec![
+            expect("nodes", "ref"),
+            expect("edges", "from"),
+            expect("macro_edges", "from"),
+        ],
+        "{errors:?}"
+    );
+
+    let (before, ctr) = (snapshot(d), counters(d));
+    for args in [
+        vec![
+            "macro",
+            "expand",
+            "--tree",
+            &t2,
+            "--macro-link",
+            &m,
+            "--steps",
+            "p",
+        ],
+        vec!["macro", "promote", "--tree", &t2, "--macro-link", &m],
+    ] {
+        let (out, _) = run_ltp(d, &args);
+        assert_eq!(out["success"], false, "{args:?}: {out}");
+        assert_eq!(error_codes(&out), vec!["NODE_NOT_FOUND"], "{out}");
+        assert_eq!(out["errors"][0]["node_id"], x.as_str(), "{out}");
+        assert_untouched(d, &before, &ctr);
+    }
+}
+
+// V4b — exact v0.4.0 rm damage (M1): overlay whose `from` was deleted everywhere.
+#[test]
+fn v4b_legacy_rm_damage_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (t, [a, _, _], [l1, _], m) = linear_overlay(d);
+    let inj = add_node(d, "inyeccion", "INJ");
+    // Old rm: A gone from pool, nodes[] and edges; the macro is left untouched.
+    edit_tree(d, &t, |tr| {
+        tr["nodes"].as_array_mut().unwrap().remove(0);
+        tr["edges"].as_array_mut().unwrap().remove(0);
+    });
+    std::fs::remove_file(d.join("nodes").join(format!("{a}.json"))).unwrap();
+    assert!(tree_json(d, &t)["macro_edges"][0]["interior_links"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(l1)));
+
+    let (_, errors) = integrity_errors(d, None);
+    assert_eq!(
+        slots(&errors),
+        vec![(a.clone(), s("macro_edges"), s("from"))]
+    );
+
+    let (before, ctr) = (snapshot(d), counters(d));
+    let (out, _) = run_ltp(
+        d,
+        &[
+            "path",
+            "replace",
+            "--tree",
+            &t,
+            "--macro-link",
+            &m,
+            "--by-node",
+            &inj,
+        ],
+    );
+    assert_endpoint_not_in_tree(&out, &a);
+    assert_untouched(d, &before, &ctr);
+}

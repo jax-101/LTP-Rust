@@ -10,6 +10,8 @@
 //! Las funciones `execute_*` mutan bajo lock pero **no** capturan historial: el snapshot
 //! undo/redo (ADR-009) lo envuelve el llamador (CLI en `main.rs`, MCP en `dispatch.rs`).
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
 use crate::errors::LtpError;
@@ -18,7 +20,7 @@ use crate::meta::integrity::check_macro_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
-use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef};
+use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef, Tree};
 use crate::validate::check_dag;
 
 /// Advertencia por lock obsoleto retirado (paridad con el resto de comandos mutadores).
@@ -262,6 +264,22 @@ pub struct MacroExpandData {
 ///
 /// `valid_dag` es un parámetro porque el fallo por ciclo (D9) reporta `valid_dag: false`
 /// (contrato idéntico a `link connect`), mientras que el resto de fallos no tocan el DAG.
+/// Extremos de `m` adjuntos a `tree` y presentes en el pool (ADR-016), compartido por
+/// `macro expand`, `macro promote` y `path replace`. El pool es `list_node_ids` (un nodo
+/// ilegible cuenta como existente, como en `validate`); si no se puede listar ⇒ `IO_ERROR`.
+pub(crate) fn validate_endpoints(
+    storage: &dyn Storage,
+    tree: &Tree,
+    m: &MacroEdge,
+) -> Result<(), OutputError> {
+    let pool: HashSet<String> = storage
+        .list_node_ids()
+        .map_err(|e| OutputError::new("IO_ERROR", e.to_string()))?
+        .into_iter()
+        .collect();
+    check_macro_endpoints(tree, m, &pool)
+}
+
 fn expand_failure(
     ws_name: &str,
     macro_link: &str,
@@ -366,9 +384,9 @@ pub fn execute_macro_expand(
         );
     }
 
-    // Re-validar extremos attached antes de mintear (ADR-016): una reserva colgante no
-    // materializa edges hacia un nodo fuera del árbol.
-    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
+    // Re-validar extremos (adjuntos y en el pool) antes de mintear (ADR-016): una reserva
+    // colgante no materializa edges hacia un nodo inexistente.
+    if let Err(e) = validate_endpoints(storage, &tree, &tree.macro_edges[macro_idx]) {
         let _ = storage.release_lock();
         return expand_failure(&ws_name, macro_link, true, e);
     }
@@ -683,8 +701,8 @@ pub fn execute_macro_promote(
     let from = tree.macro_edges[macro_idx].from.clone();
     let to = tree.macro_edges[macro_idx].to.clone();
 
-    // Re-validar extremos attached (defensivo, ADR-016).
-    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
+    // Re-validar extremos adjuntos y en el pool (defensivo, ADR-016).
+    if let Err(e) = validate_endpoints(storage, &tree, &tree.macro_edges[macro_idx]) {
         let _ = storage.release_lock();
         return promote_failure(&ws_name, macro_link, true, e);
     }

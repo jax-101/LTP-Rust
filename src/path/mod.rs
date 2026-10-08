@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, VecDeque};
 use serde::Serialize;
 
 use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
-use crate::meta::integrity::check_macro_endpoints;
+use crate::macro_edge::validate_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
@@ -855,8 +855,9 @@ pub fn execute_path_replace(
         };
     }
 
-    // Re-validate attached endpoints before touching the pool or minting (ADR-016).
-    if let Err(e) = check_macro_endpoints(&tree, &tree.macro_edges[macro_idx]) {
+    // Re-validate endpoints (attached and in the pool) before touching the pool or minting
+    // (ADR-016).
+    if let Err(e) = validate_endpoints(storage, &tree, &tree.macro_edges[macro_idx]) {
         let _ = storage.release_lock();
         return CommandOutput {
             success: false,

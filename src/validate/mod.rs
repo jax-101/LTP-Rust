@@ -1,7 +1,6 @@
 pub mod clr;
 pub mod dag;
 pub mod ec;
-pub mod integrity;
 pub mod knowledge;
 pub mod macro_edge;
 pub mod orphans;
@@ -156,9 +155,8 @@ pub fn execute_validate<S: Storage>(
             }
         }
 
-        // Referential integrity
-        let integrity_errors = integrity::check_integrity(&tree.edges, &node_pool, &tree.id);
-        tree_errors.extend(integrity_errors);
+        // Referential integrity in every structure: nodes, edges, feedback, NBR, macros (ADR-016 D-5)
+        tree_errors.extend(meta::integrity::check_tree_integrity(&tree, &node_pool));
 
         // EC-specific rules
         if tree.tree_type == TreeType::Ec {
