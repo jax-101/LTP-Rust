@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use crate::knowledge::{KnowledgeItem, KnowledgeRelation, KnowledgeStatus};
+use crate::knowledge::pool::{load_pool, KnowledgePool};
+use crate::knowledge::{KnowledgeRelation, KnowledgeStatus};
 use crate::node::types::EpistemicStatus;
 use crate::output::OutputWarning;
 use crate::storage::Storage;
@@ -8,6 +9,7 @@ use crate::storage::Storage;
 /// Validates knowledge pool integrity and epistemic grounding.
 ///
 /// Returns warnings for:
+/// - KNOWLEDGE_LOAD_ERROR: knowledge item that cannot be read (first, in ID order)
 /// - DANGLING_KNOWLEDGE_REF: KN link target doesn't exist
 /// - EPISTEMIC_UNGROUNDED: fact node with 0 active supports
 /// - EPISTEMIC_CONTRADICTED: fact node with verified contradiction
@@ -16,17 +18,10 @@ pub fn validate_knowledge(
     storage: &dyn Storage,
     node_filter: Option<&HashSet<String>>,
 ) -> Vec<OutputWarning> {
-    let mut warnings = Vec::new();
-
-    let kn_ids = match storage.list_knowledge_ids() {
-        Ok(ids) => ids,
-        Err(_) => return warnings,
-    };
-
-    let items: Vec<KnowledgeItem> = kn_ids
-        .iter()
-        .filter_map(|id| storage.load_knowledge(id).ok())
-        .collect();
+    let KnowledgePool {
+        items,
+        mut warnings,
+    } = load_pool(storage);
 
     // DANGLING_KNOWLEDGE_REF: check each link target resolves
     for item in &items {

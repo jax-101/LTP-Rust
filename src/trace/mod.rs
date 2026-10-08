@@ -417,12 +417,11 @@ pub fn execute_trace(
     };
 
     // Attach knowledge summaries if requested
+    let mut kn_warnings = Vec::new();
     if show_knowledge {
-        let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
-        let kn_items: Vec<crate::knowledge::KnowledgeItem> = kn_ids
-            .iter()
-            .filter_map(|id| storage.load_knowledge(id).ok())
-            .collect();
+        let pool = crate::knowledge::pool::load_pool(storage);
+        kn_warnings = pool.warnings;
+        let kn_items = pool.items;
 
         for entry in &mut chain {
             let node_knowledge: Vec<KnowledgeSummary> = kn_items
@@ -456,6 +455,7 @@ pub fn execute_trace(
             chain_health,
         },
     )
+    .with_warnings(kn_warnings)
 }
 
 /// Inspect a single link with full detail including node labels and assumptions.

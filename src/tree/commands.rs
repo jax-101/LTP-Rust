@@ -1261,14 +1261,13 @@ pub fn execute_tree_walk(
     }
 
     // Pre-load knowledge items if needed
-    let kn_items: Vec<crate::knowledge::KnowledgeItem> = if show_knowledge {
-        let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
-        kn_ids
-            .iter()
-            .filter_map(|id| storage.load_knowledge(id).ok())
-            .collect()
+    let crate::knowledge::pool::KnowledgePool {
+        items: kn_items,
+        warnings: kn_warnings,
+    } = if show_knowledge {
+        crate::knowledge::pool::load_pool(storage)
     } else {
-        vec![]
+        Default::default()
     };
 
     let walk_nodes: Vec<WalkNode> = sorted
@@ -1323,4 +1322,5 @@ pub fn execute_tree_walk(
             nodes: walk_nodes,
         },
     )
+    .with_warnings(kn_warnings)
 }

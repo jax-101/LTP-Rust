@@ -667,13 +667,7 @@ pub fn execute_knowledge_list(
         let item = match storage.load_knowledge(id) {
             Ok(item) => item,
             Err(e) => {
-                warnings.push(
-                    OutputWarning::new(
-                        "KNOWLEDGE_LOAD_ERROR",
-                        format!("Failed to load {}: {}", id, e),
-                    )
-                    .with_context("id", serde_json::Value::String(id.clone())),
-                );
+                warnings.push(crate::knowledge::pool::load_error_warning(id, &e));
                 continue;
             }
         };

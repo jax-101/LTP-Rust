@@ -1235,23 +1235,19 @@ pub fn execute_node_rm(
     warnings.extend(macro_warnings);
     warnings.extend(refs_stripped_warnings);
 
-    // KNOWLEDGE_ORPHANED: check if any knowledge items link to the removed nodes
-    let orphaned_kn_ids: Vec<String> = storage
-        .list_knowledge_ids()
-        .unwrap_or_default()
+    // KNOWLEDGE_ORPHANED: check if any knowledge items link to the removed nodes.
+    // An unreadable item warns after it and never blocks: `rm` does not write
+    // knowledge (ADR-016 D-K5).
+    let kn_pool = crate::knowledge::pool::load_pool(storage);
+    let orphaned_kn_ids: Vec<String> = kn_pool
+        .items
         .into_iter()
-        .filter_map(|kn_id| {
-            let item = storage.load_knowledge(&kn_id).ok()?;
-            let links_to_removed = item
-                .links
+        .filter(|item| {
+            item.links
                 .iter()
-                .any(|l| id_set.contains(l.target.as_str()));
-            if links_to_removed {
-                Some(kn_id)
-            } else {
-                None
-            }
+                .any(|l| id_set.contains(l.target.as_str()))
         })
+        .map(|item| item.id)
         .collect();
 
     if !orphaned_kn_ids.is_empty() {
@@ -1274,6 +1270,7 @@ pub fn execute_node_rm(
             ),
         );
     }
+    warnings.extend(kn_pool.warnings);
 
     CommandOutput {
         success: true,

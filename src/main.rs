@@ -761,37 +761,12 @@ struct InitData {
 }
 
 #[derive(Debug, Serialize)]
-struct KnowledgeHealthData {
-    total: usize,
-    unlinked_items: usize,
-    contradictions: usize,
-    by_status: KnowledgeByStatus,
-    epistemic_coverage: EpistemicCoverage,
-}
-
-#[derive(Debug, Serialize)]
-struct KnowledgeByStatus {
-    unverified: usize,
-    verified: usize,
-    refuted: usize,
-    superseded: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct EpistemicCoverage {
-    fact: usize,
-    hypothesis: usize,
-    assumption: usize,
-    derived: usize,
-}
-
-#[derive(Debug, Serialize)]
 struct StatusData {
     node_count: usize,
     tree_count: usize,
     trees: Vec<TreeHealth>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    knowledge_health: Option<KnowledgeHealthData>,
+    knowledge_health: Option<ltp_engine::knowledge::health::KnowledgeHealth>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1008,8 +983,8 @@ fn execute_status(storage: &FsStorage) -> CommandOutput<StatusData> {
         .filter(|id| !referenced_nodes.contains(*id))
         .count();
 
-    // Compute knowledge health
-    let knowledge_health = compute_knowledge_health(storage, &node_ids);
+    let (knowledge_health, knowledge_warnings) =
+        ltp_engine::knowledge::health::knowledge_health(storage, &node_ids);
 
     let mut output = CommandOutput::ok(
         "status",
@@ -1026,86 +1001,11 @@ fn execute_status(storage: &FsStorage) -> CommandOutput<StatusData> {
         valid_dag: all_valid_dag,
         orphan_nodes_count: orphan_count,
     };
+    output.warnings = knowledge_warnings;
 
     let _ = total_feedback_count;
 
     output
-}
-
-fn compute_knowledge_health(storage: &FsStorage, node_ids: &[String]) -> KnowledgeHealthData {
-    let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
-    let items: Vec<ltp_engine::knowledge::KnowledgeItem> = kn_ids
-        .iter()
-        .filter_map(|id| storage.load_knowledge(id).ok())
-        .collect();
-
-    let total = items.len();
-    let unlinked_items = items.iter().filter(|i| i.links.is_empty()).count();
-
-    // Count contradictions: KN with status=verified and relation=contradicts to a fact node
-    let mut contradictions = 0usize;
-    for item in &items {
-        if item.status == ltp_engine::knowledge::KnowledgeStatus::Verified {
-            for link in &item.links {
-                if link.relation == ltp_engine::knowledge::KnowledgeRelation::Contradicts {
-                    if let Ok(node) = storage.load_node(&link.target) {
-                        if node.epistemic == ltp_engine::node::types::EpistemicStatus::Fact {
-                            contradictions += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let by_status = KnowledgeByStatus {
-        unverified: items
-            .iter()
-            .filter(|i| i.status == ltp_engine::knowledge::KnowledgeStatus::Unverified)
-            .count(),
-        verified: items
-            .iter()
-            .filter(|i| i.status == ltp_engine::knowledge::KnowledgeStatus::Verified)
-            .count(),
-        refuted: items
-            .iter()
-            .filter(|i| i.status == ltp_engine::knowledge::KnowledgeStatus::Refuted)
-            .count(),
-        superseded: items
-            .iter()
-            .filter(|i| i.status == ltp_engine::knowledge::KnowledgeStatus::Superseded)
-            .count(),
-    };
-
-    // Epistemic coverage: count nodes by epistemic status
-    let mut fact_count = 0usize;
-    let mut hypothesis_count = 0usize;
-    let mut assumption_count = 0usize;
-    let mut derived_count = 0usize;
-
-    for node_id in node_ids {
-        if let Ok(node) = storage.load_node(node_id) {
-            match node.epistemic {
-                ltp_engine::node::types::EpistemicStatus::Fact => fact_count += 1,
-                ltp_engine::node::types::EpistemicStatus::Hypothesis => hypothesis_count += 1,
-                ltp_engine::node::types::EpistemicStatus::Assumption => assumption_count += 1,
-                ltp_engine::node::types::EpistemicStatus::Derived => derived_count += 1,
-            }
-        }
-    }
-
-    KnowledgeHealthData {
-        total,
-        unlinked_items,
-        contradictions,
-        by_status,
-        epistemic_coverage: EpistemicCoverage {
-            fact: fact_count,
-            hypothesis: hypothesis_count,
-            assumption: assumption_count,
-            derived: derived_count,
-        },
-    }
 }
 
 /// Parses CLI `NODE[@TREE]` refs; on the first malformed one renders an

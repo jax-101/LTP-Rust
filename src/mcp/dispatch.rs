@@ -341,8 +341,6 @@ fn dispatch_init(
 }
 
 fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> {
-    use crate::knowledge::types::{KnowledgeRelation as KR, KnowledgeStatus as KS};
-    use crate::node::types::EpistemicStatus;
     use crate::tree::Tree;
     use crate::validate::check_dag;
 
@@ -387,67 +385,8 @@ fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> 
         .filter(|id| !referenced_nodes.contains(*id))
         .count();
 
-    // Compute knowledge_health
-    let kn_ids = storage.list_knowledge_ids().unwrap_or_default();
-    let kn_items: Vec<_> = kn_ids
-        .iter()
-        .filter_map(|id| storage.load_knowledge(id).ok())
-        .collect();
-
-    let kn_total = kn_items.len();
-    let unlinked_items = kn_items.iter().filter(|i| i.links.is_empty()).count();
-
-    let mut contradictions = 0usize;
-    for item in &kn_items {
-        if item.status == KS::Verified {
-            for link in &item.links {
-                if link.relation == KR::Contradicts {
-                    if let Ok(node) = storage.load_node(&link.target) {
-                        if node.epistemic == EpistemicStatus::Fact {
-                            contradictions += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let by_status = serde_json::json!({
-        "unverified": kn_items.iter().filter(|i| i.status == KS::Unverified).count(),
-        "verified": kn_items.iter().filter(|i| i.status == KS::Verified).count(),
-        "refuted": kn_items.iter().filter(|i| i.status == KS::Refuted).count(),
-        "superseded": kn_items.iter().filter(|i| i.status == KS::Superseded).count(),
-    });
-
-    let mut fact_count = 0usize;
-    let mut hypothesis_count = 0usize;
-    let mut assumption_count = 0usize;
-    let mut derived_count = 0usize;
-    for node_id in &node_ids {
-        if let Ok(node) = storage.load_node(node_id) {
-            match node.epistemic {
-                EpistemicStatus::Fact => fact_count += 1,
-                EpistemicStatus::Hypothesis => hypothesis_count += 1,
-                EpistemicStatus::Assumption => assumption_count += 1,
-                EpistemicStatus::Derived => derived_count += 1,
-            }
-        }
-    }
-
-    let epistemic_coverage = serde_json::json!({
-        "fact": fact_count,
-        "hypothesis": hypothesis_count,
-        "assumption": assumption_count,
-        "derived": derived_count,
-    });
-
-    let knowledge_health = serde_json::json!({
-        "total": kn_total,
-        "unlinked_items": unlinked_items,
-        "contradictions": contradictions,
-        "by_status": by_status,
-        "epistemic_coverage": epistemic_coverage,
-    });
+    let (knowledge_health, knowledge_warnings) =
+        crate::knowledge::health::knowledge_health(storage, &node_ids);
 
     let mut output = CommandOutput::ok(
         "status",
@@ -463,6 +402,7 @@ fn dispatch_status(storage: &FsStorage) -> Result<ToolCallResult, JsonRpcError> 
         valid_dag: all_valid_dag,
         orphan_nodes_count: orphan_count,
     };
+    output.warnings = knowledge_warnings;
     to_result(&output)
 }
 
