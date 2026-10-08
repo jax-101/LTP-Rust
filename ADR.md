@@ -412,3 +412,36 @@ Consecuencias
   - workspaces que hoy pasan `validate` empezarán a fallar (es correcto, porque están rotos);
   - la pérdida de `MacroAssumption` en `rm` solo se puede recuperar con `undo`.
 - Fuera de alcance: el `role` de los hijos de un split, los knowledge links al nodo partido, `tree detach` de un extremo de macro, la poda de `interior_links` en los comandos `link`, un aviso uniforme de resumen obsoleto en todas las mutaciones que tocan interiores de macros, el rollback de escrituras parciales, y la detección en `validate` de Overlays vacíos o de links fantasma.
+- Adenda v0.5.1 (D-K5, `PLAN_v051.md` §1b): **lo ilegible que la mutación escribe, bloquea; lo ilegible que solo lee, se avisa; nunca se calla.** Generaliza D-4 sin contradecirlo. `node rm` no escribe knowledge, así que un `knowledge/KN-xxx.json` ilegible no lo bloquea: emite `KNOWLEDGE_LOAD_ERROR {id}` (código existente de `knowledge list`) después de `KNOWLEDGE_ORPHANED`. El mismo aviso sale en `status` (CLI y MCP, con un único cálculo compartido de `knowledge_health`), `validate`, y `tree walk`/`trace` solo con `--show-knowledge`.
+
+ADR-017: Semántica de `--dry-run`: Ejecución Real sobre una Copia Descartable (v0.5.1)
+
+Contexto
+
+`--dry-run` es un flag global del CLI ("Simulate the operation without writing to disk") e INTEGRATION §2A promete que simula sin escribir a disco. Hasta v0.5.0 solo lo consultaban `init`, `undo` y `redo`: `ltp node add "Prueba" --type UDE --dry-run` devolvía `success: true` y escribía `nodes/UDE-001.json`. Desde v0.5.0 el riesgo es mayor, porque lo natural es previsualizar un `node rm` o un `node split` destructivos.
+
+Se evaluaron tres opciones (Six Hats, 2026-10-08):
+1. (A) Rechazar el flag en las mutaciones → arregla la mentira, pero deja sin previsualización justo los comandos destructivos.
+2. (B) Un `Storage` simulado en memoria → segunda implementación de la persistencia que puede divergir de la real.
+3. (C) Ejecutar el comando real sobre una copia temporal del workspace y descartarla.
+
+Decisión
+
+Opción C (`PLAN_v051.md` §1):
+- D-1 Mecanismo: si llega `--dry-run` y el comando no es `init`, `undo` ni `redo`, el padre (1) copia el workspace a un directorio temporal, (2) relanza el propio binario (`std::env::current_exe()`) con `current_dir` = la copia, los mismos argumentos sin el token `--dry-run` y `LTP_DRY_RUN_CHILD=1`, (3) reenvía stdout y stderr byte a byte, (4) borra la copia y (5) sale con el código del hijo. Proceso hijo y no guard en proceso porque `main` termina con `process::exit` en más de 70 brazos, y `process::exit` se salta los `Drop`.
+- D-2 Qué se copia: solo lo gestionado por LTP (`ltp.config.json`, `nodes/`, `trees/`, `knowledge/`, `.ltp/` salvo `.ltp/tmp/`), solo ficheros regulares, sin seguir symlinks. El resto del `cwd` no se copia. Copiar `.ltp/` entero hace que el hijo vea el mismo lock, contadores, historial y estado de batch.
+- D-3 Cero bytes en el workspace real: el padre no adquiere el lock real ni crea nada en el workspace. Todo lo que escribe el hijo cae en la copia. La carrera con un escritor concurrente durante la copia es la misma ventana que ya tiene un comando de solo lectura.
+- D-4 Output idéntico al de la ejecución real (sin campos, warnings ni códigos nuevos); `--human` y el código de salida se respetan. El campo `workspace` es el nombre de la configuración, no una ruta, así que no hay que reescribir nada.
+- D-5 Excepciones: `init`, `undo` y `redo` conservan su `--dry-run` nativo (UAT 11.3). Los comandos de solo lectura también pasan por la copia: evita mantener una lista blanca de comandos que mutan.
+- D-6 Fail-closed: si no se puede crear o copiar el directorio temporal, o lanzar el hijo, la salida es un `CommandOutput` con `IO_ERROR`, `success: false` y código 1, sin ejecutar nada sobre el workspace real. La copia se borra también si el hijo falla o muere.
+- D-7 Recursión: si `LTP_DRY_RUN_CHILD` está activa y llega `--dry-run`, no se relanza nada: es un `IO_ERROR` interno.
+
+Justificación
+- Fidelidad por construcción: mismo binario y mismo código, así que la simulación no puede divergir de la ejecución real.
+- El coste (un proceso y copiar unos KB o MB de JSON) es despreciable en LTP.
+- PATCH (RELEASE_POLICY §1): hace cumplir una promesa ya documentada sin contrato nuevo.
+
+Consecuencias
+- Positivas: `--dry-run` es fiable en todas las mutaciones, incluidas las destructivas, con sus avisos reales (`MACRO_EDGE_REMOVED`, `affected_trees`).
+- Negativas: un proceso extra por llamada; la copia incluye el historial (limitado por `max_size_mb`).
+- Fuera de alcance: `dry_run` en MCP (contrato nuevo, MINOR v0.6.0, reutilizará D-1).
