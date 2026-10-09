@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +10,7 @@ use crate::node::Node;
 use crate::storage::{LockOutcome, Storage};
 use crate::tree::Tree;
 use crate::workspace::config::WorkspaceConfig;
-use crate::workspace::counters::{scope_of, Counters};
+use crate::workspace::counters::{scope_of, Counters, ScanScope};
 use crate::workspace::lock::LockFile;
 
 /// Filesystem-backed implementation of the `Storage` trait.
@@ -17,12 +18,89 @@ use crate::workspace::lock::LockFile;
 /// All I/O uses atomic writes (tmp → rename) to prevent corruption.
 pub struct FsStorage {
     root: PathBuf,
+    /// Whether this instance currently holds the workspace lock.
+    locked: Cell<bool>,
+    /// Scopes already reconciled with the disk under the current lock
+    /// (PLAN_v052 D-7). Pure memoization: with the lock held nothing that
+    /// respects it adds IDs, and after the first reconciliation the stored
+    /// counters are above the disk. Cleared on both `acquire_lock` and
+    /// `release_lock`, and only consulted while locked, so a command that
+    /// forgets to release can never leak it into the next one (MCP reuses a
+    /// single `FsStorage` for the whole server lifetime).
+    reconciled: Cell<ReconciledScopes>,
+    /// Disk scans performed by `next_id`, per scope (tests only).
+    #[cfg(test)]
+    scans: Cell<ScanCounts>,
+}
+
+/// Scopes already reconciled with the disk while the current lock is held.
+#[derive(Debug, Clone, Copy, Default)]
+struct ReconciledScopes {
+    nodes: bool,
+    knowledge: bool,
+    trees: bool,
+}
+
+impl ReconciledScopes {
+    /// `All` (unknown prefix) is never memoized.
+    fn contains(self, scope: ScanScope) -> bool {
+        match scope {
+            ScanScope::Nodes => self.nodes,
+            ScanScope::Knowledge => self.knowledge,
+            ScanScope::Trees => self.trees,
+            ScanScope::All => false,
+        }
+    }
+
+    fn with(mut self, scope: ScanScope) -> Self {
+        match scope {
+            ScanScope::Nodes => self.nodes = true,
+            ScanScope::Knowledge => self.knowledge = true,
+            ScanScope::Trees => self.trees = true,
+            ScanScope::All => {}
+        }
+        self
+    }
+}
+
+/// Number of disk scans per scope (tests only).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ScanCounts {
+    nodes: u32,
+    knowledge: u32,
+    trees: u32,
+    all: u32,
 }
 
 impl FsStorage {
     /// Create a new `FsStorage` rooted at the given directory.
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            locked: Cell::new(false),
+            reconciled: Cell::new(ReconciledScopes::default()),
+            #[cfg(test)]
+            scans: Cell::new(ScanCounts::default()),
+        }
+    }
+
+    /// Forget every reconciled scope and record whether the lock is held.
+    fn reset_reconciled(&self, locked: bool) {
+        self.reconciled.set(ReconciledScopes::default());
+        self.locked.set(locked);
+    }
+
+    #[cfg(test)]
+    fn count_scan(&self, scope: ScanScope) {
+        let mut c = self.scans.get();
+        match scope {
+            ScanScope::Nodes => c.nodes += 1,
+            ScanScope::Knowledge => c.knowledge += 1,
+            ScanScope::Trees => c.trees += 1,
+            ScanScope::All => c.all += 1,
+        }
+        self.scans.set(c);
     }
 
     fn ltp_dir(&self) -> PathBuf {
@@ -180,6 +258,7 @@ impl Storage for FsStorage {
         let mut stale_pid = None;
 
         debug!(command, "acquiring lock");
+        self.reset_reconciled(false);
 
         // A fresh git clone has no `.ltp/` (it is gitignored): create it so the
         // clone is usable (PLAN_v052 D-4).
@@ -209,6 +288,7 @@ impl Storage for FsStorage {
         let json = serde_json::to_string_pretty(&lock)?;
         fs::write(&lock_path, json)?;
 
+        self.reset_reconciled(true);
         match stale_pid {
             Some(pid) => Ok(LockOutcome::StaleLockRemoved { pid }),
             None => Ok(LockOutcome::Acquired),
@@ -216,6 +296,7 @@ impl Storage for FsStorage {
     }
 
     fn release_lock(&self) -> Result<()> {
+        self.reset_reconciled(false);
         let lock_path = self.lock_path();
         if lock_path.exists() {
             fs::remove_file(&lock_path)?;
@@ -230,10 +311,22 @@ impl Storage for FsStorage {
         let mut counters = Counters::load_stored(&counters_path)?.into_counters();
         let prefix = entity_type.to_uppercase();
         let scope = scope_of(&prefix);
-        let observed = Counters::observe_scope(&self.root, scope)?;
-        counters.reconcile(&observed, scope);
+        // D-7: one reconciliation per scope while the lock is held.
+        let locked = self.locked.get();
+        let memoized = locked && self.reconciled.get().contains(scope);
+        if !memoized {
+            #[cfg(test)]
+            self.count_scan(scope);
+            let observed = Counters::observe_scope(&self.root, scope)?;
+            counters.reconcile(&observed, scope);
+        }
         let id = counters.next(&prefix);
         counters.save(&counters_path)?;
+        // Mark only once the reconciled counters are on disk; otherwise the
+        // next mint would start from a stale file without rescanning.
+        if locked && !memoized {
+            self.reconciled.set(self.reconciled.get().with(scope));
+        }
         Ok(id)
     }
 
@@ -345,4 +438,109 @@ fn is_pid_alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn is_pid_alive(_pid: u32) -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace() -> (tempfile::TempDir, FsStorage) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FsStorage::new(dir.path().to_path_buf());
+        storage.init_workspace("D7").unwrap();
+        (dir, storage)
+    }
+
+    /// Writes a tree file holding the given IDs (only `"id"` keys are counted).
+    fn write_tree(storage: &FsStorage, name: &str, ids: &[&str]) {
+        let edges: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| serde_json::json!({ "id": id }))
+            .collect();
+        let tree = serde_json::json!({ "id": name, "edges": edges });
+        fs::write(
+            storage.trees_dir().join(format!("{name}.json")),
+            tree.to_string(),
+        )
+        .unwrap();
+    }
+
+    // R13 — with the lock held, many mints across tree prefixes scan once, and
+    // that single scan raised every tree prefix (not only the first one asked).
+    #[test]
+    fn r13_one_scan_per_scope_per_command() {
+        let (_dir, storage) = workspace();
+        write_tree(&storage, "tree-a", &["LINK-003", "ASM-009", "FB-004"]);
+        storage.acquire_lock("test").unwrap();
+
+        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-004");
+        assert_eq!(storage.next_id("ASM").unwrap(), "ASM-010");
+        assert_eq!(storage.next_id("FB").unwrap(), "FB-005");
+        for i in 0..97 {
+            let prefix = ["LINK", "ASM", "FB"][i % 3];
+            storage.next_id(prefix).unwrap();
+        }
+        assert_eq!(storage.next_id("UDE").unwrap(), "UDE-001");
+        assert_eq!(storage.next_id("UDE").unwrap(), "UDE-002");
+
+        let scans = storage.scans.get();
+        assert_eq!(scans.trees, 1, "{scans:?}");
+        assert_eq!(scans.nodes, 1, "{scans:?}");
+        assert_eq!(scans.knowledge, 0, "{scans:?}");
+        storage.release_lock().unwrap();
+    }
+
+    // R14 — a lock that was never released does not carry the memo into the
+    // next command: the next acquire rescans and sees what changed meanwhile.
+    #[test]
+    fn r14_acquire_forgets_a_memo_left_by_a_missing_release() {
+        let (_dir, storage) = workspace();
+        storage.acquire_lock("first").unwrap();
+        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-001");
+        // No release_lock. Meanwhile a pull brings a tree, and the lock file
+        // goes away (e.g. removed by hand).
+        write_tree(&storage, "tree-pulled", &["LINK-050"]);
+        fs::remove_file(storage.lock_path()).unwrap();
+
+        storage.acquire_lock("second").unwrap();
+        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-051");
+        assert_eq!(storage.scans.get().trees, 2);
+        storage.release_lock().unwrap();
+    }
+
+    // R15 — without the lock every mint reconciles.
+    #[test]
+    fn r15_without_lock_every_mint_scans() {
+        let (_dir, storage) = workspace();
+        storage.next_id("LINK").unwrap();
+        write_tree(&storage, "tree-pulled", &["LINK-020"]);
+        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-021");
+        storage.next_id("LINK").unwrap();
+        assert_eq!(storage.scans.get().trees, 3);
+
+        storage.acquire_lock("cmd").unwrap();
+        storage.next_id("LINK").unwrap();
+        storage.release_lock().unwrap();
+        storage.next_id("LINK").unwrap();
+        assert_eq!(storage.scans.get().trees, 5, "release ends the memo");
+    }
+
+    // R16 — a failed scan (or a failed save) never marks the scope.
+    #[test]
+    fn r16_failed_scan_does_not_mark_the_scope() {
+        let (_dir, storage) = workspace();
+        let broken = storage.trees_dir().join("tree-x.json");
+        fs::create_dir(&broken).unwrap();
+        storage.acquire_lock("cmd").unwrap();
+
+        let err = storage.next_id("LINK").unwrap_err();
+        assert!(matches!(err, LtpError::CounterScan { .. }), "{err}");
+        assert!(err.to_string().contains("tree-x.json"), "{err}");
+
+        fs::remove_dir(&broken).unwrap();
+        write_tree(&storage, "tree-x", &["LINK-007"]);
+        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-008");
+        assert_eq!(storage.scans.get().trees, 2);
+        storage.release_lock().unwrap();
+    }
 }
