@@ -1233,7 +1233,7 @@ pub fn execute_link_dissolve(
         .collect();
 
     let mut created_edges: Vec<Edge> = Vec::with_capacity(edge.from.len());
-    for cause in &edge.from {
+    for (index, cause) in edge.from.iter().enumerate() {
         let new_id = match storage.next_id("LINK") {
             Ok(id) => id,
             Err(e) => {
@@ -1241,6 +1241,25 @@ pub fn execute_link_dissolve(
                 return dissolve_error(&ws_name, tree_id, "ID_GENERATION_ERROR", e.to_string());
             }
         };
+        // PLAN_v052 D-6: the first edge keeps the original assumption IDs (and
+        // so their knowledge links); every other edge gets copies with fresh IDs.
+        let mut assumptions = inherited_assumptions.clone();
+        if index > 0 {
+            for assumption in &mut assumptions {
+                assumption.id = match storage.next_id("ASM") {
+                    Ok(id) => id,
+                    Err(e) => {
+                        let _ = storage.release_lock();
+                        return dissolve_error(
+                            &ws_name,
+                            tree_id,
+                            "ID_GENERATION_ERROR",
+                            e.to_string(),
+                        );
+                    }
+                };
+            }
+        }
         created_edges.push(Edge {
             id: new_id,
             from: vec![cause.clone()],
@@ -1249,7 +1268,7 @@ pub fn execute_link_dissolve(
             weight: None,
             status: EdgeStatus::Active,
             logic: edge.logic,
-            assumptions: inherited_assumptions.clone(),
+            assumptions,
         });
     }
 

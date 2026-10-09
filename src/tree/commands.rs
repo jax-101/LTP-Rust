@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use serde::Serialize;
 
 use crate::errors::{LtpError, Result};
-use crate::link::Edge;
+use crate::link::{Edge, FeedbackEdge};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 use crate::tree::types::{NodeRef, Tree, TreeLogic, TreeType};
@@ -685,6 +685,24 @@ pub fn execute_tree_detach(
     }
 }
 
+/// Give every edge, assumption and feedback edge of a cloned tree a fresh ID.
+fn remint_copied_ids(
+    storage: &dyn Storage,
+    edges: &mut [Edge],
+    feedback_edges: &mut [FeedbackEdge],
+) -> Result<()> {
+    for edge in edges {
+        edge.id = storage.next_id("LINK")?;
+        for assumption in &mut edge.assumptions {
+            assumption.id = storage.next_id("ASM")?;
+        }
+    }
+    for feedback in feedback_edges {
+        feedback.id = storage.next_id("FB")?;
+    }
+    Ok(())
+}
+
 /// Execute `tree clone`.
 pub fn execute_tree_clone(
     storage: &dyn Storage,
@@ -743,42 +761,29 @@ pub fn execute_tree_clone(
     let slug = slugify(new_name);
     let new_id = format!("tree-{}-{}", tree_type_str(original.tree_type), slug);
 
-    // Clone edges with new IDs
-    let mut new_edges = Vec::new();
-    for edge in &original.edges {
-        let link_id = match storage.next_id("LINK") {
-            Ok(id) => id,
-            Err(e) => {
-                let _ = storage.release_lock();
-                return CommandOutput {
-                    success: false,
-                    action: "tree_clone".to_string(),
-                    workspace: ws_name,
-                    data: TreeCloneData {
-                        original_id: tree_id.to_string(),
-                        new_id: String::new(),
-                        new_name: String::new(),
-                        edges_cloned: 0,
-                    },
-                    graph_health: GraphHealth {
-                        valid_dag: true,
-                        orphan_nodes_count: 0,
-                    },
-                    errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
-                    warnings: vec![],
-                };
-            }
+    // PLAN_v052 D-6: every addressable entity of the copy (LINK, ASM, FB) gets
+    // a fresh ID; the original keeps its own, and so its knowledge links.
+    let mut new_edges = original.edges;
+    let mut feedback_edges = original.feedback_edges;
+    if let Err(e) = remint_copied_ids(storage, &mut new_edges, &mut feedback_edges) {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "tree_clone".to_string(),
+            workspace: ws_name,
+            data: TreeCloneData {
+                original_id: tree_id.to_string(),
+                new_id: String::new(),
+                new_name: String::new(),
+                edges_cloned: 0,
+            },
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
+            warnings: vec![],
         };
-        new_edges.push(Edge {
-            id: link_id,
-            from: edge.from.clone(),
-            to: edge.to.clone(),
-            operator: edge.operator,
-            weight: edge.weight,
-            status: edge.status,
-            logic: edge.logic,
-            assumptions: edge.assumptions.clone(),
-        });
     }
 
     let edges_cloned = new_edges.len();
@@ -788,10 +793,10 @@ pub fn execute_tree_clone(
         name: new_name.to_string(),
         tree_type: original.tree_type,
         logic: original.logic,
-        nodes: original.nodes.clone(),
+        nodes: original.nodes,
         edges: new_edges,
         macro_edges: vec![],
-        feedback_edges: original.feedback_edges,
+        feedback_edges,
         nbr_branches: vec![],
     };
 
