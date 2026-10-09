@@ -73,6 +73,45 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
+### [v0.6.0 en curso] — Ilegible ≠ ausente (MINOR) — Sesión 1 (T0–T4) completada
+**Fecha**: 2026-10-10
+**Plan**: `PLAN_v060.md` rev 3.3. Sesión 1 = T0 → T4 (hecha). **Sesión 2 = T5 → T9**, parar antes de T10. Para retomar: "Continúa PLAN_v060.md". Sin push ni tag.
+**Commits**: `2ca1731` T0 (tests en rojo) → `61d1e86` T1 (D-1/D-2) → `74e7a24` T2 (D-3) → `0f2d248` T3 (D-4) → `f93bc72` T4 (D-7).
+**Estado de los tests**: 808 en verde, 18 en rojo, todos pendientes de la sesión 2: 11 de `v060_unreadable` (D-5: c1–c5, c7, c8, g3, g4, g5) y 7 de `v060_duplicates` (D-8). Las suites de contrato de los `*_NOT_FOUND` legítimos, intactas.
+**T0**: `tests/v060_unreadable.rs` (39 casos: capas 1–3, B1, adyacentes, D-5, G1, G3–G5, G7) y `tests/v060_duplicates.rs` (9 casos D-8 con G2 y G6). Rojo según lo previsto; los "correctos", D-5b y (d) ya en verde.
+**T1**: `PoolScope { Complete, Unlisted }` y `KNOWLEDGE_POOL_UNREADABLE`. El aviso va en `pool.warnings`, así que status, node rm, trace y walk lo heredan sin tocarlos. validate se salta el análisis epistémico.
+**T2**: fs_storage sin `exists()`. Los helpers `read_entity`, `remove_entity`, `list_json_ids` e `is_absent` aplican la regla del symlink colgante con `symlink_metadata`, solo en el camino `NotFound`. Además:
+- `workspace_exists -> Result<bool>`; en CLI y MCP, un `Err` da `IO_ERROR`. En MCP sale como tool result, no como error JSON-RPC.
+- El lock sigue la misma regla.
+- `.gitignore` se escribe con `create_new` (sin TOCTOU).
+- `ensure_knowledge_dir` usa `create_dir` y trata `AlreadyExists` como ya existente.
+- validate lista los nodos una sola vez (un `Err` da `IO_ERROR`) y los pasa a `validate_knowledge` y a `validate_meta_graph`. Así se cierran `:46`, `:69` y `:327`.
+- 7 tests unitarios D-3 en `fs_storage`.
+
+**T3 — Inventario**: 70 sitios con `TREE/NODE/KNOWLEDGE_NOT_FOUND` o `REFERENTIAL_INTEGRITY_VIOLATION`.
+- 60 traducían cualquier `Err`: se corrigen.
+- 3 ya eran correctos: node edit `:646`, tree rm `:390` y tree rename `:913`.
+- 7 son legítimos: la comprobación de pertenencia a lista en node split `:1585` y 6 comprobaciones de pool en `meta/integrity`.
+- Helper `OutputError::load_failed(e, not_found, detail)` sobre `load_error_code` (D-4). Con `IO_ERROR`, el `detail` lleva la causa, no el "not found" del sitio.
+
+**T4**: `resolve_target -> Result<Option<ResolvedTarget>, ResolveError>`.
+- `ResolveError` tiene tres variantes: `TreesUnlisted`, `TreeUnreadable{tree_id}` y `NodeUnreadable{node_id}`.
+- **Desviación de la firma literal del plan**: el plan pone `Result<_>` con `LtpError`, pero se usa un error propio para conservar el `tree_id` que exigen inspect y link. Es API Rust, no contrato JSON.
+- Un árbol que desaparece entre el listado y la carga cuenta como ausente.
+- inspect deduplica el aviso por causa.
+- Un nodo ilegible como destino da `NODE_UNREADABLE {node_id}` en inspect e `IO_ERROR {node_id}` en link.
+
+**Descubrimientos**:
+- **G1 (decisión del usuario)**: se ajusta a D-4/D-7. Corrupto e ilegible dan los mismos códigos: `IO_ERROR` en walk, `TREE_LOAD_ERROR` en validate y un aviso `TREE_LOAD_ERROR` en inspect. El `detail` los distingue. No hay códigos nuevos.
+- **`path replace` solo mintea `LINK`** (un único ámbito). El caso entre ámbitos de D-5 se prueba con `path explode` y `macro expand` (INT + LINK); `path replace` queda como caso de un solo ámbito.
+- **G2 (interpretación)**: un duplicado entre un árbol legible y uno ilegible da `TREE_LOAD_ERROR` para el ilegible, sin `DUPLICATE_ENTITY_ID` y con `success:false`.
+- **Formato de `location` para D-8**: `edges[i]`, `edges[i].assumptions[j]`, `feedback_edges[i]`, `nbr_branches[i]`, `nbr_branches[i].edges[j](.assumptions[k])`, `macro_edges[i](.assumptions[j])`. Las `occurrences` van ordenadas por `tree_id` y luego por orden de recorrido.
+- **`tree clone` (v0.5.2) no copia `nbr_branches` ni `macro_edges`**: el clon solo lleva aristas, supuestos y feedback, con IDs nuevos. Por eso d0 (workspace sano con clon) no tiene duplicados.
+- `assume add` no admite aristas de NBR (da `LINK_NOT_FOUND`), así que los tests de D-8 con supuestos en NBR editan el JSON a mano.
+- La salida de error del ciclo en `link connect` lleva `warnings` (`MAG_WEIGHT_MISSING`), así que la regla "una salida de error no lleva warnings" tiene excepciones previas. D-5b solo exige que no salga el aviso de contadores.
+
+**Pendiente en T5/T6**: decidir qué hace `--tree T` en D-8 cuando hay otro árbol ilegible. Propuesta: ese árbol sale como `TREE_LOAD_ERROR`, igual que sin filtro.
+
 ### [Release v0.5.2] — Un ID nuevo nunca pisa uno existente (PATCH)
 **Fecha**: 2026-10-09
 **Plan**: `PLAN_v052.md` (rev 3 + D-7). T0–T6 completadas (T6 confirmada por el usuario el 2026-10-09).
