@@ -6,11 +6,10 @@ use tracing::{debug, warn};
 use crate::errors::{LtpError, Result};
 use crate::knowledge::KnowledgeItem;
 use crate::node::Node;
-use crate::output::OutputWarning;
 use crate::storage::{LockOutcome, Storage};
 use crate::tree::Tree;
 use crate::workspace::config::WorkspaceConfig;
-use crate::workspace::counters::Counters;
+use crate::workspace::counters::{scope_of, Counters};
 use crate::workspace::lock::LockFile;
 
 /// Filesystem-backed implementation of the `Storage` trait.
@@ -24,12 +23,6 @@ impl FsStorage {
     /// Create a new `FsStorage` rooted at the given directory.
     pub fn new(root: PathBuf) -> Self {
         Self { root }
-    }
-
-    /// Return any warnings generated during counter operations.
-    pub fn load_counters(&self) -> (Counters, Vec<OutputWarning>) {
-        let path = Counters::file_path(&self.root);
-        Counters::load(&path, &self.root)
     }
 
     fn ltp_dir(&self) -> PathBuf {
@@ -188,6 +181,10 @@ impl Storage for FsStorage {
 
         debug!(command, "acquiring lock");
 
+        // A fresh git clone has no `.ltp/` (it is gitignored): create it so the
+        // clone is usable (PLAN_v052 D-4).
+        fs::create_dir_all(self.ltp_dir())?;
+
         if lock_path.exists() {
             let content = fs::read_to_string(&lock_path)?;
             let existing: LockFile = serde_json::from_str(&content)?;
@@ -227,9 +224,15 @@ impl Storage for FsStorage {
     }
 
     fn next_id(&self, entity_type: &str) -> Result<String> {
+        // PLAN_v052 D-1/D-3: the stored counters are only a monotonicity memory;
+        // reconcile them with the disk, scanning only where the prefix lives.
         let counters_path = Counters::file_path(&self.root);
-        let (mut counters, _) = Counters::load(&counters_path, &self.root);
-        let id = counters.next(entity_type);
+        let mut counters = Counters::load_stored(&counters_path)?.into_counters();
+        let prefix = entity_type.to_uppercase();
+        let scope = scope_of(&prefix);
+        let observed = Counters::observe_scope(&self.root, scope)?;
+        counters.reconcile(&observed, scope);
+        let id = counters.next(&prefix);
         counters.save(&counters_path)?;
         Ok(id)
     }

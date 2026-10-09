@@ -217,18 +217,37 @@ fn build_rich_workspace(dir: &Path) -> String {
     tree
 }
 
-/// Triggers a counter load (and therefore a rebuild if the file is gone or corrupt).
-fn trigger_next_id(dir: &Path) {
+/// Triggers a mint in every scan scope (v0.5.2 D-3: a mint only reconciles the
+/// scope its prefix lives in), so the stored counters are rebuilt for all of them.
+fn trigger_next_id(dir: &Path, tree: &str) {
     add_node(dir, "disparador", "UDE");
+    let link = read_json(&tree_file(dir, tree))["edges"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    run_ok(
+        dir,
+        &[
+            "assume",
+            "add",
+            "--tree",
+            tree,
+            "--link",
+            &link,
+            "--text",
+            "disparador",
+        ],
+    );
 }
 
 fn assert_counters_cover_disk(dir: &Path, before: &BTreeMap<String, u64>) {
     let counters = read_json(&counters_path(dir));
     for prefix in EMBEDDED {
         let stored = counters[*prefix].as_u64().unwrap_or(0);
-        assert_eq!(
-            stored, before[*prefix],
-            "{prefix}: rebuilt counter must equal the max ID on disk"
+        assert!(
+            stored >= before[*prefix],
+            "{prefix}: rebuilt counter {stored} must cover the max ID on disk {}",
+            before[*prefix]
         );
     }
 }
@@ -291,7 +310,7 @@ fn u1_missing_counters_recovers_every_embedded_prefix() {
     let before = max_by_prefix(&all_ids(dir.path()));
 
     std::fs::remove_file(counters_path(dir.path())).unwrap();
-    trigger_next_id(dir.path());
+    trigger_next_id(dir.path(), &tree);
 
     assert_counters_cover_disk(dir.path(), &before);
     create_one_of_each_and_assert_unique(dir.path(), &tree);
@@ -306,7 +325,7 @@ fn u2_corrupt_counters_recovers_every_embedded_prefix() {
         let before = max_by_prefix(&all_ids(dir.path()));
 
         std::fs::write(counters_path(dir.path()), garbage).unwrap();
-        trigger_next_id(dir.path());
+        trigger_next_id(dir.path(), &tree);
 
         assert_counters_cover_disk(dir.path(), &before);
         create_one_of_each_and_assert_unique(dir.path(), &tree);
@@ -315,9 +334,9 @@ fn u2_corrupt_counters_recovers_every_embedded_prefix() {
 
 // U3
 #[test]
-fn u3_corrupt_tree_file_is_skipped_without_panic() {
+fn u3_corrupt_tree_file_is_scanned_as_text_without_panic() {
     let dir = tempfile::tempdir().unwrap();
-    build_rich_workspace(dir.path());
+    let tree = build_rich_workspace(dir.path());
     let before = max_by_prefix(&all_ids(dir.path()));
     std::fs::write(
         dir.path().join("trees").join("tree-crt-roto.json"),
@@ -327,8 +346,7 @@ fn u3_corrupt_tree_file_is_skipped_without_panic() {
     std::fs::write(dir.path().join("trees").join("notas.txt"), "LINK-999").unwrap();
 
     std::fs::remove_file(counters_path(dir.path())).unwrap();
-    let (json, code) = run_ltp(dir.path(), &["node", "add", "x", "--type", "UDE"]);
-    assert_eq!(code, 0, "{json}");
+    trigger_next_id(dir.path(), &tree);
 
     assert_counters_cover_disk(dir.path(), &before);
     let counters = read_json(&counters_path(dir.path()));
@@ -385,7 +403,7 @@ fn u5_numeric_tree_slug_and_odd_filenames_do_not_create_junk_keys() {
     std::fs::write(nodes.join("UDE-abc.json"), "{}").unwrap();
 
     std::fs::remove_file(counters_path(dir.path())).unwrap();
-    trigger_next_id(dir.path());
+    add_node(dir.path(), "disparador", "UDE");
 
     let counters = read_json(&counters_path(dir.path()));
     let keys: Vec<&String> = counters.as_object().unwrap().keys().collect();
@@ -429,7 +447,21 @@ fn u7_deeply_nested_ids_are_recovered() {
     std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
 
     std::fs::remove_file(counters_path(dir.path())).unwrap();
-    trigger_next_id(dir.path());
+    // The hand-edited tree no longer deserializes, so mint a LINK in another
+    // tree: any tree-scoped mint reconciles every tree prefix (D-3).
+    let other = run_ok(dir.path(), &["tree", "new", "crt", "otro"])["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let a = add_node(dir.path(), "a", "RC");
+    let b = add_node(dir.path(), "b", "UDE");
+    for n in [&a, &b] {
+        run_ok(
+            dir.path(),
+            &["tree", "attach", "--tree", &other, "--node", n],
+        );
+    }
+    connect(dir.path(), &other, &a, &b);
 
     let counters = read_json(&counters_path(dir.path()));
     assert_eq!(counters["ASM"], 77);
@@ -451,7 +483,7 @@ fn u8_references_are_not_counted_as_issued_ids() {
     std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
 
     std::fs::remove_file(counters_path(dir.path())).unwrap();
-    trigger_next_id(dir.path());
+    trigger_next_id(dir.path(), &tree);
 
     let counters = read_json(&counters_path(dir.path()));
     assert!(counters["UDE"].as_u64().unwrap() < 900);

@@ -62,6 +62,16 @@ pub enum LtpError {
     #[error("EC validation: {0}")]
     EcValidation(String),
 
+    /// Something in the scope of a prefix could not be read while computing
+    /// the next ID (PLAN_v052 D-3/D-5). Skipping it could reissue an ID.
+    #[error("cannot read {} to compute the next ID: {source}", path.display())]
+    CounterScan {
+        /// The file or directory that could not be read.
+        path: std::path::PathBuf,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
