@@ -2,20 +2,12 @@ use serde::Serialize;
 
 use crate::link::types::{Assumption, AssumptionStatus, EdgeStatus};
 use crate::node::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
+use crate::storage::Storage;
 
 // --- Helpers ---
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
 
 fn parse_assumption_status(s: &str) -> Option<AssumptionStatus> {
     match s.to_lowercase().as_str() {
@@ -121,6 +113,7 @@ pub fn execute_assume_add(
             };
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -178,7 +171,7 @@ pub fn execute_assume_add(
     };
 
     let asm_id = match storage.next_id("ASM") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -231,9 +224,7 @@ pub fn execute_assume_add(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -368,9 +359,7 @@ pub fn execute_assume_edit(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -612,9 +601,7 @@ pub fn execute_assume_move(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -744,9 +731,7 @@ pub fn execute_assume_rm(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -800,6 +785,7 @@ pub fn execute_invalidate(
             };
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -896,9 +882,7 @@ pub fn execute_invalidate(
                 asm_id, link_id
             ),
         )];
-        if let Some(w) = stale_lock_warning(&lock_outcome) {
-            warnings.push(w);
-        }
+        prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
         return CommandOutput {
             success: true,
             action: action.to_string(),
@@ -946,7 +930,7 @@ pub fn execute_invalidate(
     // Create injection node if label provided
     let injection_id = if let Some(label) = injection_label {
         let inj_id = match storage.next_id("INJ") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return CommandOutput {
@@ -1031,9 +1015,7 @@ pub fn execute_invalidate(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,

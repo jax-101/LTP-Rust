@@ -4,8 +4,8 @@ use serde::Serialize;
 
 use crate::errors::{LtpError, Result};
 use crate::link::{Edge, FeedbackEdge};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{prepend_session_warnings, CommandOutput, GraphHealth, OutputError};
+use crate::storage::{CounterNotice, Storage};
 use crate::tree::types::{NodeRef, Tree, TreeLogic, TreeType};
 
 // --- Helpers ---
@@ -48,16 +48,6 @@ fn tree_type_str(t: TreeType) -> &'static str {
         TreeType::Frt => "frt",
         TreeType::Prt => "prt",
         TreeType::Tt => "tt",
-    }
-}
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
     }
 }
 
@@ -294,9 +284,7 @@ pub fn execute_tree_new(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -409,9 +397,7 @@ pub fn execute_tree_rm(storage: &dyn Storage, tree_id: &str) -> CommandOutput<Tr
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -564,9 +550,7 @@ pub fn execute_tree_attach(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -672,9 +656,7 @@ pub fn execute_tree_detach(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -695,21 +677,23 @@ pub fn execute_tree_detach(
 }
 
 /// Give every edge, assumption and feedback edge of a cloned tree a fresh ID.
+/// Returns the counter notice of the minting, if any (PLAN_v060 D-5).
 fn remint_copied_ids(
     storage: &dyn Storage,
     edges: &mut [Edge],
     feedback_edges: &mut [FeedbackEdge],
-) -> Result<()> {
+) -> Result<Option<CounterNotice>> {
+    let mut notice = None;
     for edge in edges {
-        edge.id = storage.next_id("LINK")?;
+        edge.id = storage.next_id("LINK")?.into_id(&mut notice);
         for assumption in &mut edge.assumptions {
-            assumption.id = storage.next_id("ASM")?;
+            assumption.id = storage.next_id("ASM")?.into_id(&mut notice);
         }
     }
     for feedback in feedback_edges {
-        feedback.id = storage.next_id("FB")?;
+        feedback.id = storage.next_id("FB")?.into_id(&mut notice);
     }
-    Ok(())
+    Ok(notice)
 }
 
 /// Execute `tree clone`.
@@ -778,26 +762,29 @@ pub fn execute_tree_clone(
     // a fresh ID; the original keeps its own, and so its knowledge links.
     let mut new_edges = original.edges;
     let mut feedback_edges = original.feedback_edges;
-    if let Err(e) = remint_copied_ids(storage, &mut new_edges, &mut feedback_edges) {
-        let _ = storage.release_lock();
-        return CommandOutput {
-            success: false,
-            action: "tree_clone".to_string(),
-            workspace: ws_name,
-            data: TreeCloneData {
-                original_id: tree_id.to_string(),
-                new_id: String::new(),
-                new_name: String::new(),
-                edges_cloned: 0,
-            },
-            graph_health: GraphHealth {
-                valid_dag: true,
-                orphan_nodes_count: 0,
-            },
-            errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
-            warnings: vec![],
-        };
-    }
+    let notice = match remint_copied_ids(storage, &mut new_edges, &mut feedback_edges) {
+        Ok(notice) => notice,
+        Err(e) => {
+            let _ = storage.release_lock();
+            return CommandOutput {
+                success: false,
+                action: "tree_clone".to_string(),
+                workspace: ws_name,
+                data: TreeCloneData {
+                    original_id: tree_id.to_string(),
+                    new_id: String::new(),
+                    new_name: String::new(),
+                    edges_cloned: 0,
+                },
+                graph_health: GraphHealth {
+                    valid_dag: true,
+                    orphan_nodes_count: 0,
+                },
+                errors: vec![OutputError::new("ID_GENERATION_ERROR", e.to_string())],
+                warnings: vec![],
+            };
+        }
+    };
 
     let edges_cloned = new_edges.len();
 
@@ -837,9 +824,7 @@ pub fn execute_tree_clone(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -971,9 +956,7 @@ pub fn execute_tree_rename(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,

@@ -5,7 +5,9 @@ use serde::Serialize;
 use crate::link::types::{Edge, EdgeStatus, Logic, Operator};
 use crate::macro_edge::validate_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
 use crate::storage::Storage;
 use crate::tree::types::{MacroEdge, MacroEdgeStatus, NodeRef};
 
@@ -78,14 +80,9 @@ pub fn execute_path_collapse(
             };
         }
     };
+    let mut notice = None;
 
     let mut warnings = vec![];
-    if let crate::storage::LockOutcome::StaleLockRemoved { pid } = lock_outcome {
-        warnings.push(crate::output::OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Removed stale lock from PID {}", pid),
-        ));
-    }
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -331,7 +328,7 @@ pub fn execute_path_collapse(
 
     // Generate macro_edge ID
     let macro_id = match storage.next_id("MACRO") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -406,6 +403,7 @@ pub fn execute_path_collapse(
             interior_links,
         },
     );
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     output.warnings = warnings;
     output
 }
@@ -443,14 +441,9 @@ pub fn execute_path_explode(
             };
         }
     };
+    let mut notice = None;
 
     let mut warnings = vec![];
-    if let crate::storage::LockOutcome::StaleLockRemoved { pid } = lock_outcome {
-        warnings.push(crate::output::OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Removed stale lock from PID {}", pid),
-        ));
-    }
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -541,7 +534,7 @@ pub fn execute_path_explode(
 
     // Create INT node
     let int_id = match storage.next_id("INT") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -597,7 +590,7 @@ pub fn execute_path_explode(
 
     // Generate 2 new link IDs
     let link_a_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -621,7 +614,7 @@ pub fn execute_path_explode(
     };
 
     let link_b_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -720,6 +713,7 @@ pub fn execute_path_explode(
             original_link_removed: original_link_id,
         },
     );
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     output.warnings = warnings;
     output
 }
@@ -757,14 +751,9 @@ pub fn execute_path_replace(
             };
         }
     };
+    let mut notice = None;
 
     let mut warnings = vec![];
-    if let crate::storage::LockOutcome::StaleLockRemoved { pid } = lock_outcome {
-        warnings.push(crate::output::OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Removed stale lock from PID {}", pid),
-        ));
-    }
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -923,7 +912,7 @@ pub fn execute_path_replace(
 
     // Create 2 new edges: from → by_node, by_node → to
     let link_a_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -948,7 +937,7 @@ pub fn execute_path_replace(
     };
 
     let link_b_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -1035,6 +1024,7 @@ pub fn execute_path_replace(
             new_links: vec![link_a_id, link_b_id],
         },
     );
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     output.warnings = warnings;
     output
 }

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{LtpError, Result};
+use crate::storage::RebuildReason;
 
 /// All entity types tracked by the counter system.
 const ENTITY_TYPES: &[&str] = &[
@@ -51,11 +52,13 @@ pub enum StoredCounters {
 }
 
 impl StoredCounters {
-    /// The stored counters, or a zeroed set when there is no usable file.
-    pub fn into_counters(self) -> Counters {
+    /// The stored counters (a zeroed set when there is no usable file), and
+    /// why the file could not be used, if so.
+    pub fn into_counters(self) -> (Counters, Option<RebuildReason>) {
         match self {
-            Self::Valid(c) => c,
-            Self::Missing | Self::Corrupt => Counters::new_zeroed(),
+            Self::Valid(c) => (c, None),
+            Self::Missing => (Counters::new_zeroed(), Some(RebuildReason::Missing)),
+            Self::Corrupt => (Counters::new_zeroed(), Some(RebuildReason::Corrupt)),
         }
     }
 }
@@ -121,17 +124,21 @@ impl Counters {
     }
 
     /// Raise every counter of `scope` to at least what was observed on disk.
-    /// Counters never go down.
-    pub fn reconcile(&mut self, observed: &Self, scope: ScanScope) {
+    /// Counters never go down. Returns the raised counters as
+    /// `(prefix, from, to)`, in prefix order.
+    pub fn reconcile(&mut self, observed: &Self, scope: ScanScope) -> Vec<(String, u64, u64)> {
+        let mut raised = Vec::new();
         for (prefix, &num) in &observed.values {
             if scope_of(prefix) != scope {
                 continue;
             }
             let current = self.values.entry(prefix.clone()).or_insert(0);
             if num > *current {
+                raised.push((prefix.clone(), *current, num));
                 *current = num;
             }
         }
+        raised
     }
 
     /// Increment the counter for `entity_type` and return the formatted ID.
@@ -367,7 +374,8 @@ mod tests {
         observed.values.insert("LINK".into(), 4);
         observed.values.insert("ASM".into(), 7);
         observed.values.insert("UDE".into(), 9);
-        stored.reconcile(&observed, ScanScope::Trees);
+        let raised = stored.reconcile(&observed, ScanScope::Trees);
+        assert_eq!(raised, vec![("ASM".to_string(), 0, 7)]);
         assert_eq!(stored.values["LINK"], 10, "never goes down");
         assert_eq!(stored.values["ASM"], 7);
         assert_eq!(stored.values["UDE"], 0, "out of scope");

@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{prepend_session_warnings, CommandOutput, GraphHealth, OutputError};
+use crate::storage::Storage;
 use crate::workspace::FsStorage;
 
 use super::manager::HistoryManager;
@@ -87,16 +87,6 @@ pub struct BatchEndData {
 }
 
 // --- Helpers ---
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
 
 fn make_history_manager(storage: &FsStorage) -> Option<HistoryManager> {
     let config = storage.load_config().ok()?;
@@ -190,9 +180,7 @@ pub fn execute_undo(storage: &FsStorage, dry_run: bool) -> CommandOutput<UndoDat
                 };
             }
         };
-        if let Some(w) = stale_lock_warning(&lock_outcome) {
-            warnings.push(w);
-        }
+        prepend_session_warnings(&mut warnings, &lock_outcome, None);
     }
 
     let result = manager.execute_undo(dry_run);
@@ -336,9 +324,7 @@ pub fn execute_redo(storage: &FsStorage, dry_run: bool) -> CommandOutput<RedoDat
                 };
             }
         };
-        if let Some(w) = stale_lock_warning(&lock_outcome) {
-            warnings.push(w);
-        }
+        prepend_session_warnings(&mut warnings, &lock_outcome, None);
     }
 
     let result = manager.execute_redo(dry_run);

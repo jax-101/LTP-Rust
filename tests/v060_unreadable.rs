@@ -1114,3 +1114,189 @@ fn g5_undo_no_notice_and_monotonic() {
     assert_eq!(next["data"]["id"], "UDE-004", "ADR-009 monotonicity");
     assert!(rebuilt(&next).is_empty(), "{next}");
 }
+
+/// D-5 — every command that mints reports the rebuild (the compiler cannot
+/// force a site to forward its notice: `&mut notice` already counts as a use).
+#[test]
+fn c9_every_minting_command_reports_the_rebuild() {
+    const T: &str = "tree-crt-a";
+    let grouped: &[&[&str]] = &[
+        &[
+            "link", "connect", "--tree", T, "--from", "RC-002", "--to", "UDE-001",
+        ],
+        &[
+            "link",
+            "group",
+            "--tree",
+            T,
+            "--links",
+            "LINK-001,LINK-002",
+            "--operator",
+            "AND",
+        ],
+    ];
+    let reserved: &[&[&str]] = &[&[
+        "macro", "add", "--tree", T, "--from", "RC-002", "--to", "UDE-002", "--label", "salto",
+    ]];
+    let chain: &[&[&str]] = &[&[
+        "link", "connect", "--tree", T, "--from", "UDE-001", "--to", "UDE-002",
+    ]];
+    let collapsed: &[&[&str]] = &[
+        chain[0],
+        &[
+            "path", "collapse", "--tree", T, "--from", "RC-001", "--to", "UDE-002", "--label", "r",
+        ],
+    ];
+    let cases: &[(&[&[&str]], &[&str])] = &[
+        (&[], &["node", "add", "x", "--type", "UDE"]),
+        (
+            &[],
+            &["node", "split", "--tree", T, "UDE-002", "--into", "a", "b"],
+        ),
+        (
+            &[],
+            &[
+                "knowledge",
+                "add",
+                "k",
+                "--type",
+                "observation",
+                "--source-excerpt",
+                "s",
+            ],
+        ),
+        (
+            &[],
+            &[
+                "assume", "add", "--tree", T, "--link", "LINK-001", "--text", "t",
+            ],
+        ),
+        (
+            &[],
+            &[
+                "invalidate",
+                "--tree",
+                T,
+                "--link",
+                "LINK-001",
+                "--asm",
+                "ASM-001",
+                "--injection",
+                "i",
+            ],
+        ),
+        (
+            &[],
+            &[
+                "link", "connect", "--tree", T, "--from", "RC-002", "--to", "UDE-002",
+            ],
+        ),
+        (
+            &[],
+            &[
+                "link", "feedback", "--tree", T, "--from", "UDE-001", "--to", "RC-001", "--type",
+                "positive",
+            ],
+        ),
+        (
+            &[],
+            &[
+                "link",
+                "insert-between",
+                "--tree",
+                T,
+                "--link",
+                "LINK-001",
+                "--node",
+                "RC-002",
+            ],
+        ),
+        (&grouped[..1], grouped[1]),
+        (
+            grouped,
+            &["link", "dissolve", "--tree", T, "--link", "LINK-003"],
+        ),
+        (
+            grouped,
+            &[
+                "link",
+                "split",
+                "--tree",
+                T,
+                "--link",
+                "LINK-003",
+                "--extract",
+                "RC-002",
+            ],
+        ),
+        (
+            &[],
+            &["nbr", "add", "--tree", T, "--source-node", "UDE-001"],
+        ),
+        (&[], reserved[0]),
+        (
+            reserved,
+            &[
+                "macro",
+                "expand",
+                "--tree",
+                T,
+                "--macro-link",
+                "MACRO-001",
+                "--steps",
+                "uno",
+            ],
+        ),
+        (
+            reserved,
+            &["macro", "promote", "--tree", T, "--macro-link", "MACRO-001"],
+        ),
+        (
+            reserved,
+            &[
+                "macro-assume",
+                "add",
+                "--tree",
+                T,
+                "--macro-link",
+                "MACRO-001",
+                "--text",
+                "m",
+            ],
+        ),
+        (chain, collapsed[1]),
+        (
+            &[],
+            &[
+                "path", "explode", "--tree", T, "--link", "LINK-001", "--asm", "ASM-001",
+                "--label", "m",
+            ],
+        ),
+        (
+            collapsed,
+            &[
+                "path",
+                "replace",
+                "--tree",
+                T,
+                "--macro-link",
+                "MACRO-001",
+                "--by-node",
+                "RC-002",
+            ],
+        ),
+        (&[], &["tree", "clone", T, "--name", "copia"]),
+    ];
+    for (setup, cmd) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        fixture(dir);
+        for step in *setup {
+            run_ok(dir, step);
+        }
+        rm_counters(dir);
+        let json = run_ok(dir, cmd);
+        assert_eq!(rebuilt(&json).len(), 1, "{cmd:?}: {json}");
+        assert_eq!(rebuilt(&json)[0]["reason"], "missing", "{cmd:?}: {json}");
+    }
+}

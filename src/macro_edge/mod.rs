@@ -18,21 +18,10 @@ use crate::errors::LtpError;
 use crate::link::{Assumption, Edge, EdgeStatus, Logic, Operator};
 use crate::meta::integrity::check_macro_endpoints;
 use crate::node::types::{EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{prepend_session_warnings, CommandOutput, GraphHealth, OutputError};
+use crate::storage::Storage;
 use crate::tree::{MacroEdge, MacroEdgeStatus, NodeRef, Tree};
 use crate::validate::check_dag;
-
-/// Advertencia por lock obsoleto retirado (paridad con el resto de comandos mutadores).
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {pid} was removed"),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
 
 // --- M2: macro add (reserva top-down) ---
 
@@ -111,6 +100,7 @@ pub fn execute_macro_add(
             );
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -188,7 +178,7 @@ pub fn execute_macro_add(
     }
 
     let macro_id = match storage.next_id("MACRO") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return add_failure(
@@ -226,9 +216,7 @@ pub fn execute_macro_add(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -344,6 +332,7 @@ pub fn execute_macro_expand(
             );
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -431,7 +420,7 @@ pub fn execute_macro_expand(
     let mut int_nodes: Vec<Node> = Vec::with_capacity(labels.len());
     for label in &labels {
         let int_id = match storage.next_id("INT") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return expand_failure(
@@ -463,7 +452,7 @@ pub fn execute_macro_expand(
 
     for pair in waypoints.windows(2) {
         let link_id = match storage.next_id("LINK") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return expand_failure(
@@ -556,9 +545,7 @@ pub fn execute_macro_expand(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -660,6 +647,7 @@ pub fn execute_macro_promote(
             );
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -720,7 +708,7 @@ pub fn execute_macro_promote(
     }
 
     let link_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return promote_failure(
@@ -772,7 +760,7 @@ pub fn execute_macro_promote(
     let macro_assumptions = tree.macro_edges[macro_idx].assumptions.clone();
     for ma in &macro_assumptions {
         let asm_id = match storage.next_id("ASM") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return promote_failure(
@@ -808,9 +796,7 @@ pub fn execute_macro_promote(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,

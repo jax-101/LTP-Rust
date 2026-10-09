@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::errors::LtpError;
+use crate::storage::{CounterNotice, LockOutcome, RebuildReason};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphHealth {
@@ -86,6 +87,54 @@ impl OutputWarning {
         self.context.insert(key.into(), value.into());
         self
     }
+}
+
+/// Warning for a counter repair done while minting (PLAN_v060 D-5).
+pub fn counter_notice_warning(notice: &CounterNotice) -> OutputWarning {
+    match notice {
+        CounterNotice::Rebuilt { reason } => {
+            let (reason, why) = match reason {
+                RebuildReason::Missing => ("missing", "was missing"),
+                RebuildReason::Corrupt => ("corrupt", "could not be parsed"),
+            };
+            OutputWarning::new(
+                "COUNTERS_REBUILT",
+                format!(".ltp/counters.json {why}; counters were rebuilt from the workspace"),
+            )
+            .with_context("reason", reason)
+        }
+        CounterNotice::Reconciled { prefix, from, to } => OutputWarning::new(
+            "COUNTERS_REBUILT",
+            format!(
+                "Counter {prefix} was {from} but the workspace already holds {prefix}-{to:03}; raised to {to}"
+            ),
+        )
+        .with_context("reason", "stale")
+        .with_context("prefix", prefix.as_str())
+        .with_context("from", *from)
+        .with_context("to", *to),
+    }
+}
+
+/// Put the lock-session warnings ahead of `warnings`, in contract order:
+/// `STALE_LOCK_REMOVED` first, then `COUNTERS_REBUILT` (PLAN_v060 D-5).
+pub fn prepend_session_warnings(
+    warnings: &mut Vec<OutputWarning>,
+    lock: &LockOutcome,
+    notice: Option<&CounterNotice>,
+) {
+    let stale = match lock {
+        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
+            "STALE_LOCK_REMOVED",
+            format!("Stale lock from PID {pid} was removed"),
+        )),
+        LockOutcome::Acquired => None,
+    };
+    let leading: Vec<OutputWarning> = stale
+        .into_iter()
+        .chain(notice.map(counter_notice_warning))
+        .collect();
+    warnings.splice(0..0, leading);
 }
 
 #[derive(Debug, Serialize)]

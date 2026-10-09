@@ -10,8 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use crate::link::{Assumption, AssumptionStatus};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
+use crate::storage::Storage;
 use crate::tree::{MacroAssumption, MacroEdge, Tree};
 
 /// Recolecta las assumptions de los `interior_links` de una long arrow, agrupadas por link.
@@ -248,17 +250,6 @@ pub struct MacroAssumeListData {
     pub count: usize,
 }
 
-/// Advertencia por lock obsoleto retirado (paridad con el resto de comandos mutadores).
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {pid} was removed"),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
-
 /// Parsea un filtro de estado textual al enum. `None` = filtro ausente o no reconocido.
 fn parse_status(s: &str) -> Option<AssumptionStatus> {
     match s.to_lowercase().as_str() {
@@ -412,6 +403,7 @@ pub fn execute_macro_assume_add(
             );
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -468,7 +460,7 @@ pub fn execute_macro_assume_add(
     };
 
     let masm_id = match storage.next_id("MASM") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return add_failure(
@@ -500,9 +492,7 @@ pub fn execute_macro_assume_add(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     if resolved_refs.is_empty() && !interior_empty {
         warnings.push(
             OutputWarning::new(
@@ -620,9 +610,7 @@ pub fn execute_macro_assume_rm(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,

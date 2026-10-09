@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 use crate::errors::{LtpError, Result};
 use crate::knowledge::KnowledgeItem;
 use crate::node::Node;
-use crate::storage::{LockOutcome, Storage};
+use crate::storage::{CounterNotice, LockOutcome, MintedId, Storage};
 use crate::tree::Tree;
 use crate::workspace::config::WorkspaceConfig;
 use crate::workspace::counters::{scope_of, Counters, ScanScope};
@@ -21,17 +21,29 @@ pub struct FsStorage {
     root: PathBuf,
     /// Whether this instance currently holds the workspace lock.
     locked: Cell<bool>,
-    /// Scopes already reconciled with the disk under the current lock
-    /// (PLAN_v052 D-7). Pure memoization: with the lock held nothing that
-    /// respects it adds IDs, and after the first reconciliation the stored
-    /// counters are above the disk. Cleared on both `acquire_lock` and
-    /// `release_lock`, and only consulted while locked, so a command that
+    /// State of the current lock session: scopes already reconciled with the
+    /// disk (PLAN_v052 D-7) and whether a counter notice was already returned
+    /// (PLAN_v060 D-5). The scopes are pure memoization: with the lock held
+    /// nothing that respects it adds IDs, and after the first reconciliation
+    /// the stored counters are above the disk. Cleared on both `acquire_lock`
+    /// and `release_lock`, and only consulted while locked, so a command that
     /// forgets to release can never leak it into the next one (MCP reuses a
     /// single `FsStorage` for the whole server lifetime).
-    reconciled: Cell<ReconciledScopes>,
+    session: Cell<LockSession>,
     /// Disk scans performed by `next_id`, per scope (tests only).
     #[cfg(test)]
     scans: Cell<ScanCounts>,
+}
+
+/// Per-lock state of `next_id` (PLAN_v060 D-5).
+#[derive(Debug, Clone, Copy, Default)]
+struct LockSession {
+    /// Scopes already reconciled with the disk.
+    scopes: ReconciledScopes,
+    /// A counter notice was already returned: at most one per session, so a
+    /// command minting in two scopes never reports the second scope's
+    /// counters (saved at 0 by the first rebuild) as a false `stale`.
+    notice_emitted: bool,
 }
 
 /// Scopes already reconciled with the disk while the current lock is held.
@@ -80,15 +92,15 @@ impl FsStorage {
         Self {
             root,
             locked: Cell::new(false),
-            reconciled: Cell::new(ReconciledScopes::default()),
+            session: Cell::new(LockSession::default()),
             #[cfg(test)]
             scans: Cell::new(ScanCounts::default()),
         }
     }
 
-    /// Forget every reconciled scope and record whether the lock is held.
-    fn reset_reconciled(&self, locked: bool) {
-        self.reconciled.set(ReconciledScopes::default());
+    /// Start a fresh lock session and record whether the lock is held.
+    fn reset_session(&self, locked: bool) {
+        self.session.set(LockSession::default());
         self.locked.set(locked);
     }
 
@@ -247,7 +259,7 @@ impl Storage for FsStorage {
         let mut stale_pid = None;
 
         debug!(command, "acquiring lock");
-        self.reset_reconciled(false);
+        self.reset_session(false);
 
         // A fresh git clone has no `.ltp/` (it is gitignored): create it so the
         // clone is usable (PLAN_v052 D-4).
@@ -281,7 +293,7 @@ impl Storage for FsStorage {
         let json = serde_json::to_string_pretty(&lock)?;
         fs::write(&lock_path, json)?;
 
-        self.reset_reconciled(true);
+        self.reset_session(true);
         match stale_pid {
             Some(pid) => Ok(LockOutcome::StaleLockRemoved { pid }),
             None => Ok(LockOutcome::Acquired),
@@ -289,7 +301,7 @@ impl Storage for FsStorage {
     }
 
     fn release_lock(&self) -> Result<()> {
-        self.reset_reconciled(false);
+        self.reset_session(false);
         let lock_path = self.lock_path();
         match fs::remove_file(&lock_path) {
             Err(e) if !is_absent(&lock_path, &e) => Err(e.into()),
@@ -297,30 +309,50 @@ impl Storage for FsStorage {
         }
     }
 
-    fn next_id(&self, entity_type: &str) -> Result<String> {
+    fn next_id(&self, entity_type: &str) -> Result<MintedId> {
         // PLAN_v052 D-1/D-3: the stored counters are only a monotonicity memory;
         // reconcile them with the disk, scanning only where the prefix lives.
         let counters_path = Counters::file_path(&self.root);
-        let mut counters = Counters::load_stored(&counters_path)?.into_counters();
+        let (mut counters, rebuilt) = Counters::load_stored(&counters_path)?.into_counters();
         let prefix = entity_type.to_uppercase();
         let scope = scope_of(&prefix);
         // D-7: one reconciliation per scope while the lock is held.
         let locked = self.locked.get();
-        let memoized = locked && self.reconciled.get().contains(scope);
+        let mut session = self.session.get();
+        let memoized = locked && session.scopes.contains(scope);
+        let mut raised = Vec::new();
         if !memoized {
             #[cfg(test)]
             self.count_scan(scope);
             let observed = Counters::observe_scope(&self.root, scope)?;
-            counters.reconcile(&observed, scope);
+            raised = counters.reconcile(&observed, scope);
         }
         let id = counters.next(&prefix);
         counters.save(&counters_path)?;
+        // PLAN_v060 D-5: the first reason wins. Missing/Corrupt come from the
+        // file itself; `stale` names the minted prefix if it was raised.
+        let notice = match rebuilt {
+            Some(reason) => Some(CounterNotice::Rebuilt { reason }),
+            None => raised
+                .into_iter()
+                .min_by_key(|(p, _, _)| *p != prefix)
+                .map(|(prefix, from, to)| CounterNotice::Reconciled { prefix, from, to }),
+        };
+        let notice = if locked && session.notice_emitted {
+            None
+        } else {
+            notice
+        };
         // Mark only once the reconciled counters are on disk; otherwise the
         // next mint would start from a stale file without rescanning.
-        if locked && !memoized {
-            self.reconciled.set(self.reconciled.get().with(scope));
+        if locked {
+            if !memoized {
+                session.scopes = session.scopes.with(scope);
+            }
+            session.notice_emitted |= notice.is_some();
+            self.session.set(session);
         }
-        Ok(id)
+        Ok(MintedId { id, notice })
     }
 
     fn workspace_exists(&self) -> Result<bool> {
@@ -448,6 +480,7 @@ fn is_pid_alive(_pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::RebuildReason;
 
     fn workspace() -> (tempfile::TempDir, FsStorage) {
         let dir = tempfile::tempdir().unwrap();
@@ -470,6 +503,84 @@ mod tests {
         .unwrap();
     }
 
+    fn rm_counters(storage: &FsStorage) {
+        fs::remove_file(Counters::file_path(&storage.root)).unwrap();
+    }
+
+    // D-5 — a missing file warns once per lock session, even across scopes:
+    // the second scope finds the file saved at 0 and must not report `stale`.
+    #[test]
+    fn d5_one_notice_per_session_across_scopes() {
+        let (_dir, storage) = workspace();
+        write_tree(&storage, "tree-a", &["LINK-003"]);
+        rm_counters(&storage);
+        storage.acquire_lock("test").unwrap();
+        let first = storage.next_id("INT").unwrap();
+        assert_eq!(
+            first.notice,
+            Some(CounterNotice::Rebuilt {
+                reason: RebuildReason::Missing
+            })
+        );
+        let second = storage.next_id("LINK").unwrap();
+        assert_eq!(second.id, "LINK-004");
+        assert_eq!(second.notice, None, "no false stale from the second scope");
+        storage.release_lock().unwrap();
+    }
+
+    // D-5 — the session resets on acquire: a new repair warns again.
+    #[test]
+    fn d5_notice_again_in_the_next_session() {
+        let (_dir, storage) = workspace();
+        rm_counters(&storage);
+        storage.acquire_lock("first").unwrap();
+        assert!(storage.next_id("UDE").unwrap().notice.is_some());
+        storage.release_lock().unwrap();
+        storage.acquire_lock("second").unwrap();
+        assert_eq!(storage.next_id("UDE").unwrap().notice, None);
+        storage.release_lock().unwrap();
+        rm_counters(&storage);
+        storage.acquire_lock("third").unwrap();
+        assert!(storage.next_id("UDE").unwrap().notice.is_some());
+        storage.release_lock().unwrap();
+    }
+
+    // D-5 — a legitimate `stale` in the second scope still warns, and names
+    // the minted prefix when several were raised.
+    #[test]
+    fn d5_stale_in_second_scope_names_the_minted_prefix() {
+        let (_dir, storage) = workspace();
+        write_tree(&storage, "tree-a", &["ASM-002", "LINK-007"]);
+        storage.acquire_lock("test").unwrap();
+        assert_eq!(storage.next_id("UDE").unwrap().notice, None);
+        let link = storage.next_id("LINK").unwrap();
+        assert_eq!(link.id, "LINK-008");
+        assert_eq!(
+            link.notice,
+            Some(CounterNotice::Reconciled {
+                prefix: "LINK".into(),
+                from: 0,
+                to: 7
+            })
+        );
+        storage.release_lock().unwrap();
+    }
+
+    // D-5 — a corrupt file is reported as such.
+    #[test]
+    fn d5_corrupt_counters_notice() {
+        let (_dir, storage) = workspace();
+        fs::write(Counters::file_path(&storage.root), "{").unwrap();
+        storage.acquire_lock("test").unwrap();
+        assert_eq!(
+            storage.next_id("UDE").unwrap().notice,
+            Some(CounterNotice::Rebuilt {
+                reason: RebuildReason::Corrupt
+            })
+        );
+        storage.release_lock().unwrap();
+    }
+
     // R13 — with the lock held, many mints across tree prefixes scan once, and
     // that single scan raised every tree prefix (not only the first one asked).
     #[test]
@@ -478,15 +589,15 @@ mod tests {
         write_tree(&storage, "tree-a", &["LINK-003", "ASM-009", "FB-004"]);
         storage.acquire_lock("test").unwrap();
 
-        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-004");
-        assert_eq!(storage.next_id("ASM").unwrap(), "ASM-010");
-        assert_eq!(storage.next_id("FB").unwrap(), "FB-005");
+        assert_eq!(storage.next_id("LINK").unwrap().id, "LINK-004");
+        assert_eq!(storage.next_id("ASM").unwrap().id, "ASM-010");
+        assert_eq!(storage.next_id("FB").unwrap().id, "FB-005");
         for i in 0..97 {
             let prefix = ["LINK", "ASM", "FB"][i % 3];
-            storage.next_id(prefix).unwrap();
+            let _ = storage.next_id(prefix).unwrap();
         }
-        assert_eq!(storage.next_id("UDE").unwrap(), "UDE-001");
-        assert_eq!(storage.next_id("UDE").unwrap(), "UDE-002");
+        assert_eq!(storage.next_id("UDE").unwrap().id, "UDE-001");
+        assert_eq!(storage.next_id("UDE").unwrap().id, "UDE-002");
 
         let scans = storage.scans.get();
         assert_eq!(scans.trees, 1, "{scans:?}");
@@ -501,14 +612,14 @@ mod tests {
     fn r14_acquire_forgets_a_memo_left_by_a_missing_release() {
         let (_dir, storage) = workspace();
         storage.acquire_lock("first").unwrap();
-        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-001");
+        assert_eq!(storage.next_id("LINK").unwrap().id, "LINK-001");
         // No release_lock. Meanwhile a pull brings a tree, and the lock file
         // goes away (e.g. removed by hand).
         write_tree(&storage, "tree-pulled", &["LINK-050"]);
         fs::remove_file(storage.lock_path()).unwrap();
 
         storage.acquire_lock("second").unwrap();
-        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-051");
+        assert_eq!(storage.next_id("LINK").unwrap().id, "LINK-051");
         assert_eq!(storage.scans.get().trees, 2);
         storage.release_lock().unwrap();
     }
@@ -517,16 +628,16 @@ mod tests {
     #[test]
     fn r15_without_lock_every_mint_scans() {
         let (_dir, storage) = workspace();
-        storage.next_id("LINK").unwrap();
+        let _ = storage.next_id("LINK").unwrap();
         write_tree(&storage, "tree-pulled", &["LINK-020"]);
-        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-021");
-        storage.next_id("LINK").unwrap();
+        assert_eq!(storage.next_id("LINK").unwrap().id, "LINK-021");
+        let _ = storage.next_id("LINK").unwrap();
         assert_eq!(storage.scans.get().trees, 3);
 
         storage.acquire_lock("cmd").unwrap();
-        storage.next_id("LINK").unwrap();
+        let _ = storage.next_id("LINK").unwrap();
         storage.release_lock().unwrap();
-        storage.next_id("LINK").unwrap();
+        let _ = storage.next_id("LINK").unwrap();
         assert_eq!(storage.scans.get().trees, 5, "release ends the memo");
     }
 
@@ -544,7 +655,7 @@ mod tests {
 
         fs::remove_dir(&broken).unwrap();
         write_tree(&storage, "tree-x", &["LINK-007"]);
-        assert_eq!(storage.next_id("LINK").unwrap(), "LINK-008");
+        assert_eq!(storage.next_id("LINK").unwrap().id, "LINK-008");
         assert_eq!(storage.scans.get().trees, 2);
         storage.release_lock().unwrap();
     }

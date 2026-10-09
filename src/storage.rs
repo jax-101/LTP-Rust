@@ -52,7 +52,11 @@ pub trait Storage {
     fn release_lock(&self) -> Result<()>;
 
     /// Generate the next sequential ID for the given entity type.
-    fn next_id(&self, entity_type: &str) -> Result<String>;
+    ///
+    /// The returned [`MintedId`] carries a counter notice when the stored
+    /// counters had to be rebuilt or reconciled; at most one per lock session
+    /// (PLAN_v060 D-5).
+    fn next_id(&self, entity_type: &str) -> Result<MintedId>;
 
     /// Check whether the workspace has been initialized.
     ///
@@ -93,4 +97,52 @@ pub enum LockOutcome {
     Acquired,
     /// A stale lock was removed before acquiring; contains the dead PID.
     StaleLockRemoved { pid: u32 },
+}
+
+/// A freshly minted ID, plus the counter repair it required (PLAN_v060 D-5).
+#[derive(Debug)]
+#[must_use = "the counter notice must reach the command output"]
+pub struct MintedId {
+    /// The new sequential ID (e.g. `UDE-003`).
+    pub id: String,
+    /// Set only on the first repair of the current lock session.
+    pub notice: Option<CounterNotice>,
+}
+
+impl MintedId {
+    /// Return the ID, keeping the first notice of the command in `notice`.
+    pub fn into_id(self, notice: &mut Option<CounterNotice>) -> String {
+        if notice.is_none() {
+            *notice = self.notice;
+        }
+        self.id
+    }
+}
+
+/// Why `.ltp/counters.json` could not be used as stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebuildReason {
+    /// The file did not exist (e.g. a fresh git clone).
+    Missing,
+    /// The file did not parse as a counter map.
+    Corrupt,
+}
+
+/// A repair of the stored counters done while minting (PLAN_v060 D-5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CounterNotice {
+    /// The counters were rebuilt from the disk.
+    Rebuilt {
+        /// What was wrong with the stored file.
+        reason: RebuildReason,
+    },
+    /// A valid stored counter was below the highest ID on disk and was raised.
+    Reconciled {
+        /// Prefix of the raised counter.
+        prefix: String,
+        /// Stored value.
+        from: u64,
+        /// Highest number observed on disk.
+        to: u64,
+    },
 }

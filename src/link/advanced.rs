@@ -2,8 +2,11 @@ use serde::Serialize;
 
 use crate::errors::LtpError;
 use crate::link::types::{Assumption, AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
-use crate::output::{load_error_code, CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    load_error_code, prepend_session_warnings, CommandOutput, GraphHealth, OutputError,
+    OutputWarning,
+};
+use crate::storage::Storage;
 use crate::validate::check_dag;
 
 /// Parses a CLI `--operator` string into an [`Operator`], case-insensitively.
@@ -16,16 +19,6 @@ fn parse_operator(s: &str) -> Option<Operator> {
         "MAG" => Some(Operator::Mag),
         "XOR" => Some(Operator::Xor),
         _ => None,
-    }
-}
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
     }
 }
 
@@ -297,9 +290,7 @@ pub fn execute_link_reverse(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -522,9 +513,7 @@ pub fn execute_link_move(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -635,6 +624,7 @@ pub fn execute_link_insert_between(
         Ok(o) => o,
         Err(e) => return insert_between_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -716,7 +706,7 @@ pub fn execute_link_insert_between(
             let b = edge.to;
 
             let new1_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return insert_between_error(
@@ -728,7 +718,7 @@ pub fn execute_link_insert_between(
                 }
             };
             let new2_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return insert_between_error(
@@ -780,7 +770,7 @@ pub fn execute_link_insert_between(
             };
 
             let new_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return insert_between_error(
@@ -806,7 +796,7 @@ pub fn execute_link_insert_between(
             (edges, String::new(), vec![new_id])
         } else if insert_before_effect {
             let new1_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return insert_between_error(
@@ -818,7 +808,7 @@ pub fn execute_link_insert_between(
                 }
             };
             let new2_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return insert_between_error(
@@ -898,9 +888,7 @@ pub fn execute_link_insert_between(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     if !inherited_assumptions.is_empty() {
         let asm_ids: Vec<&str> = inherited_assumptions
             .iter()
@@ -1019,6 +1007,7 @@ pub fn execute_link_group(
         Ok(o) => o,
         Err(e) => return group_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -1076,7 +1065,7 @@ pub fn execute_link_group(
     }
 
     let new_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return group_error(&ws_name, tree_id, "ID_GENERATION_ERROR", e.to_string());
@@ -1133,9 +1122,7 @@ pub fn execute_link_group(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -1209,6 +1196,7 @@ pub fn execute_link_dissolve(
         Ok(o) => o,
         Err(e) => return dissolve_error(&ws_name, tree_id, "LOCK_ERROR", e.to_string()),
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -1259,7 +1247,7 @@ pub fn execute_link_dissolve(
     let mut created_edges: Vec<Edge> = Vec::with_capacity(edge.from.len());
     for (index, cause) in edge.from.iter().enumerate() {
         let new_id = match storage.next_id("LINK") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return dissolve_error(&ws_name, tree_id, "ID_GENERATION_ERROR", e.to_string());
@@ -1271,7 +1259,7 @@ pub fn execute_link_dissolve(
         if index > 0 {
             for assumption in &mut assumptions {
                 assumption.id = match storage.next_id("ASM") {
-                    Ok(id) => id,
+                    Ok(m) => m.into_id(&mut notice),
                     Err(e) => {
                         let _ = storage.release_lock();
                         return dissolve_error(
@@ -1326,9 +1314,7 @@ pub fn execute_link_dissolve(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -1418,6 +1404,7 @@ pub fn execute_link_split(
         Ok(o) => o,
         Err(e) => return split_error(&ws_name, tree_id, link_id, "LOCK_ERROR", e.to_string()),
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -1482,7 +1469,7 @@ pub fn execute_link_split(
     }
 
     let new_id = match storage.next_id("LINK") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return split_error(
@@ -1557,9 +1544,7 @@ pub fn execute_link_split(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -1749,9 +1734,7 @@ pub fn execute_link_reoperator(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -1985,9 +1968,7 @@ pub fn execute_link_add_cause(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -2163,9 +2144,7 @@ pub fn execute_link_rm_cause(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,

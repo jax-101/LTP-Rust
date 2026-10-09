@@ -5,8 +5,10 @@ use crate::knowledge::types::{
     Confidence, KnowledgeItem, KnowledgeLink, KnowledgeRelation, KnowledgeSource, KnowledgeStatus,
     KnowledgeType,
 };
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
+use crate::storage::Storage;
 
 /// Data returned by `knowledge add`.
 #[derive(Debug, Serialize)]
@@ -105,16 +107,6 @@ pub struct ResolvedLinkInfo {
     pub target_type: String,
 }
 
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
-
 fn empty_add_data() -> KnowledgeAddData {
     KnowledgeAddData {
         created_knowledge_id: String::new(),
@@ -205,9 +197,10 @@ pub fn execute_knowledge_add(
             };
         }
     };
+    let mut notice = None;
 
     let id = match storage.next_id("KN") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -261,9 +254,7 @@ pub fn execute_knowledge_add(
     let _ = storage.release_lock();
 
     let mut warnings = Vec::new();
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -455,9 +446,7 @@ pub fn execute_knowledge_edit(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -533,9 +522,7 @@ pub fn execute_knowledge_rm(
     let success = !removed.is_empty() || errors.is_empty();
 
     let mut warnings = Vec::new();
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success,
@@ -885,9 +872,7 @@ pub fn execute_knowledge_link(
 
     if item.links.contains(&new_link) {
         let _ = storage.release_lock();
-        if let Some(w) = stale_lock_warning(&lock_outcome) {
-            warnings.push(w);
-        }
+        prepend_session_warnings(&mut warnings, &lock_outcome, None);
         warnings.push(OutputWarning::new(
             "DUPLICATE_LINK",
             format!(
@@ -934,9 +919,7 @@ pub fn execute_knowledge_link(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -1055,9 +1038,7 @@ pub fn execute_knowledge_unlink(
     let _ = storage.release_lock();
 
     let mut warnings = Vec::new();
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,

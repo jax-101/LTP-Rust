@@ -8,8 +8,10 @@ use crate::meta::integrity::{prune_removed, redirect_split};
 use crate::meta::node_in_tree;
 use crate::node::clr_lint::lint_clr2;
 use crate::node::types::{CrossRef, EpistemicStatus, Node, NodeMetadata, NodeStatus, NodeType};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
+use crate::storage::Storage;
 
 /// Data returned by `node add`.
 #[derive(Debug, Serialize)]
@@ -120,16 +122,6 @@ fn node_to_summary(node: &Node) -> NodeSummary {
         status: node.metadata.status,
         epistemic: node.epistemic,
         tags: node.tags.clone(),
-    }
-}
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
     }
 }
 
@@ -325,10 +317,11 @@ pub fn execute_node_add(
             };
         }
     };
+    let mut notice = None;
 
     let type_prefix = type_str.to_uppercase();
     let id = match storage.next_id(&type_prefix) {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -394,9 +387,7 @@ pub fn execute_node_add(
     let _ = storage.release_lock();
 
     let mut warnings = lint_clr2(label);
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -773,9 +764,7 @@ pub fn execute_node_edit(
         vec![]
     };
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
     warnings.extend(ref_warnings);
 
     // Epistemic cascade warnings when status changes
@@ -1235,9 +1224,7 @@ pub fn execute_node_rm(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
     warnings.extend(nbr_branch_warnings);
     warnings.extend(macro_warnings);
     warnings.extend(refs_stripped_warnings);
@@ -1579,6 +1566,7 @@ pub fn execute_node_split(
             };
         }
     };
+    let mut notice = None;
 
     // D-4: load every tree before writing anything or minting IDs.
     let tree_ids = match storage.list_tree_ids() {
@@ -1622,7 +1610,7 @@ pub fn execute_node_split(
 
     let type_prefix = original.node_type.prefix();
     let id_first = match storage.next_id(type_prefix) {
-        Ok(new_id) => new_id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -1640,7 +1628,7 @@ pub fn execute_node_split(
         }
     };
     let id_second = match storage.next_id(type_prefix) {
-        Ok(new_id) => new_id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -1784,9 +1772,7 @@ pub fn execute_node_split(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,

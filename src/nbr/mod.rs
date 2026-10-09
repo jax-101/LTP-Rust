@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{prepend_session_warnings, CommandOutput, GraphHealth, OutputError};
+use crate::storage::Storage;
 use crate::tree::types::NbrBranch;
 
 // --- Output data types ---
@@ -63,16 +63,6 @@ pub struct NbrEdgeInfo {
 
 // --- Helpers ---
 
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
-    }
-}
-
 // --- Command implementations ---
 
 /// Execute `nbr add`: create an empty NBR branch on a tree.
@@ -107,11 +97,9 @@ pub fn execute_nbr_add(
             };
         }
     };
+    let mut notice = None;
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
 
     // Load tree
     let mut tree = match storage.load_tree(tree_id) {
@@ -226,7 +214,7 @@ pub fn execute_nbr_add(
 
     // Generate NBR ID
     let nbr_id = match storage.next_id("NBR") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -291,6 +279,7 @@ pub fn execute_nbr_add(
             trim_injection: trim.map(|s| s.to_string()),
         },
     );
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
     output.warnings = warnings;
     output
 }
@@ -327,9 +316,7 @@ pub fn execute_nbr_rm(
     };
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,

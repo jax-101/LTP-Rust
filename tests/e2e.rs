@@ -905,6 +905,16 @@ fn e2e_10_counters_recovery() {
 
     // Counters file should be recreated
     assert!(counters_path.exists());
+
+    // ...and the rebuild is reported (PLAN_v060 D-5)
+    let rebuilt: Vec<_> = json["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] == "COUNTERS_REBUILT")
+        .collect();
+    assert_eq!(rebuilt.len(), 1, "{json}");
+    assert_eq!(rebuilt[0]["reason"], "missing");
 }
 
 // ─── E2E.11: Invalidate + trace lifecycle ─────────────────────────────────

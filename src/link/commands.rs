@@ -2,8 +2,10 @@ use serde::Serialize;
 
 use crate::errors::LtpError;
 use crate::link::types::{Edge, EdgeStatus, FeedbackEdge, FeedbackLoopType, Logic, Operator};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
-use crate::storage::{LockOutcome, Storage};
+use crate::output::{
+    prepend_session_warnings, CommandOutput, GraphHealth, OutputError, OutputWarning,
+};
+use crate::storage::Storage;
 use crate::tree::types::NbrBranch;
 use crate::validate::check_dag;
 
@@ -25,16 +27,6 @@ fn parse_feedback_type(s: &str) -> Option<FeedbackLoopType> {
         "positive" => Some(FeedbackLoopType::Positive),
         "negative" => Some(FeedbackLoopType::Negative),
         _ => None,
-    }
-}
-
-fn stale_lock_warning(outcome: &LockOutcome) -> Option<OutputWarning> {
-    match outcome {
-        LockOutcome::StaleLockRemoved { pid } => Some(OutputWarning::new(
-            "STALE_LOCK_REMOVED",
-            format!("Stale lock from PID {} was removed", pid),
-        )),
-        LockOutcome::Acquired => None,
     }
 }
 
@@ -145,6 +137,7 @@ pub fn execute_link_connect(
             };
         }
     };
+    let mut notice = None;
 
     // Load tree
     let mut tree = match storage.load_tree(tree_id) {
@@ -294,7 +287,7 @@ pub fn execute_link_connect(
         // Multiple destinations: create one SINGLE edge per destination
         for dest in to {
             let link_id = match storage.next_id("LINK") {
-                Ok(id) => id,
+                Ok(m) => m.into_id(&mut notice),
                 Err(e) => {
                     let _ = storage.release_lock();
                     return CommandOutput {
@@ -328,7 +321,7 @@ pub fn execute_link_connect(
     } else {
         // Single destination
         let link_id = match storage.next_id("LINK") {
-            Ok(id) => id,
+            Ok(m) => m.into_id(&mut notice),
             Err(e) => {
                 let _ = storage.release_lock();
                 return CommandOutput {
@@ -468,9 +461,7 @@ pub fn execute_link_connect(
 
     let _ = storage.release_lock();
 
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.insert(0, w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -574,9 +565,7 @@ pub fn execute_link_disconnect(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
@@ -656,6 +645,7 @@ pub fn execute_link_feedback(
             };
         }
     };
+    let mut notice = None;
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
@@ -687,7 +677,7 @@ pub fn execute_link_feedback(
     };
 
     let fb_id = match storage.next_id("FB") {
-        Ok(id) => id,
+        Ok(m) => m.into_id(&mut notice),
         Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
@@ -744,9 +734,7 @@ pub fn execute_link_feedback(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, notice.as_ref());
 
     CommandOutput {
         success: true,
@@ -921,9 +909,7 @@ pub fn execute_link_feedback_rm(
     let _ = storage.release_lock();
 
     let mut warnings = vec![];
-    if let Some(w) = stale_lock_warning(&lock_outcome) {
-        warnings.push(w);
-    }
+    prepend_session_warnings(&mut warnings, &lock_outcome, None);
 
     CommandOutput {
         success: true,
