@@ -1,5 +1,6 @@
 pub mod clr;
 pub mod dag;
+pub mod duplicates;
 pub mod ec;
 pub mod knowledge;
 pub mod macro_edge;
@@ -17,6 +18,7 @@ use crate::meta;
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
 use crate::tree::types::{MacroEdgeStatus, TreeLogic, TreeType};
+use crate::tree::Tree;
 
 /// Per-tree validation results.
 #[derive(Debug, Serialize)]
@@ -61,6 +63,8 @@ pub fn execute_validate<S: Storage>(
     info!(tree_count = tree_ids.len(), "starting validation");
 
     let mut details = Vec::new();
+    // Readable trees, kept for the workspace-wide checks (D-8, meta graph).
+    let mut loaded = Vec::with_capacity(tree_ids.len());
     let mut all_valid_dag = true;
     let mut total_orphans = 0usize;
 
@@ -205,33 +209,29 @@ pub fn execute_validate<S: Storage>(
         tree_warnings.extend(macro_edge::check_macro_edges(&tree));
 
         details.push(TreeValidation {
-            tree_id: tree.id,
+            tree_id: tree.id.clone(),
             errors: tree_errors,
             warnings: tree_warnings,
         });
+        loaded.push(tree);
     }
 
-    // Knowledge pool validation
-    let knowledge_node_filter: Option<HashSet<String>> = if tree_filter.is_some() {
-        // When validating a specific tree, only check nodes in that tree
-        let filter: HashSet<String> = details
-            .iter()
-            .flat_map(|d| {
-                storage
-                    .load_tree(&d.tree_id)
-                    .map(|t| {
-                        t.nodes
-                            .iter()
-                            .map(|n| n.node_ref.clone())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            })
-            .collect();
-        Some(filter)
-    } else {
-        None
+    // With a filter only that tree was read; the cross-workspace checks need
+    // the rest. An unreadable one is reported, never taken as empty (D-8).
+    let mut workspace_warnings = Vec::new();
+    let workspace_trees = match tree_filter {
+        None => loaded,
+        Some(filter) => load_other_trees(storage, filter, loaded, &mut workspace_warnings),
     };
+
+    // Knowledge pool validation: with a filter, only nodes in that tree
+    let knowledge_node_filter: Option<HashSet<String>> = tree_filter.map(|filter| {
+        workspace_trees
+            .iter()
+            .filter(|t| t.id == filter)
+            .flat_map(|t| t.nodes.iter().map(|n| n.node_ref.clone()))
+            .collect()
+    });
 
     let knowledge_warnings =
         knowledge::validate_knowledge(storage, &node_ids, knowledge_node_filter.as_ref());
@@ -246,12 +246,22 @@ pub fn execute_validate<S: Storage>(
     }
 
     // Meta-graph validation (RFC-002 S1): ref integrity and norm coverage
-    let meta_warnings = validate_meta_graph(storage, &node_ids, tree_filter);
+    let meta_warnings = validate_meta_graph(storage, &node_ids, &workspace_trees, tree_filter);
     if !meta_warnings.is_empty() {
         details.push(TreeValidation {
             tree_id: "_meta_graph".to_string(),
             errors: vec![],
             warnings: meta_warnings,
+        });
+    }
+
+    // Inherited duplicate IDs (PLAN_v060 D-8)
+    workspace_warnings.extend(duplicates::check_duplicates(&workspace_trees, tree_filter));
+    if !workspace_warnings.is_empty() {
+        details.push(TreeValidation {
+            tree_id: "_workspace".to_string(),
+            errors: vec![],
+            warnings: workspace_warnings,
         });
     }
 
@@ -306,25 +316,63 @@ fn io_error_output(ws_name: String, error: &LtpError) -> CommandOutput<ValidateD
     }
 }
 
+/// Every readable tree of the workspace, in ID order, reusing the already
+/// loaded `filter` tree. An unlistable or unreadable tree becomes a warning
+/// (`IO_ERROR` / `TREE_LOAD_ERROR {tree_id}`): it only limits warning-level
+/// checks, so it must not fail the validation of a tree that was not asked
+/// for, but it is never silently taken as empty.
+fn load_other_trees<S: Storage>(
+    storage: &S,
+    filter: &str,
+    loaded: Vec<Tree>,
+    warnings: &mut Vec<OutputWarning>,
+) -> Vec<Tree> {
+    let ids = match storage.list_tree_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            warnings.push(OutputWarning::new(
+                "IO_ERROR",
+                format!("Trees cannot be listed; cross-tree checks are incomplete: {e}"),
+            ));
+            return loaded;
+        }
+    };
+    let mut own = loaded.into_iter();
+    let mut trees = Vec::with_capacity(ids.len());
+    for id in ids {
+        if id == filter {
+            trees.extend(own.next());
+            continue;
+        }
+        match storage.load_tree(&id) {
+            Ok(tree) => trees.push(tree),
+            Err(LtpError::TreeNotFound(_)) => {}
+            Err(e) => warnings.push(
+                OutputWarning::new(
+                    "TREE_LOAD_ERROR",
+                    format!("Failed to load {id}; cross-tree checks are incomplete: {e}"),
+                )
+                .with_context("tree_id", id.as_str()),
+            ),
+        }
+    }
+    trees
+}
+
 /// Workspace-wide ref checks (ADR-015) for the synthetic `_meta_graph` entry.
 ///
-/// Loads every readable tree and node. Nodes listed on disk that fail to load
+/// Uses every readable tree. Nodes listed on disk that fail to load
 /// yield `NODE_UNREADABLE {node_id}` (they used to be skipped silently), followed
 /// by `meta::check_refs`. With `tree_filter`, only nodes present in that tree
 /// (trunk or NBR branch) are checked.
 fn validate_meta_graph<S: Storage>(
     storage: &S,
     node_ids: &[String],
+    trees: &[Tree],
     tree_filter: Option<&str>,
 ) -> Vec<OutputWarning> {
-    let trees: Vec<_> = storage
-        .list_tree_ids()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|id| storage.load_tree(id).ok())
-        .collect();
     let scope: Option<BTreeSet<String>> = tree_filter.map(|id| {
-        meta::tree_memberships(&trees)
+        meta::tree_memberships(trees)
             .into_iter()
             .filter(|(_, ends)| ends.iter().any(|e| e.tree == id))
             .map(|(node, _)| node)
@@ -344,6 +392,6 @@ fn validate_meta_graph<S: Storage>(
             Err(_) => {}
         }
     }
-    warnings.extend(meta::check_refs(&nodes, &trees, scope.as_ref()));
+    warnings.extend(meta::check_refs(&nodes, trees, scope.as_ref()));
     warnings
 }

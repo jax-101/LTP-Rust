@@ -482,3 +482,27 @@ fn d8_deterministic_order() {
         );
     }
 }
+
+/// `--tree T` with another tree unreadable: the cross-tree check is
+/// incomplete, so `_workspace` warns `TREE_LOAD_ERROR {tree_id}`; the
+/// validation of T does not fail for a tree that was not asked for.
+#[test]
+fn d9_tree_filter_with_another_tree_unreadable_warns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let a = fixture(dir);
+    let (clean, clean_code) = run_ltp(dir, &["validate", "--tree", &a]);
+    let b = copy_tree(dir, "a", "b");
+    let path = tree_file(dir, &b);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+
+    let (json, code) = run_ltp(dir, &["validate", "--tree", &a]);
+    assert_eq!(code, clean_code, "{json}");
+    assert_eq!(json["success"], clean["success"], "{json}");
+    let ws = workspace_warnings(&json);
+    assert_eq!(ws.len(), 1, "{json}");
+    assert_eq!(ws[0]["code"], "TREE_LOAD_ERROR");
+    assert_eq!(ws[0]["tree_id"], b.as_str());
+    assert!(duplicates(&json).is_empty(), "{json}");
+}
