@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::knowledge::pool::{load_pool, KnowledgePool};
+use crate::knowledge::pool::{load_pool, KnowledgePool, PoolScope};
 use crate::knowledge::{KnowledgeRelation, KnowledgeStatus};
 use crate::node::types::EpistemicStatus;
 use crate::output::OutputWarning;
@@ -9,6 +9,8 @@ use crate::storage::Storage;
 /// Validates knowledge pool integrity and epistemic grounding.
 ///
 /// Returns warnings for:
+/// - KNOWLEDGE_POOL_UNREADABLE: the pool cannot be listed (alone: the
+///   epistemic analysis is skipped, it could only yield false UNGROUNDED)
 /// - KNOWLEDGE_LOAD_ERROR: knowledge item that cannot be read (first, in ID order)
 /// - DANGLING_KNOWLEDGE_REF: KN link target doesn't exist
 /// - EPISTEMIC_UNGROUNDED: fact node with 0 active supports
@@ -21,7 +23,11 @@ pub fn validate_knowledge(
     let KnowledgePool {
         items,
         mut warnings,
+        scope,
     } = load_pool(storage);
+    if scope == PoolScope::Unlisted {
+        return warnings;
+    }
 
     // DANGLING_KNOWLEDGE_REF: check each link target resolves
     for item in &items {

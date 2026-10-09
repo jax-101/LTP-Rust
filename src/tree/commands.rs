@@ -1269,6 +1269,7 @@ pub fn execute_tree_walk(
     let crate::knowledge::pool::KnowledgePool {
         items: kn_items,
         warnings: kn_warnings,
+        ..
     } = if show_knowledge {
         crate::knowledge::pool::load_pool(storage)
     } else {
