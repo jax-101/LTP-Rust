@@ -6,9 +6,24 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-09
+
+"Un ID nuevo nunca pisa uno existente" (plan `PLAN_v052.md`, adendas a ADR-009 y ADR-005). Es PATCH: sin campos, códigos ni flags nuevos.
+
+### Fixed
+
+- **Un `git pull` seguido de `node add` sobrescribía el nodo recibido** (C1): `.ltp/` no se versiona, así que el contador local podía estar por debajo de lo que había en disco. Ahora cada ID nuevo es el máximo entre `counters.json` y lo observado en disco, más uno. Lo mismo para cualquier contador desactualizado (por ejemplo `LINK` con un árbol traído por pull).
+- **Reconstruir contadores se saltaba lo ilegible** y volvía a emitir IDs existentes, con `success: true` y sin avisos: un árbol con `chmod 000` duplicaba `LINK-001` (C3), y `nodes/` en `-wx` hacía que `node add` sobrescribiera `UDE-001` (C4). Ahora lo ilegible dentro del ámbito del prefijo da `ID_GENERATION_ERROR` con la ruta en `detail`, haya o no `counters.json`. Fuera del ámbito no se lee nada: un árbol ilegible no bloquea `node add` ni `knowledge add`.
+- **Un árbol con marcas de conflicto de merge ocultaba sus IDs** (C2): ahora se escanea como texto y el contador no se queda corto.
+- **Un clon recién hecho no se podía usar** (C6): toda mutación daba `LOCK_ERROR` porque faltaba `.ltp/`. `acquire_lock` lo crea.
+- **`counters.json` sin permiso de lectura** (C5) daba `ID_GENERATION_ERROR` por accidente; ahora es la regla, con la ruta en `detail`.
+- **`tree clone` copiaba los IDs de `ASM` y `FB`**, y **`link dissolve` repartía los mismos `ASM` entre las aristas nuevas** (D-6). `assume rm` borraba una sola copia y un knowledge link pasaba en silencio a la copia al borrar el original. Ahora la copia recibe IDs nuevos (en `dissolve`, la primera arista conserva los originales).
+
 ### Changed
 
+- **Rendimiento**: cada comando escanea cada ámbito una sola vez mientras tiene el lock. En un workspace de 4 MB, `node add` tarda unos 51 ms (53 ms en v0.5.1) y `tree clone` de 5.000 aristas y 5.000 supuestos, 0,75 s.
 - **Interno**: `link connect --nbr` busca la rama NBR una sola vez, antes de reservar IDs, y la guarda hasta insertar las aristas. Desaparece una segunda búsqueda que, de alcanzarse, habría quemado un contador `LINK`. Sin cambios en el contrato: mismos códigos, mismo orden de errores, mismo output.
+- Tests: suite `v052_counters` (13 E2E, incluidos dos clones git reales) y 7 unit de contadores y memoización.
 
 ## [0.5.1] - 2026-10-08
 

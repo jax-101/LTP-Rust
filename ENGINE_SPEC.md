@@ -553,6 +553,7 @@ mi-proyecto-ltp/
 │   └── ...
 └── .ltp/                    # Estado interno del motor (en .gitignore)
     ├── lock                 # Lock file de concurrencia
+    ├── counters.json        # Memoria de monotonía de los IDs secuenciales
     ├── undo/                # Stack de undo
     │   ├── 001.json
     │   ├── 002.json
@@ -561,6 +562,13 @@ mi-proyecto-ltp/
     │   └── ...
     └── tmp/                 # Escritura atómica temporal
 ```
+
+**Contadores e IDs (v0.5.2, ADR-009 adenda).** `.ltp/` no se versiona, así que el motor nunca se fía solo de `counters.json`. Cada ID nuevo es el máximo entre lo guardado y lo observado en disco, más uno. Lo observado depende del prefijo: los prefijos de nodo miran los nombres de `nodes/`, `KN` mira los de `knowledge/`, y `LINK`/`ASM`/`FB`/`NBR`/`MACRO`/`MASM` miran el contenido de `trees/*.json`. Un árbol que no parsea (por ejemplo, con marcas de conflicto de merge) se escanea como texto. Si algo de ese ámbito no se puede leer (un fichero, un directorio sin permiso de listado), el comando falla con `ID_GENERATION_ERROR` sin escribir, y `detail` nombra la ruta. Un directorio ausente cuenta como vacío. Si `counters.json` falta o está corrupto, se reconstruye por esta misma vía. Dentro de un comando, cada ámbito se escanea una sola vez.
+
+Consecuencias para git:
+- Un **clon recién hecho**, sin `.ltp/`, funciona directamente: el primer comando que muta crea `.ltp/` y reconstruye los contadores.
+- Tras un `git pull` que trae entidades nuevas, el siguiente ID respeta lo recibido: no lo sobrescribe.
+- `tree clone` y `link dissolve` mintean IDs nuevos para los supuestos (y, en `clone`, para las aristas de feedback) que copian.
 
 ### 3.2. Entrada de Undo (`.ltp/undo/001.json`)
 

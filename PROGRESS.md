@@ -8,9 +8,9 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | v0.5.1 — `--dry-run` real + knowledge ilegible visible (ADR-017) |
+| **Última fase completada** | v0.5.2 — un ID nuevo nunca pisa uno existente (adendas ADR-009/ADR-005), pendiente de release (T6) |
 | **Último release** | v0.5.1 (2026-10-08) — PATCH: `--dry-run` real en todo el CLI, `KNOWLEDGE_LOAD_ERROR` en vez de silencio, salidas deterministas entre procesos |
-| **Último bugfix** | `--dry-run` escribía en disco; knowledge ilegible descartado en silencio en 6 sitios; `cycle_path` y orden de warnings CLR no deterministas; 2 `.expect()` en producción |
+| **Último bugfix** | v0.5.2: contadores por debajo del disco sobrescribían nodos tras `git pull`; reconstrucción que se saltaba lo ilegible; clon sin `.ltp/` inutilizable; `tree clone`/`link dissolve` copiaban IDs de `ASM`/`FB` |
 | **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
@@ -25,7 +25,8 @@
 | **Tests RFC-002 Slice 1** | 46/46 |
 | **Tests v0.5.0 (integridad)** | 61/61 (38 E2E + 23 unit) |
 | **Tests v0.5.1** | 50/50 (17 E2E dry-run + 10 E2E knowledge ilegible + 3 E2E no-expect + 13 unit `dry_run` + 7 unit determinismo/`to_json`), más 14 UATs KP |
-| **Tests totales** | 751 |
+| **Tests v0.5.2** | 20/20 (13 E2E `v052_counters` + 3 unit contadores + 4 unit memoización R13–R16) |
+| **Tests totales** | 771 |
 
 ---
 
@@ -72,9 +73,49 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
+### [v0.5.2, pendiente de release] — Un ID nuevo nunca pisa uno existente (PATCH)
+**Fecha**: 2026-10-09
+**Plan**: `PLAN_v052.md` (rev 3 + D-7). T0–T5 completadas; T6 (release) espera confirmación.
+**Commits**: `2b78a5c` T0 (R1–R12 en rojo, como preveía el plan; R7 ya en verde) → `050913c` T1 (reconciliación por ámbito, fail-closed) → `7663a7c` T1b (D-6: `clone`/`dissolve` mintean IDs nuevos) → `d51fa8b` T1c (D-7: una reconciliación por ámbito y por comando).
+**T1**: `counters.rs` reescrito (`ScanScope`, `scope_of`, `StoredCounters`, `observe_scope`, `reconcile`, `observe_text`). Se eliminan `rebuild`, `scan_directory`, `scan_tree_contents` y `FsStorage::load_counters`. Nueva variante interna `LtpError::CounterScan { path, source }`. `acquire_lock` crea `.ltp/`. `tests/counters_rebuild.rs` ajustado: `node add` ya no lee los árboles, así que U1/U2/U7/U8 disparan también un minteo de árbol, y U3 ahora sí ve los IDs del árbol en conflicto.
+**T2 — Mutaciones (13/13 detectadas)**, aplicadas y revertidas por script sobre el árbol de trabajo (sin `git checkout`):
+
+| M | Mutación | Muere |
+|---|---|---|
+| M1 | No reconciliar | R1, R1b, R8 (y R2, R5, R7, R13–R16) |
+| M2 | Saltarse lo ilegible | R3, R4 (y R6, R6b, R16) |
+| M3 | Quitar `observe_text` | R2 |
+| M4 | Tolerar lo ilegible con `counters.json` válido (regla T) | R6, R6b, R16 |
+| M5 | `NotFound` como ilegible | R7, R1 |
+| M6 | Quitar `create_dir_all` | R5, R1 |
+| M7 | `scope_of` siempre `All` | R6, R9, R13–R16 |
+| M8 | `tree clone` copia los `ASM` | R10, R11 |
+| M9 | `dissolve` reparte los mismos `ASM` | R12 |
+| M10 | Reconciliar siempre (sin memoria) | R13 |
+| M11 | Borrar la memoria solo en `release_lock` | R14 |
+| M12 | Marcar el ámbito antes de escanear | R16 |
+| M13 | Subir solo el prefijo pedido y marcar todo el ámbito | R13 (`ASM` tras `LINK`) |
+
+**T3 — Rendimiento** (binario release, macOS, workspace sintético de 3,9 MB: 500 nodos, 50 árboles, 5.000 aristas, 5.000 `ASM`; mediana de 15 ejecuciones, 5 en los casos grandes):
+
+| Comando | v0.5.2 | Referencia |
+|---|---|---|
+| `node add` | 50,6 ms | 53 ms en v0.5.1 (con `counters.json`), 90 ms reconstruyendo |
+| `knowledge add` | 48,7 ms | — |
+| `link connect` (1 destino) | 55,2 ms | — |
+| `assume add` | 60,0 ms | — |
+| `link connect` con 50 destinos (5,8 MB, con el árbol de 5.000 aristas) | 87,0 ms | — |
+| `tree clone` de 5.000 aristas + 5.000 `ASM` (5,8 MB) | **749 ms** | **149 s** sin D-7 (binario de `7663a7c`) |
+
+Todo por debajo de los umbrales del plan (< 100 ms por minteo; `tree clone` < 1 s). D-7 divide el coste del clone por unas 200. El resto del coste del clone son los ~10.000 `save` de `counters.json`, uno por minteo. Queda dentro del umbral, así que no se toca.
+**T4**: `check`, `clippy -D warnings`, `fmt --check` limpios; **771/771 tests** en verde.
+**T5**: adendas a ADR-009 (D-1 a D-3, D-7) y ADR-005 (D-6), ENGINE_SPEC §3.1 (contadores, clon sin `.ltp/`), INTEGRATION (gate `>= 0.5.2` con varios clones, límite de clones concurrentes), CHANGELOG `[0.5.2]`.
+**Fuera de alcance (registrado en el plan)**: aviso `COUNTERS_REBUILT`/contador desactualizado y detección de duplicados ya existentes (MINOR, `PLAN_v060.md`); knowledge links colgantes tras `tree rm`/`assume rm`; dos clones que mintean a la vez (conflicto add/add, documentado); `create_new` en `save_node`.
+**Factor de escala**: 1.0x (4 paquetes de código + docs, según el plan).
+
 ### [main, sin tag] — `link connect --nbr` busca la rama una sola vez (refactor)
 **Fecha**: 2026-10-09
-**Plan**: `PLAN_post-v051.md`, Parte A (A1–A5). Sin cambio de contrato: viaja en la siguiente release (v0.6.0), sin tag propio.
+**Plan**: `PLAN_post-v051.md`, Parte A (A1–A5). Sin cambio de contrato: viaja en la siguiente release (**v0.5.2**, decisión del 2026-10-09), sin tag propio.
 **A1 — Refactor** (`src/link/commands.rs`, un solo fichero): la rama NBR se resuelve una vez, antes de reservar IDs, en un `enum ConnectTarget { Trunk, Nbr { id, branch: &mut NbrBranch } }` que se guarda hasta la inserción. Desaparecen la validación temprana con `any` y el `let-else` posterior. `edge_logic` se calcula antes de la búsqueda (es puro: `nbr_id.is_some()` y `tree.logic`). `nid` sale de `nbr_id`, no de `branch.id`. Orden de errores intacto (`LOCK_ERROR` → `TREE_NOT_FOUND` → errores de nodo → `NBR_NOT_FOUND` → `INVALID_OPERATOR`). Ningún `clone()` nuevo.
 **A2 — Mutación**: mover la resolución de la rama a después de `next_id("LINK")` → los 3 E2E de `tests/v051_no_expect.rs` mueren (`.ltp/counters.json` pasa a `"LINK": 1`). Detectada y revertida.
 **A3 — Verificación**: `check`, `clippy -D warnings`, `fmt --check` limpios; **751/751 tests** en verde.
