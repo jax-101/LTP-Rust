@@ -10,6 +10,7 @@
 > - El riesgo para la UI se corrige con datos: la UI lanza el **CLI** y **no ramifica por códigos**. El riesgo real es que **no ve los avisos** (ver D-6).
 > - Los avisos de knowledge links colgantes en las mutaciones (unos 15 comandos) **salen de v0.6.0**: `validate` ya los detecta con `DANGLING_KNOWLEDGE_REF`.
 > - **Rev 3.1 (2026-10-09, decisión del usuario: D-5 se queda dentro)**: T0 añade seis casos adversariales y D-3 fija la regla del symlink roto. Se añade la **T7b (código muerto)** y una mutación más (11).
+> - **Rev 3.3 (2026-10-09)**: nueva sección **Ejecución** (dos sesiones con corte tras la T4, cuándo parar, prohibido el push). El plan es autosuficiente: el prompt de arranque es solo "Implementa PLAN_v060.md".
 > - **Rev 3.2 (2026-10-09, aprobada por el usuario)**: T0 añade siete casos más (G1–G7): JSON corrupto frente a ilegible, D-8 con un árbol ilegible, avisos de lock y de contadores juntos, batch, `undo`, orden de D-8 y casos frontera de `trees/`. Decisión: **un aviso de contadores por comando, también dentro de un batch**. T7 pasa a 13 mutaciones.
 >
 > **Revisión 2.1 (2026-10-09).** D-5 pierde `CounterNotice::Unreadable` por la D-3 de `PLAN_v052.md` rev 3.
@@ -138,6 +139,38 @@ El lock es fail-closed en todos los casos. Desde v0.5.2 (D-4), `acquire_lock` cr
 | T10 | Las 4 verificaciones + release (RELEASE_POLICY §5) | `0.6.0+<sha>` sin `dirty` |
 
 Un commit por tarea (`test(v0.6.0)`, `feat(v0.6.0)`, `docs(v0.6.0)`, `chore(release)`). Las mutaciones (T7) y el rendimiento (T8) van en el commit de docs (T9). La T7b va en su propio commit (`refactor(v0.6.0)`) si elimina código, o en el de docs si solo verifica.
+
+## Ejecución
+
+Instrucciones para quien implemente el plan. El prompt de arranque solo tiene que decir "Implementa PLAN_v060.md"; todo lo demás está aquí.
+
+**Antes de empezar**
+- Cargar la skill `ms-rust`.
+- Comprobar que el árbol está limpio (`git status`) y que `HEAD` contiene este plan en su revisión vigente (`git log --oneline -1 -- PLAN_v060.md`).
+
+**Dos sesiones**
+
+| Sesión | Tareas | Al terminar |
+|---|---|---|
+| 1 | T0 → T4 (tests en rojo y las tres capas de "ilegible ≠ ausente") | Registrar en PROGRESS el estado y lo descubierto por el camino. **Parar** y decir al usuario que haga `/clear` |
+| 2 | T5 → T9 (avisos de contadores, D-8, mutaciones, código muerto, rendimiento y docs) | **Parar antes de la T10** y pedir confirmación |
+
+Para retomar la sesión 2 basta con "Continúa PLAN_v060.md". El punto de partida se deduce de `git log` y de PROGRESS, no de la memoria de la conversación.
+
+**Cuándo parar y preguntar al usuario**
+1. Si un test de la T0 choca con cómo funciona hoy el motor (sobre todo G4, batch, y G5, `undo`), **no se ajusta el test para que pase**: se para, se describe el choque y se propone una decisión.
+2. Si una tarea obliga a cambiar una decisión (D-1 a D-8) o el contrato JSON más allá de los 3 warnings de D-6.
+3. Si una mutación de la T7 sobrevive y la forma de matarla no es obvia.
+4. Si la T8 supera el umbral (más de un 20 % en `validate`).
+5. Al final de cada sesión (tabla anterior).
+
+**En cada tarea**
+- Las 4 verificaciones de CLAUDE.md antes del commit, con `cargo test --workspace --no-fail-fast`.
+- Un commit por tarea, según la línea de commits de arriba.
+- Las mutaciones se revierten restaurando el contenido guardado del fichero, nunca con `git checkout`.
+
+**Prohibido sin confirmación expresa del usuario**
+- `git push`, tags y cualquier paso de la T10.
 
 ## Fuera de alcance (registrado)
 
