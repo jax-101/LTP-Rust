@@ -595,11 +595,18 @@ pub fn execute_knowledge_inspect(
         }
     };
 
+    // D-7: a target that cannot be verified stays "unknown" and the cause
+    // is warned about once per unreadable tree or node.
+    let mut unresolved = std::collections::BTreeMap::new();
     let resolved_links: Vec<ResolvedLinkInfo> = item
         .links
         .iter()
         .map(|link| {
-            let resolved = resolve_target(storage, &link.target);
+            let resolved = resolve_target(storage, &link.target).unwrap_or_else(|e| {
+                let w = e.warning();
+                unresolved.entry(w.detail.clone()).or_insert(w);
+                None
+            });
             ResolvedLinkInfo {
                 target: link.target.clone(),
                 relation: link.relation,
@@ -626,6 +633,7 @@ pub fn execute_knowledge_inspect(
             tags: item.tags,
         },
     )
+    .with_warnings(unresolved.into_values().collect())
 }
 
 /// Execute `knowledge list`.
@@ -832,7 +840,23 @@ pub fn execute_knowledge_link(
     };
 
     // Validate target exists in the graph
-    if resolve_target(storage, target).is_none() {
+    let resolved = resolve_target(storage, target);
+    if let Err(e) = &resolved {
+        let _ = storage.release_lock();
+        return CommandOutput {
+            success: false,
+            action: "knowledge_link".to_string(),
+            workspace: ws_name,
+            data: empty_data(),
+            graph_health: GraphHealth {
+                valid_dag: true,
+                orphan_nodes_count: 0,
+            },
+            errors: vec![e.error()],
+            warnings: vec![],
+        };
+    }
+    if matches!(resolved, Ok(None)) {
         let _ = storage.release_lock();
         return CommandOutput {
             success: false,

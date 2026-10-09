@@ -33,7 +33,12 @@ pub fn validate_knowledge(
     // DANGLING_KNOWLEDGE_REF: check each link target resolves
     for item in &items {
         for link in &item.links {
-            if !crate::knowledge::resolve::target_exists(storage, &link.target) {
+            // D-7: an unverifiable target is not dangling; the unreadable
+            // tree or node is already reported in its own entry.
+            if matches!(
+                crate::knowledge::resolve::target_exists(storage, &link.target),
+                Ok(false)
+            ) {
                 warnings.push(
                     OutputWarning::new(
                         "DANGLING_KNOWLEDGE_REF",
