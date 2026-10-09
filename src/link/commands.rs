@@ -4,6 +4,7 @@ use crate::errors::LtpError;
 use crate::link::types::{Edge, EdgeStatus, FeedbackEdge, FeedbackLoopType, Logic, Operator};
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
+use crate::tree::types::NbrBranch;
 use crate::validate::check_dag;
 
 // --- Helpers ---
@@ -75,6 +76,17 @@ pub struct LinkFeedbackListData {
 pub struct LinkFeedbackRmData {
     pub removed_id: String,
     pub tree_id: String,
+}
+
+/// Where `link connect` inserts the new edges, resolved before any ID is reserved.
+enum ConnectTarget<'a> {
+    /// The tree's own edges.
+    Trunk,
+    /// An NBR branch, looked up once by `id` and held until insertion.
+    Nbr {
+        id: &'a str,
+        branch: &'a mut NbrBranch,
+    },
 }
 
 // --- Command implementations ---
@@ -206,13 +218,24 @@ pub fn execute_link_connect(
         }
     }
 
-    // Validate NBR exists if specified
-    if let Some(nid) = nbr_id {
-        if !tree.nbr_branches.iter().any(|b| b.id == nid) {
-            let _ = storage.release_lock();
-            return nbr_not_found(ws_name, tree_id, nid);
-        }
-    }
+    // ADR-014: trunk edges inherit the tree's logic; an NBR branch is always sufficiency.
+    let edge_logic = if nbr_id.is_some() {
+        Logic::Sufficiency
+    } else {
+        Logic::from(tree.logic)
+    };
+
+    // Resolve the NBR once, before reserving IDs, so NBR_NOT_FOUND never burns a LINK
+    let target = match nbr_id {
+        None => ConnectTarget::Trunk,
+        Some(nid) => match tree.nbr_branches.iter_mut().find(|b| b.id == nid) {
+            Some(branch) => ConnectTarget::Nbr { id: nid, branch },
+            None => {
+                let _ = storage.release_lock();
+                return nbr_not_found(ws_name, tree_id, nid);
+            }
+        },
+    };
 
     // Determine operator
     let op = match operator {
@@ -260,12 +283,6 @@ pub fn execute_link_connect(
     }
 
     // Build edges based on to[] cardinality
-    // ADR-014: trunk edges inherit the tree's logic; an NBR branch is always sufficiency.
-    let edge_logic = if nbr_id.is_some() {
-        Logic::Sufficiency
-    } else {
-        Logic::from(tree.logic)
-    };
     let mut new_edges: Vec<Edge> = Vec::new();
 
     if to.len() > 1 {
@@ -341,13 +358,12 @@ pub fn execute_link_connect(
     // Validate DAG and insert edges
     let created_ids: Vec<String> = new_edges.iter().map(|e| e.id.clone()).collect();
 
-    if let Some(nid) = nbr_id {
+    if let ConnectTarget::Nbr {
+        id: nid,
+        branch: nbr_branch,
+    } = target
+    {
         // Insert into NBR branch and validate NBR DAG
-        let Some(nbr_branch) = tree.nbr_branches.iter_mut().find(|b| b.id == nid) else {
-            let _ = storage.release_lock();
-            return nbr_not_found(ws_name, tree_id, nid);
-        };
-
         let mut nbr_edges: Vec<Edge> = nbr_branch.edges.clone();
         nbr_edges.extend(new_edges.iter().cloned());
 

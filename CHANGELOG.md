@@ -6,6 +6,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+### Changed
+
+- **Interno**: `link connect --nbr` busca la rama NBR una sola vez, antes de reservar IDs, y la guarda hasta insertar las aristas. Desaparece una segunda búsqueda que, de alcanzarse, habría quemado un contador `LINK`. Sin cambios en el contrato: mismos códigos, mismo orden de errores, mismo output.
+
 ## [0.5.1] - 2026-10-08
 
 "El motor no calla" (plan `PLAN_v051.md`, ADR-017, adenda D-K5 a ADR-016). Es PATCH: hace cumplir promesas ya documentadas, sin campos, códigos ni flags nuevos.

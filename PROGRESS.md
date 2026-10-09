@@ -72,6 +72,17 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
+### [main, sin tag] — `link connect --nbr` busca la rama una sola vez (refactor)
+**Fecha**: 2026-10-09
+**Plan**: `PLAN_post-v051.md`, Parte A (A1–A5). Sin cambio de contrato: viaja en la siguiente release (v0.6.0), sin tag propio.
+**A1 — Refactor** (`src/link/commands.rs`, un solo fichero): la rama NBR se resuelve una vez, antes de reservar IDs, en un `enum ConnectTarget { Trunk, Nbr { id, branch: &mut NbrBranch } }` que se guarda hasta la inserción. Desaparecen la validación temprana con `any` y el `let-else` posterior. `edge_logic` se calcula antes de la búsqueda (es puro: `nbr_id.is_some()` y `tree.logic`). `nid` sale de `nbr_id`, no de `branch.id`. Orden de errores intacto (`LOCK_ERROR` → `TREE_NOT_FOUND` → errores de nodo → `NBR_NOT_FOUND` → `INVALID_OPERATOR`). Ningún `clone()` nuevo.
+**A2 — Mutación**: mover la resolución de la rama a después de `next_id("LINK")` → los 3 E2E de `tests/v051_no_expect.rs` mueren (`.ltp/counters.json` pasa a `"LINK": 1`). Detectada y revertida.
+**A3 — Verificación**: `check`, `clippy -D warnings`, `fmt --check` limpios; **751/751 tests** en verde.
+**Huecos**: cierra el hueco 2 de v0.5.1 (el `let-else` que quemaría un `LINK`). La sonda T2b queda sin efecto: ya no hay dos guardias, solo una, y es la que vigila `v051_no_expect`.
+**Registrado (no es bug)**: `knowledge add` quema el contador `KN` si falla con `IO_ERROR` después de reservar el ID. Es el patrón de todo el motor (`node add` igual) y ADR-009 lo acepta: los IDs no retroceden, y comprobar antes de escribir abriría una ventana TOCTOU.
+**Sigue fuera de alcance**: un ciclo dentro de una NBR sigue quemando `LINK` con `CIRCULAR_DEPENDENCY_DETECTED` (ADR-013/ADR-009, documentado).
+**Factor de escala**: 1.0x (1 paquete, prototipo previo validado).
+
 ### [Release v0.5.1] — `--dry-run` real + knowledge ilegible visible (PATCH)
 **Fecha**: 2026-10-08
 **Plan**: `PLAN_v051.md` (ADR-017, adenda D-K5 a ADR-016). T0–T5 completadas, más T1b (aprobada durante T1). Cierra el hueco heredado "`--dry-run` en mutaciones" de v0.4.0/v0.5.0.
@@ -108,7 +119,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 | B1 | `check_dag` vuelve a `HashSet` | unit, DR3, t1b | unit `cycle_path_is_deterministic`, E2E `t1b_*` |
 | B2 | Lint CLR4 vuelve a `HashMap` | unit, DR11b, t1b | unit `clr4_warnings_ordered_by_node_id`, E2E `t1b_*` |
 | T2a | `to_json` vuelve al panic | unit | unit `to_json_falls_back_*` |
-| T2b | Quitar la validación temprana de `--nbr` (solo queda el `let-else`) | (sonda: ¿equivalente?) | **No es equivalente**: los 3 E2E de `v051_no_expect` mueren, porque al llegar al `let-else` ya se ha consumido un contador `LINK` y `.ltp/counters.json` cambia. La validación temprana es la guardia real y la regresión la vigila. El `let-else` es una red de seguridad para un camino inalcanzable hoy |
+| T2b | Quitar la validación temprana de `--nbr` (solo queda el `let-else`) | (sonda: ¿equivalente?) | **No es equivalente**: los 3 E2E de `v051_no_expect` mueren, porque al llegar al `let-else` ya se ha consumido un contador `LINK` y `.ltp/counters.json` cambia. La validación temprana es la guardia real y la regresión la vigila. El `let-else` es una red de seguridad para un camino inalcanzable hoy. *Sin efecto desde el refactor de la Parte A de `PLAN_post-v051.md`: solo queda una búsqueda* |
 
 Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte a byte es entre dos procesos, y una sola pasada no basta para ver el desorden. Lo detectan el unit de 50 iteraciones y el E2E de 20 procesos, que se añadieron precisamente por eso.
 
@@ -119,7 +130,7 @@ Ni DR1 ni DR3 ni DR11b detectaron B1/B2 en una sola pasada: su comparación byte
 - Carrera de ADR-017 D-3: un escritor concurrente durante la copia puede dar una simulación de un estado intermedio (la misma ventana que una lectura de hoy). Documentada en ENGINE_SPEC §2.0 e INTEGRATION §2A.
 - Los heredados de v0.5.0 (§6 de `PLAN_v050-integrity.md`), listados arriba.
 - **Hueco nuevo**: `load_pool` sigue callando si falla `list_knowledge_ids` (por ejemplo, `knowledge/` ilegible como directorio): devuelve un pool vacío sin aviso. D-K5 cubre los items ilegibles, no el listado.
-- El `let-else` de `link connect --nbr` (T2) consumiría un contador `LINK` si llegara a alcanzarse (sonda T2b). Hoy es inalcanzable gracias a la validación temprana.
+- El `let-else` de `link connect --nbr` (T2) consumiría un contador `LINK` si llegara a alcanzarse (sonda T2b). Hoy es inalcanzable gracias a la validación temprana. **Cerrado en `main` (2026-10-09, `PLAN_post-v051.md` Parte A)**: la rama se busca una sola vez, antes de reservar IDs.
 
 ### [Release v0.5.0] — Integridad referencial global (MINOR)
 **Fecha**: 2026-10-08
