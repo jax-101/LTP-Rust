@@ -34,6 +34,8 @@ PROGRESS (v0.5.1, "Fuera de alcance") dejó dos huecos abiertos. Se investigaron
 
 ## Parte B — v0.6.0 (MINOR): "ilegible ≠ ausente"
 
+> **Sustituida (2026-10-09)** por `PLAN_v052.md` (PATCH: la reconstrucción de contadores reutilizaba IDs, con pérdida de datos) y `PLAN_v060.md`. La hipótesis del lock quedó refutada; el `dry_run` de MCP pasa a v0.7.0. Se conserva abajo como registro de la investigación.
+
 > Esto **no es todavía un plan implementable**. Recoge lo investigado y lo que falta investigar. Antes de implementar hay que redactar `PLAN_v060.md` (RPI), consultando ENGINE_SPEC, ADR, KNOWLEDGE_SPEC y RELEASE_POLICY.
 
 ### B1. Hueco 1 — `load_pool` sin listado
