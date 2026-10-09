@@ -8,8 +8,8 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | v0.5.2 — un ID nuevo nunca pisa uno existente (adendas ADR-009/ADR-005), pendiente de release (T6) |
-| **Último release** | v0.5.1 (2026-10-08) — PATCH: `--dry-run` real en todo el CLI, `KNOWLEDGE_LOAD_ERROR` en vez de silencio, salidas deterministas entre procesos |
+| **Última fase completada** | v0.5.2 — un ID nuevo nunca pisa uno existente (adendas ADR-009/ADR-005) |
+| **Último release** | v0.5.2 (2026-10-09) — PATCH: IDs reconciliados con el disco (sin sobrescrituras tras `git pull`), clon sin `.ltp/` utilizable, `clone`/`dissolve` sin IDs de supuesto duplicados |
 | **Último bugfix** | v0.5.2: contadores por debajo del disco sobrescribían nodos tras `git pull`; reconstrucción que se saltaba lo ilegible; clon sin `.ltp/` inutilizable; `tree clone`/`link dissolve` copiaban IDs de `ASM`/`FB` |
 | **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
@@ -73,9 +73,9 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
-### [v0.5.2, pendiente de release] — Un ID nuevo nunca pisa uno existente (PATCH)
+### [Release v0.5.2] — Un ID nuevo nunca pisa uno existente (PATCH)
 **Fecha**: 2026-10-09
-**Plan**: `PLAN_v052.md` (rev 3 + D-7). T0–T5 completadas; T6 (release) espera confirmación.
+**Plan**: `PLAN_v052.md` (rev 3 + D-7). T0–T6 completadas (T6 confirmada por el usuario el 2026-10-09).
 **Commits**: `2b78a5c` T0 (R1–R12 en rojo, como preveía el plan; R7 ya en verde) → `050913c` T1 (reconciliación por ámbito, fail-closed) → `7663a7c` T1b (D-6: `clone`/`dissolve` mintean IDs nuevos) → `d51fa8b` T1c (D-7: una reconciliación por ámbito y por comando).
 **T1**: `counters.rs` reescrito (`ScanScope`, `scope_of`, `StoredCounters`, `observe_scope`, `reconcile`, `observe_text`). Se eliminan `rebuild`, `scan_directory`, `scan_tree_contents` y `FsStorage::load_counters`. Nueva variante interna `LtpError::CounterScan { path, source }`. `acquire_lock` crea `.ltp/`. `tests/counters_rebuild.rs` ajustado: `node add` ya no lee los árboles, así que U1/U2/U7/U8 disparan también un minteo de árbol, y U3 ahora sí ve los IDs del árbol en conflicto.
 **T2 — Mutaciones (13/13 detectadas)**, aplicadas y revertidas por script sobre el árbol de trabajo (sin `git checkout`):

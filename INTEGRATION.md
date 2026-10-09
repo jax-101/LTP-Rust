@@ -16,13 +16,13 @@ Hay **dos superficies de integración**, ambas sobre el **mismo motor** y el **m
 ## 1. Obtener el binario
 
 ```bash
-git pull origin main          # o: git checkout v0.5.1  (para fijar una versión)
+git pull origin main          # o: git checkout v0.5.2  (para fijar una versión)
 cargo build --release
 # → target/release/ltp        (CLI)
 # → target/release/ltp-mcp    (servidor MCP)
 ```
 
-Para reproducibilidad, compila desde un tag: `git checkout v0.5.1 && cargo build --release`.
+Para reproducibilidad, compila desde un tag: `git checkout v0.5.2 && cargo build --release`.
 
 ## 2A. Integración por CLI (apps / UI)
 
