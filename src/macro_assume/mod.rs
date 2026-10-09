@@ -157,12 +157,16 @@ pub fn execute_macro_assume_gather(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return gather_failure(
                 action,
                 &ws_name,
                 macro_link,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };
@@ -411,12 +415,16 @@ pub fn execute_macro_assume_add(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return add_failure(
                 &ws_name,
                 macro_link,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };
@@ -552,13 +560,17 @@ pub fn execute_macro_assume_rm(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return rm_failure(
                 &ws_name,
                 macro_link,
                 asm_id,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };
@@ -643,11 +655,15 @@ pub fn execute_macro_assume_list(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return list_failure(
                 &ws_name,
                 macro_link,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };

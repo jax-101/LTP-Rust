@@ -163,7 +163,11 @@ pub fn execute_link_connect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -172,7 +176,7 @@ pub fn execute_link_connect(
     // Validate all nodes exist in pool
     let all_node_ids: Vec<&String> = from.iter().chain(to.iter()).collect();
     for node_id in &all_node_ids {
-        if storage.load_node(node_id).is_err() {
+        if let Err(e) = storage.load_node(node_id) {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -186,7 +190,8 @@ pub fn execute_link_connect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "REFERENTIAL_INTEGRITY_VIOLATION",
                     format!("Node '{}' not found in pool", node_id),
                 )],
@@ -529,7 +534,11 @@ pub fn execute_link_disconnect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -667,7 +676,11 @@ pub fn execute_link_feedback(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -777,7 +790,11 @@ pub fn execute_link_feedback_list(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -845,7 +862,11 @@ pub fn execute_link_feedback_rm(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }

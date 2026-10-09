@@ -461,7 +461,7 @@ pub fn execute_tree_attach(
     };
 
     // Verify node exists in pool
-    if storage.load_node(node_id).is_err() {
+    if let Err(e) = storage.load_node(node_id) {
         let _ = storage.release_lock();
         return CommandOutput {
             success: false,
@@ -476,7 +476,8 @@ pub fn execute_tree_attach(
                 valid_dag: true,
                 orphan_nodes_count: 0,
             },
-            errors: vec![OutputError::new(
+            errors: vec![OutputError::load_failed(
+                &e,
                 "NODE_NOT_FOUND",
                 format!("Node '{}' not found in pool", node_id),
             )],
@@ -501,7 +502,11 @@ pub fn execute_tree_attach(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -628,7 +633,11 @@ pub fn execute_tree_detach(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -752,7 +761,11 @@ pub fn execute_tree_clone(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -1007,7 +1020,11 @@ pub fn execute_tree_diff(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -1032,7 +1049,11 @@ pub fn execute_tree_diff(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -1176,7 +1197,7 @@ pub fn execute_tree_walk(
             let order = explicit.unwrap_or(WalkOrder::Topological);
             return walk_error(
                 order.as_str(),
-                OutputError::new("TREE_NOT_FOUND", e.to_string()),
+                OutputError::load_failed(&e, "TREE_NOT_FOUND", e.to_string()),
             );
         }
     };

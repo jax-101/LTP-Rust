@@ -345,7 +345,7 @@ pub fn execute_knowledge_edit(
 
     let mut item = match storage.load_knowledge(id) {
         Ok(item) => item,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -356,7 +356,8 @@ pub fn execute_knowledge_edit(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "KNOWLEDGE_NOT_FOUND",
                     format!("Knowledge item '{}' not found", id),
                 )],
@@ -513,10 +514,11 @@ pub fn execute_knowledge_rm(
     for id in ids {
         match storage.delete_knowledge(id) {
             Ok(()) => removed.push(id.clone()),
-            Err(_) => {
+            Err(e) => {
                 failed.push(id.clone());
                 errors.push(
-                    OutputError::new(
+                    OutputError::load_failed(
+                        &e,
                         "KNOWLEDGE_NOT_FOUND",
                         format!("Knowledge item '{}' not found", id),
                     )
@@ -573,7 +575,7 @@ pub fn execute_knowledge_inspect(
 
     let item = match storage.load_knowledge(id) {
         Ok(item) => item,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: "knowledge_inspect".to_string(),
@@ -583,7 +585,8 @@ pub fn execute_knowledge_inspect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "KNOWLEDGE_NOT_FOUND",
                     format!("Knowledge item '{}' not found", id),
                 )],
@@ -807,7 +810,7 @@ pub fn execute_knowledge_link(
 
     let mut item = match storage.load_knowledge(id) {
         Ok(item) => item,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -818,7 +821,8 @@ pub fn execute_knowledge_link(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "KNOWLEDGE_NOT_FOUND",
                     format!("Knowledge item '{}' not found", id),
                 )],
@@ -964,7 +968,7 @@ pub fn execute_knowledge_unlink(
 
     let mut item = match storage.load_knowledge(id) {
         Ok(item) => item,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -975,7 +979,8 @@ pub fn execute_knowledge_unlink(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "KNOWLEDGE_NOT_FOUND",
                     format!("Knowledge item '{}' not found", id),
                 )],

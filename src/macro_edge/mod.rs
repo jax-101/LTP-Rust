@@ -114,14 +114,18 @@ pub fn execute_macro_add(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return add_failure(
                 &ws_name,
                 from,
                 to,
                 label,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };
@@ -343,13 +347,17 @@ pub fn execute_macro_expand(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return expand_failure(
                 &ws_name,
                 macro_link,
                 true,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };
@@ -655,13 +663,17 @@ pub fn execute_macro_promote(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return promote_failure(
                 &ws_name,
                 macro_link,
                 true,
-                OutputError::new("TREE_NOT_FOUND", format!("Tree '{tree_id}' not found")),
+                OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    format!("Tree '{tree_id}' not found"),
+                ),
             );
         }
     };

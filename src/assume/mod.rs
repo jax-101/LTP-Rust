@@ -124,7 +124,7 @@ pub fn execute_assume_add(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -140,7 +140,8 @@ pub fn execute_assume_add(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -287,7 +288,7 @@ pub fn execute_assume_edit(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -302,7 +303,8 @@ pub fn execute_assume_edit(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -399,7 +401,7 @@ pub fn execute_assume_list(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: action.to_string(),
@@ -412,7 +414,8 @@ pub fn execute_assume_list(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -485,7 +488,7 @@ pub fn execute_assume_move(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -501,7 +504,8 @@ pub fn execute_assume_move(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -663,7 +667,7 @@ pub fn execute_assume_rm(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -677,7 +681,8 @@ pub fn execute_assume_rm(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -798,7 +803,7 @@ pub fn execute_invalidate(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -815,7 +820,8 @@ pub fn execute_invalidate(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],

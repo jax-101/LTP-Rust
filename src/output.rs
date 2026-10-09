@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+use crate::errors::LtpError;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphHealth {
     pub valid_dag: bool,
@@ -31,6 +33,31 @@ impl OutputError {
     ) -> Self {
         self.context.insert(key.into(), value.into());
         self
+    }
+
+    /// Error for a failed load or delete (PLAN_v060 D-4): `not_found` with
+    /// `detail` when the entity is genuinely absent, `IO_ERROR` with the
+    /// cause otherwise.
+    pub fn load_failed(e: &LtpError, not_found: &'static str, detail: impl Into<String>) -> Self {
+        match load_error_code(e, not_found) {
+            "IO_ERROR" => Self::new("IO_ERROR", e.to_string()),
+            code => Self::new(code, detail),
+        }
+    }
+}
+
+/// Error code for a failed load or delete (PLAN_v060 D-4, the rule of
+/// ADR-016 D-4 extended to the whole engine). Only a `*NotFound` keeps the
+/// site's `not_found` code; anything else (unreadable, corrupt, broken
+/// symlink) is `IO_ERROR`, never a false "does not exist".
+pub fn load_error_code(e: &LtpError, not_found: &'static str) -> &'static str {
+    match e {
+        LtpError::NodeNotFound(_)
+        | LtpError::TreeNotFound(_)
+        | LtpError::KnowledgeNotFound(_)
+        | LtpError::LinkNotFound(_)
+        | LtpError::AssumptionNotFound(_) => not_found,
+        _ => "IO_ERROR",
     }
 }
 

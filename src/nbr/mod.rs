@@ -116,7 +116,7 @@ pub fn execute_nbr_add(
     // Load tree
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -132,7 +132,8 @@ pub fn execute_nbr_add(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -142,7 +143,7 @@ pub fn execute_nbr_add(
     };
 
     // Validate source_node exists in pool
-    if storage.load_node(source_node).is_err() {
+    if let Err(e) = storage.load_node(source_node) {
         let _ = storage.release_lock();
         return CommandOutput {
             success: false,
@@ -158,7 +159,8 @@ pub fn execute_nbr_add(
                 valid_dag: true,
                 orphan_nodes_count: 0,
             },
-            errors: vec![OutputError::new(
+            errors: vec![OutputError::load_failed(
+                &e,
                 "NODE_NOT_FOUND",
                 format!("Node '{}' not found in pool", source_node),
             )],
@@ -196,7 +198,7 @@ pub fn execute_nbr_add(
 
     // Validate trim_injection exists in pool (if provided)
     if let Some(trim_id) = trim {
-        if storage.load_node(trim_id).is_err() {
+        if let Err(e) = storage.load_node(trim_id) {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -212,7 +214,8 @@ pub fn execute_nbr_add(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "NODE_NOT_FOUND",
                     format!("Trim injection node '{}' not found in pool", trim_id),
                 )],
@@ -330,7 +333,7 @@ pub fn execute_nbr_rm(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -345,7 +348,8 @@ pub fn execute_nbr_rm(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -426,7 +430,7 @@ pub fn execute_nbr_list(storage: &dyn Storage, tree_id: &str) -> CommandOutput<N
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: action.to_string(),
@@ -440,7 +444,8 @@ pub fn execute_nbr_list(storage: &dyn Storage, tree_id: &str) -> CommandOutput<N
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -482,7 +487,7 @@ pub fn execute_nbr_inspect(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: action.to_string(),
@@ -500,7 +505,8 @@ pub fn execute_nbr_inspect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],

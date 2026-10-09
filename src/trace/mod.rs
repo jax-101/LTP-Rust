@@ -208,30 +208,26 @@ pub fn execute_trace(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
-            return empty_trace_error(
-                "trace",
-                ws_name,
+        Err(e) => {
+            let err = OutputError::load_failed(
+                &e,
                 "TREE_NOT_FOUND",
                 format!("Tree '{}' not found", tree_id),
-                node_id,
-                tree_id,
-                direction,
-                depth,
+            );
+            return empty_trace_error(
+                "trace", ws_name, &err.code, err.detail, node_id, tree_id, direction, depth,
             );
         }
     };
 
-    if storage.load_node(node_id).is_err() {
-        return empty_trace_error(
-            "trace",
-            ws_name,
+    if let Err(e) = storage.load_node(node_id) {
+        let err = OutputError::load_failed(
+            &e,
             "NODE_NOT_FOUND",
             format!("Node '{}' not found in pool", node_id),
-            node_id,
-            tree_id,
-            direction,
-            depth,
+        );
+        return empty_trace_error(
+            "trace", ws_name, &err.code, err.detail, node_id, tree_id, direction, depth,
         );
     }
 
@@ -468,7 +464,7 @@ pub fn execute_link_inspect(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: "link_inspect".to_string(),
@@ -491,7 +487,8 @@ pub fn execute_link_inspect(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -610,7 +607,7 @@ pub fn execute_link_find(
 
     let tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: "link_find".to_string(),
@@ -625,7 +622,8 @@ pub fn execute_link_find(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],

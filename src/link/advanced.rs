@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::errors::LtpError;
 use crate::link::types::{Assumption, AssumptionStatus, Edge, EdgeStatus, Logic, Operator};
-use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
+use crate::output::{load_error_code, CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::{LockOutcome, Storage};
 use crate::validate::check_dag;
 
@@ -166,7 +166,11 @@ pub fn execute_link_reverse(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -392,7 +396,11 @@ pub fn execute_link_move(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                errors: vec![OutputError::load_failed(
+                    &e,
+                    "TREE_NOT_FOUND",
+                    e.to_string(),
+                )],
                 warnings: vec![],
             };
         }
@@ -423,7 +431,7 @@ pub fn execute_link_move(
     // Validate new endpoints exist in the node pool and are attached to the
     // tree, mirroring `link connect`'s referential-integrity checks.
     for node_id in new_from.into_iter().chain(new_to) {
-        if storage.load_node(node_id).is_err() {
+        if let Err(e) = storage.load_node(node_id) {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -434,7 +442,8 @@ pub fn execute_link_move(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "REFERENTIAL_INTEGRITY_VIOLATION",
                     format!("Node '{}' not found in pool", node_id),
                 )],
@@ -631,7 +640,12 @@ pub fn execute_link_insert_between(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return insert_between_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+            return insert_between_error(
+                &ws_name,
+                tree_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -651,14 +665,14 @@ pub fn execute_link_insert_between(
         }
     };
 
-    if storage.load_node(node_id).is_err() {
+    if let Err(e) = storage.load_node(node_id) {
         let _ = storage.release_lock();
-        return insert_between_error(
-            &ws_name,
-            tree_id,
+        let err = OutputError::load_failed(
+            &e,
             "REFERENTIAL_INTEGRITY_VIOLATION",
             format!("Node '{}' not found in pool", node_id),
         );
+        return insert_between_error(&ws_name, tree_id, &err.code, err.detail);
     }
     if !tree.nodes.iter().any(|n| n.node_ref == node_id) {
         let _ = storage.release_lock();
@@ -1010,7 +1024,12 @@ pub fn execute_link_group(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return group_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+            return group_error(
+                &ws_name,
+                tree_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -1195,7 +1214,12 @@ pub fn execute_link_dissolve(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return dissolve_error(&ws_name, tree_id, "TREE_NOT_FOUND", e.to_string());
+            return dissolve_error(
+                &ws_name,
+                tree_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -1399,7 +1423,13 @@ pub fn execute_link_split(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return split_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+            return split_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -1628,7 +1658,13 @@ pub fn execute_link_reoperator(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return reoperator_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+            return reoperator_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -1806,7 +1842,13 @@ pub fn execute_link_add_cause(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return add_cause_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+            return add_cause_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 
@@ -1824,15 +1866,14 @@ pub fn execute_link_add_cause(
         }
     };
 
-    if storage.load_node(node_id).is_err() {
+    if let Err(e) = storage.load_node(node_id) {
         let _ = storage.release_lock();
-        return add_cause_error(
-            &ws_name,
-            tree_id,
-            link_id,
+        let err = OutputError::load_failed(
+            &e,
             "REFERENTIAL_INTEGRITY_VIOLATION",
             format!("Node '{}' not found in pool", node_id),
         );
+        return add_cause_error(&ws_name, tree_id, link_id, &err.code, err.detail);
     }
     if !tree.nodes.iter().any(|n| n.node_ref == node_id) {
         let _ = storage.release_lock();
@@ -2030,7 +2071,13 @@ pub fn execute_link_rm_cause(
         Ok(t) => t,
         Err(e) => {
             let _ = storage.release_lock();
-            return rm_cause_error(&ws_name, tree_id, link_id, "TREE_NOT_FOUND", e.to_string());
+            return rm_cause_error(
+                &ws_name,
+                tree_id,
+                link_id,
+                load_error_code(&e, "TREE_NOT_FOUND"),
+                e.to_string(),
+            );
         }
     };
 

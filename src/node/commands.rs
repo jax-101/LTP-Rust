@@ -160,9 +160,10 @@ fn validate_new_refs(
                 r,
             ));
         }
-        if storage.load_node(&r.node).is_err() {
+        if let Err(e) = storage.load_node(&r.node) {
             return Err(ref_context(
-                OutputError::new(
+                OutputError::load_failed(
+                    &e,
                     "NODE_NOT_FOUND",
                     format!("Referenced node '{}' not found in pool", r.node),
                 ),
@@ -172,9 +173,10 @@ fn validate_new_refs(
         if let Some(tree_id) = &r.tree {
             let tree = match storage.load_tree(tree_id) {
                 Ok(t) => t,
-                Err(_) => {
+                Err(e) => {
                     return Err(ref_context(
-                        OutputError::new(
+                        OutputError::load_failed(
+                            &e,
                             "TREE_NOT_FOUND",
                             format!("Referenced tree '{}' not found", tree_id),
                         ),
@@ -837,7 +839,11 @@ pub fn execute_node_list(
                         valid_dag: true,
                         orphan_nodes_count: 0,
                     },
-                    errors: vec![OutputError::new("TREE_NOT_FOUND", e.to_string())],
+                    errors: vec![OutputError::load_failed(
+                        &e,
+                        "TREE_NOT_FOUND",
+                        e.to_string(),
+                    )],
                     warnings: vec![],
                 };
             }
@@ -1017,7 +1023,7 @@ pub fn execute_node_rm(
         .collect();
 
     for id in &ids {
-        if storage.load_node(id).is_err() {
+        if let Err(e) = storage.load_node(id) {
             return CommandOutput {
                 success: false,
                 action: "node_rm".to_string(),
@@ -1031,7 +1037,8 @@ pub fn execute_node_rm(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "NODE_NOT_FOUND",
                     format!("Node '{}' not found in pool", id),
                 )],
@@ -1341,7 +1348,7 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
 
     let node = match storage.load_node(id) {
         Ok(n) => n,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: "node_inspect".to_string(),
@@ -1362,7 +1369,8 @@ pub fn execute_node_inspect(storage: &dyn Storage, id: &str) -> CommandOutput<No
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "NODE_NOT_FOUND",
                     format!("Node '{}' not found", id),
                 )],
@@ -1534,7 +1542,7 @@ pub fn execute_node_split(
 
     let original = match storage.load_node(id) {
         Ok(n) => n,
-        Err(_) => {
+        Err(e) => {
             return CommandOutput {
                 success: false,
                 action: "node_split".to_string(),
@@ -1544,7 +1552,8 @@ pub fn execute_node_split(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "NODE_NOT_FOUND",
                     format!("Node '{}' not found", id),
                 )],

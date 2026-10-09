@@ -89,7 +89,7 @@ pub fn execute_path_collapse(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -107,7 +107,8 @@ pub fn execute_path_collapse(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -453,7 +454,7 @@ pub fn execute_path_explode(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -469,7 +470,8 @@ pub fn execute_path_explode(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -766,7 +768,7 @@ pub fn execute_path_replace(
 
     let mut tree = match storage.load_tree(tree_id) {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
             let _ = storage.release_lock();
             return CommandOutput {
                 success: false,
@@ -783,7 +785,8 @@ pub fn execute_path_replace(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
@@ -830,7 +833,7 @@ pub fn execute_path_replace(
     };
 
     // Verify by_node exists in pool
-    if storage.load_node(by_node_id).is_err() {
+    if let Err(e) = storage.load_node(by_node_id) {
         let _ = storage.release_lock();
         return CommandOutput {
             success: false,
@@ -847,7 +850,8 @@ pub fn execute_path_replace(
                 valid_dag: true,
                 orphan_nodes_count: 0,
             },
-            errors: vec![OutputError::new(
+            errors: vec![OutputError::load_failed(
+                &e,
                 "NODE_NOT_FOUND",
                 format!("Node '{}' not found in pool", by_node_id),
             )],

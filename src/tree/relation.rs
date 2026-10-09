@@ -28,7 +28,7 @@ pub fn execute_tree_relation_list(
     let action = "tree_relation_list";
 
     if let Some(tree_id) = tree_filter {
-        if storage.load_tree(tree_id).is_err() {
+        if let Err(e) = storage.load_tree(tree_id) {
             return CommandOutput {
                 success: false,
                 action: action.to_string(),
@@ -41,7 +41,8 @@ pub fn execute_tree_relation_list(
                     valid_dag: true,
                     orphan_nodes_count: 0,
                 },
-                errors: vec![OutputError::new(
+                errors: vec![OutputError::load_failed(
+                    &e,
                     "TREE_NOT_FOUND",
                     format!("Tree '{}' not found", tree_id),
                 )],
