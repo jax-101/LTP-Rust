@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use tracing::{debug, warn};
@@ -145,6 +146,36 @@ impl FsStorage {
         Ok(())
     }
 
+    /// Read `path`, turning a genuine absence into `not_found()` and any other
+    /// failure into `LtpError::Io` (PLAN_v060 D-3).
+    fn read_entity(path: &Path, not_found: impl FnOnce() -> LtpError) -> Result<String> {
+        fs::read_to_string(path).map_err(|e| absent_or_io(path, e, not_found))
+    }
+
+    /// Delete `path` with the same absent-versus-broken rule as [`Self::read_entity`].
+    fn remove_entity(path: &Path, not_found: impl FnOnce() -> LtpError) -> Result<()> {
+        fs::remove_file(path).map_err(|e| absent_or_io(path, e, not_found))
+    }
+
+    /// Sorted IDs of the `*.json` entries of `dir`. An absent directory is an
+    /// empty list; one that cannot be read is an error (PLAN_v060 D-3).
+    fn list_json_ids(dir: &Path) -> Result<Vec<String>> {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) if is_absent(dir, &e) => return Ok(vec![]),
+            Err(e) => return Err(e.into()),
+        };
+        let mut ids = Vec::new();
+        for entry in entries {
+            let name = entry?.file_name();
+            if let Some(id) = name.to_string_lossy().strip_suffix(".json") {
+                ids.push(id.to_string());
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
+
     /// Serialize a value to canonical JSON (2-space indent, sorted keys via BTreeMap).
     fn to_canonical_json<T: serde::Serialize>(value: &T) -> Result<String> {
         let json = serde_json::to_string_pretty(value)?;
@@ -166,10 +197,7 @@ impl Storage for FsStorage {
 
     fn load_node(&self, id: &str) -> Result<Node> {
         let path = self.nodes_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::NodeNotFound(id.to_string()));
-        }
-        let content = fs::read_to_string(&path)?;
+        let content = Self::read_entity(&path, || LtpError::NodeNotFound(id.to_string()))?;
         let node: Node = serde_json::from_str(&content)?;
         Ok(node)
     }
@@ -182,37 +210,16 @@ impl Storage for FsStorage {
 
     fn delete_node(&self, id: &str) -> Result<()> {
         let path = self.nodes_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::NodeNotFound(id.to_string()));
-        }
-        fs::remove_file(&path)?;
-        Ok(())
+        Self::remove_entity(&path, || LtpError::NodeNotFound(id.to_string()))
     }
 
     fn list_node_ids(&self) -> Result<Vec<String>> {
-        let dir = self.nodes_dir();
-        if !dir.exists() {
-            return Ok(vec![]);
-        }
-        let mut ids = Vec::new();
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if let Some(id) = name_str.strip_suffix(".json") {
-                ids.push(id.to_string());
-            }
-        }
-        ids.sort();
-        Ok(ids)
+        Self::list_json_ids(&self.nodes_dir())
     }
 
     fn load_tree(&self, id: &str) -> Result<Tree> {
         let path = self.trees_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::TreeNotFound(id.to_string()));
-        }
-        let content = fs::read_to_string(&path)?;
+        let content = Self::read_entity(&path, || LtpError::TreeNotFound(id.to_string()))?;
         let mut tree: Tree = serde_json::from_str(&content)?;
         // ADR-014: logic is derived from the tree type. Legacy files are fixed in memory
         // only; the corrected tree reaches disk on the next mutation (never on a read).
@@ -228,29 +235,11 @@ impl Storage for FsStorage {
 
     fn delete_tree(&self, id: &str) -> Result<()> {
         let path = self.trees_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::TreeNotFound(id.to_string()));
-        }
-        fs::remove_file(&path)?;
-        Ok(())
+        Self::remove_entity(&path, || LtpError::TreeNotFound(id.to_string()))
     }
 
     fn list_tree_ids(&self) -> Result<Vec<String>> {
-        let dir = self.trees_dir();
-        if !dir.exists() {
-            return Ok(vec![]);
-        }
-        let mut ids = Vec::new();
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if let Some(id) = name_str.strip_suffix(".json") {
-                ids.push(id.to_string());
-            }
-        }
-        ids.sort();
-        Ok(ids)
+        Self::list_json_ids(&self.trees_dir())
     }
 
     fn acquire_lock(&self, command: &str) -> Result<LockOutcome> {
@@ -264,8 +253,12 @@ impl Storage for FsStorage {
         // clone is usable (PLAN_v052 D-4).
         fs::create_dir_all(self.ltp_dir())?;
 
-        if lock_path.exists() {
-            let content = fs::read_to_string(&lock_path)?;
+        let current = match fs::read_to_string(&lock_path) {
+            Ok(content) => Some(content),
+            Err(e) if is_absent(&lock_path, &e) => None,
+            Err(e) => return Err(e.into()),
+        };
+        if let Some(content) = current {
             let existing: LockFile = serde_json::from_str(&content)?;
 
             if is_pid_alive(existing.pid) {
@@ -298,10 +291,10 @@ impl Storage for FsStorage {
     fn release_lock(&self) -> Result<()> {
         self.reset_reconciled(false);
         let lock_path = self.lock_path();
-        if lock_path.exists() {
-            fs::remove_file(&lock_path)?;
+        match fs::remove_file(&lock_path) {
+            Err(e) if !is_absent(&lock_path, &e) => Err(e.into()),
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     fn next_id(&self, entity_type: &str) -> Result<String> {
@@ -330,8 +323,13 @@ impl Storage for FsStorage {
         Ok(id)
     }
 
-    fn workspace_exists(&self) -> bool {
-        self.config_path().exists()
+    fn workspace_exists(&self) -> Result<bool> {
+        let path = self.config_path();
+        match fs::metadata(&path) {
+            Ok(_) => Ok(true),
+            Err(e) if is_absent(&path, &e) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn workspace_name(&self) -> Result<String> {
@@ -340,7 +338,7 @@ impl Storage for FsStorage {
     }
 
     fn init_workspace(&self, name: &str) -> Result<()> {
-        if self.workspace_exists() {
+        if self.workspace_exists()? {
             return Err(LtpError::WorkspaceAlreadyExists {
                 path: self.root.display().to_string(),
             });
@@ -363,9 +361,16 @@ impl Storage for FsStorage {
         let counters = Counters::new_zeroed();
         counters.save(&Counters::file_path(&self.root))?;
 
-        let gitignore_path = self.root.join(".gitignore");
-        if !gitignore_path.exists() {
-            fs::write(&gitignore_path, ".ltp/\n")?;
+        // Never overwrite a user's .gitignore; `create_new` checks and creates
+        // in one step.
+        let gitignore = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.root.join(".gitignore"));
+        match gitignore {
+            Ok(mut file) => io::Write::write_all(&mut file, b".ltp/\n")?,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
         }
 
         Ok(())
@@ -377,10 +382,7 @@ impl Storage for FsStorage {
 
     fn load_knowledge(&self, id: &str) -> Result<KnowledgeItem> {
         let path = self.knowledge_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::KnowledgeNotFound(id.to_string()));
-        }
-        let content = fs::read_to_string(&path)?;
+        let content = Self::read_entity(&path, || LtpError::KnowledgeNotFound(id.to_string()))?;
         let item: KnowledgeItem = serde_json::from_str(&content)?;
         Ok(item)
     }
@@ -394,39 +396,42 @@ impl Storage for FsStorage {
 
     fn delete_knowledge(&self, id: &str) -> Result<()> {
         let path = self.knowledge_dir().join(format!("{}.json", id));
-        if !path.exists() {
-            return Err(LtpError::KnowledgeNotFound(id.to_string()));
-        }
-        fs::remove_file(&path)?;
-        Ok(())
+        Self::remove_entity(&path, || LtpError::KnowledgeNotFound(id.to_string()))
     }
 
     fn list_knowledge_ids(&self) -> Result<Vec<String>> {
-        let dir = self.knowledge_dir();
-        if !dir.exists() {
-            return Ok(vec![]);
-        }
-        let mut ids = Vec::new();
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if let Some(id) = name_str.strip_suffix(".json") {
-                ids.push(id.to_string());
-            }
-        }
-        ids.sort();
-        Ok(ids)
+        Self::list_json_ids(&self.knowledge_dir())
     }
 
     fn ensure_knowledge_dir(&self) -> Result<bool> {
-        let dir = self.knowledge_dir();
-        if dir.exists() {
-            return Ok(false);
+        match fs::create_dir(self.knowledge_dir()) {
+            Ok(()) => {
+                debug!("created knowledge/ directory on demand");
+                Ok(true)
+            }
+            // Something already sits there; if it is not a directory, the
+            // save that follows reports it as an I/O error.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e.into()),
         }
-        fs::create_dir_all(&dir)?;
-        debug!("created knowledge/ directory on demand");
-        Ok(true)
+    }
+}
+
+/// Whether `error`, raised while opening `path`, means the entry is really
+/// absent. A `NotFound` on an entry that `symlink_metadata` still sees is a
+/// dangling symlink: the listing shows it, so it is broken, not absent
+/// (PLAN_v060 D-3).
+fn is_absent(path: &Path, error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+        && matches!(fs::symlink_metadata(path), Err(e) if e.kind() == io::ErrorKind::NotFound)
+}
+
+/// `not_found()` when `path` is really absent, `LtpError::Io(error)` otherwise.
+fn absent_or_io(path: &Path, error: io::Error, not_found: impl FnOnce() -> LtpError) -> LtpError {
+    if is_absent(path, &error) {
+        not_found()
+    } else {
+        LtpError::Io(error)
     }
 }
 
@@ -541,6 +546,106 @@ mod tests {
         write_tree(&storage, "tree-x", &["LINK-007"]);
         assert_eq!(storage.next_id("LINK").unwrap(), "LINK-008");
         assert_eq!(storage.scans.get().trees, 2);
+        storage.release_lock().unwrap();
+    }
+
+    // PLAN_v060 D-3 — absent is `*NotFound`; anything else is `Io`.
+    #[test]
+    fn d3_absent_entity_is_not_found() {
+        let (_dir, storage) = workspace();
+        assert!(matches!(
+            storage.load_node("UDE-404"),
+            Err(LtpError::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.load_tree("tree-x"),
+            Err(LtpError::TreeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.load_knowledge("KN-404"),
+            Err(LtpError::KnowledgeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.delete_node("UDE-404"),
+            Err(LtpError::NodeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.delete_tree("tree-x"),
+            Err(LtpError::TreeNotFound(_))
+        ));
+        assert!(matches!(
+            storage.delete_knowledge("KN-404"),
+            Err(LtpError::KnowledgeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn d3_entity_that_is_a_directory_is_io() {
+        let (_dir, storage) = workspace();
+        fs::create_dir(storage.trees_dir().join("tree-x.json")).unwrap();
+        fs::create_dir(storage.nodes_dir().join("UDE-001.json")).unwrap();
+        assert!(matches!(storage.load_tree("tree-x"), Err(LtpError::Io(_))));
+        assert!(matches!(storage.load_node("UDE-001"), Err(LtpError::Io(_))));
+        assert!(matches!(
+            storage.delete_tree("tree-x"),
+            Err(LtpError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn d3_pool_dir_that_is_a_file_is_io() {
+        let (_dir, storage) = workspace();
+        fs::remove_dir(storage.nodes_dir()).unwrap();
+        fs::write(storage.nodes_dir(), "").unwrap();
+        assert!(matches!(storage.load_node("UDE-001"), Err(LtpError::Io(_))));
+        assert!(matches!(storage.list_node_ids(), Err(LtpError::Io(_))));
+    }
+
+    #[test]
+    fn d3_absent_pool_dir_lists_empty() {
+        let (_dir, storage) = workspace();
+        fs::remove_dir(storage.knowledge_dir()).unwrap();
+        assert_eq!(storage.list_knowledge_ids().unwrap(), Vec::<String>::new());
+        assert!(storage.ensure_knowledge_dir().unwrap());
+        assert!(!storage.ensure_knowledge_dir().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn d3_broken_symlink_is_io_not_not_found() {
+        let (_dir, storage) = workspace();
+        let link = storage.trees_dir().join("tree-x.json");
+        std::os::unix::fs::symlink(storage.root.join("nowhere.json"), &link).unwrap();
+        assert_eq!(storage.list_tree_ids().unwrap(), vec!["tree-x"]);
+        assert!(matches!(storage.load_tree("tree-x"), Err(LtpError::Io(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn d3_workspace_exists_distinguishes_absent_from_broken() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FsStorage::new(dir.path().to_path_buf());
+        assert!(!storage.workspace_exists().unwrap());
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), storage.config_path()).unwrap();
+        assert!(storage.workspace_exists().is_err());
+        assert!(storage.init_workspace("X").is_err(), "never init over it");
+    }
+
+    #[test]
+    fn d3_lock_absent_is_not_an_error_and_gitignore_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "mine\n").unwrap();
+        let storage = FsStorage::new(dir.path().to_path_buf());
+        storage.init_workspace("X").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+            "mine\n"
+        );
+        storage.release_lock().unwrap();
+        assert!(matches!(
+            storage.acquire_lock("a"),
+            Ok(LockOutcome::Acquired)
+        ));
         storage.release_lock().unwrap();
     }
 }

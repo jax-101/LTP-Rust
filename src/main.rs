@@ -781,14 +781,18 @@ struct TreeHealth {
 }
 
 fn execute_init(storage: &FsStorage, name: &str, dry_run: bool) -> CommandOutput<InitData> {
-    if storage.workspace_exists() {
-        let err = OutputError::new(
+    let blocker = match storage.workspace_exists() {
+        Ok(false) => None,
+        Ok(true) => Some(OutputError::new(
             "WORKSPACE_ALREADY_EXISTS",
             format!(
                 "Workspace already initialized at {}",
                 storage.root().display()
             ),
-        );
+        )),
+        Err(e) => Some(OutputError::new("IO_ERROR", e.to_string())),
+    };
+    if let Some(err) = blocker {
         return CommandOutput {
             success: false,
             action: "init".to_string(),
@@ -874,11 +878,15 @@ fn execute_init(storage: &FsStorage, name: &str, dry_run: bool) -> CommandOutput
 }
 
 fn execute_status(storage: &FsStorage) -> CommandOutput<StatusData> {
-    if !storage.workspace_exists() {
-        let err = OutputError::new(
+    let blocker = match storage.workspace_exists() {
+        Ok(true) => None,
+        Ok(false) => Some(OutputError::new(
             "WORKSPACE_NOT_INITIALIZED",
             "No LTP workspace found (run `ltp init` first)",
-        );
+        )),
+        Err(e) => Some(OutputError::new("IO_ERROR", e.to_string())),
+    };
+    if let Some(err) = blocker {
         return CommandOutput {
             success: false,
             action: "status".to_string(),

@@ -65,8 +65,19 @@ pub fn dispatch_tool(
     }
 
     // All other tools require workspace
-    if !storage.workspace_exists() {
-        return Err(JsonRpcError::workspace_not_initialized());
+    match storage.workspace_exists() {
+        Ok(true) => {}
+        Ok(false) => return Err(JsonRpcError::workspace_not_initialized()),
+        // "Cannot tell" is not "no workspace" (PLAN_v060 D-3).
+        Err(e) => {
+            let action = name.strip_prefix("ltp/").unwrap_or(name);
+            let output = crate::output::error_output(
+                action,
+                "",
+                vec![crate::output::OutputError::new("IO_ERROR", e.to_string())],
+            );
+            return to_result(&output);
+        }
     }
 
     match name {
@@ -304,18 +315,19 @@ fn dispatch_init(
 ) -> Result<ToolCallResult, JsonRpcError> {
     let name = get_str_opt(args, "name").unwrap_or("ltp-workspace");
 
-    if storage.workspace_exists() {
-        let output = crate::output::error_output(
-            "init",
-            name,
-            vec![crate::output::OutputError::new(
-                "WORKSPACE_ALREADY_EXISTS",
-                format!(
-                    "Workspace already initialized at {}",
-                    storage.root().display()
-                ),
-            )],
-        );
+    let blocker = match storage.workspace_exists() {
+        Ok(false) => None,
+        Ok(true) => Some(crate::output::OutputError::new(
+            "WORKSPACE_ALREADY_EXISTS",
+            format!(
+                "Workspace already initialized at {}",
+                storage.root().display()
+            ),
+        )),
+        Err(e) => Some(crate::output::OutputError::new("IO_ERROR", e.to_string())),
+    };
+    if let Some(err) = blocker {
+        let output = crate::output::error_output("init", name, vec![err]);
         return to_result(&output);
     }
 

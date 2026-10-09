@@ -55,7 +55,10 @@ pub trait Storage {
     fn next_id(&self, entity_type: &str) -> Result<String>;
 
     /// Check whether the workspace has been initialized.
-    fn workspace_exists(&self) -> bool;
+    ///
+    /// `Err` when the config cannot be inspected: "cannot tell" is never
+    /// reported as "no workspace" (PLAN_v060 D-3).
+    fn workspace_exists(&self) -> Result<bool>;
 
     /// Return the workspace name from config.
     fn workspace_name(&self) -> Result<String>;

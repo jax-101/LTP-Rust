@@ -18,6 +18,7 @@ use crate::storage::Storage;
 /// - EPISTEMIC_UPGRADEABLE: hypothesis/assumption with >=2 verified supports and 0 verified contradicts
 pub fn validate_knowledge(
     storage: &dyn Storage,
+    node_ids: &[String],
     node_filter: Option<&HashSet<String>>,
 ) -> Vec<OutputWarning> {
     let KnowledgePool {
@@ -49,12 +50,7 @@ pub fn validate_knowledge(
     }
 
     // Epistemic warnings: per-node analysis
-    let node_ids = match storage.list_node_ids() {
-        Ok(ids) => ids,
-        Err(_) => return warnings,
-    };
-
-    for node_id in &node_ids {
+    for node_id in node_ids {
         if let Some(filter) = node_filter {
             if !filter.contains(node_id) {
                 continue;

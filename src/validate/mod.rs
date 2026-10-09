@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use serde::Serialize;
 use tracing::{debug, info};
 
+use crate::errors::LtpError;
 use crate::meta;
 use crate::output::{CommandOutput, GraphHealth, OutputError, OutputWarning};
 use crate::storage::Storage;
@@ -45,33 +46,17 @@ pub fn execute_validate<S: Storage>(
         Some(id) => vec![id.to_string()],
         None => match storage.list_tree_ids() {
             Ok(ids) => ids,
-            Err(e) => {
-                return CommandOutput {
-                    success: false,
-                    action: "validate".to_string(),
-                    workspace: ws_name,
-                    data: ValidateData {
-                        trees_validated: 0,
-                        total_errors: 1,
-                        total_warnings: 0,
-                        details: vec![],
-                    },
-                    graph_health: GraphHealth {
-                        valid_dag: true,
-                        orphan_nodes_count: 0,
-                    },
-                    errors: vec![OutputError::new("IO_ERROR", e.to_string())],
-                    warnings: vec![],
-                };
-            }
+            Err(e) => return io_error_output(ws_name, &e),
         },
     };
 
-    let node_pool: HashSet<String> = storage
-        .list_node_ids()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    // An unlistable node pool is an I/O error, never an empty pool
+    // (PLAN_v060 D-3): every later check would report false dangling refs.
+    let node_ids = match storage.list_node_ids() {
+        Ok(ids) => ids,
+        Err(e) => return io_error_output(ws_name, &e),
+    };
+    let node_pool: HashSet<String> = node_ids.iter().cloned().collect();
 
     info!(tree_count = tree_ids.len(), "starting validation");
 
@@ -248,7 +233,8 @@ pub fn execute_validate<S: Storage>(
         None
     };
 
-    let knowledge_warnings = knowledge::validate_knowledge(storage, knowledge_node_filter.as_ref());
+    let knowledge_warnings =
+        knowledge::validate_knowledge(storage, &node_ids, knowledge_node_filter.as_ref());
 
     // Add knowledge warnings to a synthetic "knowledge_pool" validation entry
     if !knowledge_warnings.is_empty() {
@@ -260,7 +246,7 @@ pub fn execute_validate<S: Storage>(
     }
 
     // Meta-graph validation (RFC-002 S1): ref integrity and norm coverage
-    let meta_warnings = validate_meta_graph(storage, tree_filter);
+    let meta_warnings = validate_meta_graph(storage, &node_ids, tree_filter);
     if !meta_warnings.is_empty() {
         details.push(TreeValidation {
             tree_id: "_meta_graph".to_string(),
@@ -299,13 +285,38 @@ pub fn execute_validate<S: Storage>(
     }
 }
 
+/// `validate` output for a workspace whose trees or nodes cannot be listed.
+fn io_error_output(ws_name: String, error: &LtpError) -> CommandOutput<ValidateData> {
+    CommandOutput {
+        success: false,
+        action: "validate".to_string(),
+        workspace: ws_name,
+        data: ValidateData {
+            trees_validated: 0,
+            total_errors: 1,
+            total_warnings: 0,
+            details: vec![],
+        },
+        graph_health: GraphHealth {
+            valid_dag: true,
+            orphan_nodes_count: 0,
+        },
+        errors: vec![OutputError::new("IO_ERROR", error.to_string())],
+        warnings: vec![],
+    }
+}
+
 /// Workspace-wide ref checks (ADR-015) for the synthetic `_meta_graph` entry.
 ///
 /// Loads every readable tree and node. Nodes listed on disk that fail to load
 /// yield `NODE_UNREADABLE {node_id}` (they used to be skipped silently), followed
 /// by `meta::check_refs`. With `tree_filter`, only nodes present in that tree
 /// (trunk or NBR branch) are checked.
-fn validate_meta_graph<S: Storage>(storage: &S, tree_filter: Option<&str>) -> Vec<OutputWarning> {
+fn validate_meta_graph<S: Storage>(
+    storage: &S,
+    node_ids: &[String],
+    tree_filter: Option<&str>,
+) -> Vec<OutputWarning> {
     let trees: Vec<_> = storage
         .list_tree_ids()
         .unwrap_or_default()
@@ -323,12 +334,12 @@ fn validate_meta_graph<S: Storage>(storage: &S, tree_filter: Option<&str>) -> Ve
 
     let mut warnings = Vec::new();
     let mut nodes = Vec::new();
-    for id in storage.list_node_ids().unwrap_or_default() {
-        match storage.load_node(&id) {
+    for id in node_ids {
+        match storage.load_node(id) {
             Ok(node) => nodes.push(node),
-            Err(_) if in_scope(&id) => warnings.push(
+            Err(_) if in_scope(id) => warnings.push(
                 OutputWarning::new("NODE_UNREADABLE", format!("Node '{id}' cannot be loaded"))
-                    .with_context("node_id", serde_json::Value::String(id)),
+                    .with_context("node_id", serde_json::Value::String(id.clone())),
             ),
             Err(_) => {}
         }
