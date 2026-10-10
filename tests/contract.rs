@@ -369,5 +369,42 @@ fn contract_output_snapshots() {
         );
     }
 
+    // Grupo D — avisos de v0.6.0. Sin `counters.json`, el primer minteo emite
+    // COUNTERS_REBUILT a nivel raíz (`reason: missing`). Después, una copia del
+    // CRT con los mismos IDs (lo que hacía `tree clone` antes de v0.5.2) da
+    // DUPLICATE_ENTITY_ID {id, occurrences[]} en la entrada `_workspace`.
+    {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        let tree = build_fixture(dir);
+        fs::remove_file(dir.join(".ltp").join("counters.json")).expect("rm counters");
+        capture(
+            dir,
+            "warning_counters_rebuilt",
+            0,
+            &["node", "add", "Another root cause", "--type", "RC"],
+            update,
+            &mut failures,
+        );
+        let trees = dir.join("trees");
+        let raw = fs::read_to_string(trees.join(format!("{tree}.json"))).expect("read tree");
+        let mut copy: Value = serde_json::from_str(&raw).expect("parse tree");
+        copy["id"] = Value::from("tree-crt-contract-copy");
+        copy["name"] = Value::from("Contract copy");
+        fs::write(
+            trees.join("tree-crt-contract-copy.json"),
+            serde_json::to_string_pretty(&copy).expect("serialize tree"),
+        )
+        .expect("write copy");
+        capture(
+            dir,
+            "validate_duplicates",
+            0,
+            &["validate"],
+            update,
+            &mut failures,
+        );
+    }
+
     assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }

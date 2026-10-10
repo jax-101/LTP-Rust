@@ -79,7 +79,7 @@ Diagnóstico de salud determinista del workspace:
 - Reporta causas raíz sin resolver o supuestos invalidados.
 - Retorna el recuento global de entidades por tipo.
 - Reporta feedback loops (cantidad, tipo positive/negative).
-- `knowledge_health` (KNOWLEDGE_SPEC §6.1), igual en CLI y MCP. Desde v0.5.1 cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` y no se cuenta.
+- `knowledge_health` (KNOWLEDGE_SPEC §6.1), igual en CLI y MCP. Desde v0.5.1 cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` y no se cuenta. Desde v0.6.0, si `knowledge/` no se puede listar, sale antes un único `KNOWLEDGE_POOL_UNREADABLE` y los números cuentan 0 (la forma no cambia).
 
 ---
 
@@ -118,7 +118,7 @@ Elimina nodos del pool global y todos sus edges asociados en todas las vistas, i
   - Cada macro eliminada emite `MACRO_EDGE_REMOVED {tree_id, macro_link, reason, status, from, to, assumption_ids}`, con `reason` = `endpoint_removed` | `interior_emptied`. `assumption_ids` va en orden de almacenamiento y la eliminación se puede deshacer con `undo`.
   - Las macros que el `rm` no toca no se modifican. Las `projection_refs` de una superviviente tampoco: `validate` las señala con `LONG_ARROW_SUMMARY_STALE`. Regla: *una mutación avisa de lo que destruye; `validate`, de lo que queda inconsistente*.
 - *(Desde v0.5.0.)* **Fail-closed**: se cargan todos los árboles antes de escribir nada. Si alguno no se puede leer, se devuelve `IO_ERROR {tree_id}` sin escribir ningún byte. Los IDs repetidos en la entrada se deduplican.
-- Orden de warnings: lock obsoleto → `NBR_BRANCH_REMOVED` → `MACRO_EDGE_REMOVED` (por árbol y después en orden de almacenamiento) → `REFS_STRIPPED` → `KNOWLEDGE_ORPHANED` → `KNOWLEDGE_LOAD_ERROR` (uno por knowledge ilegible; no bloquea, desde v0.5.1). `data`: `{ removed_nodes, removed_edges_count, affected_trees }`. Si `affected_trees` no está vacío, conviene ejecutar `validate` sobre esos árboles.
+- Orden de warnings: lock obsoleto → `NBR_BRANCH_REMOVED` → `MACRO_EDGE_REMOVED` (por árbol y después en orden de almacenamiento) → `REFS_STRIPPED` → `KNOWLEDGE_ORPHANED` → `KNOWLEDGE_POOL_UNREADABLE` (si `knowledge/` no se puede listar, desde v0.6.0) → `KNOWLEDGE_LOAD_ERROR` (uno por knowledge ilegible; no bloquea, desde v0.5.1). `data`: `{ removed_nodes, removed_edges_count, affected_trees }`. Si `affected_trees` no está vacío, conviene ejecutar `validate` sobre esos árboles.
 
 #### `ltp node inspect <ID>`
 
@@ -210,7 +210,7 @@ Recorrido ordenado del árbol completo para auditoría sistemática (JSON por de
 - `role` puede ser `null` (solo obligatorio en EC).
 - `incoming_edges` / `outgoing_edges` son arrays de **IDs de edge (LINK)**, no objetos. Para operator/assumptions/from/to de un edge concreto: `ltp link inspect <id>`. Un mismo edge AND aparece en el `outgoing_edges` de cada causa.
 - Sin `--order`, el orden se deriva de la lógica del árbol (ADR-014): `topological` en suficiencia (CRT/FRT/TT), desde causas raíz hacia efectos; `reverse` en necesidad (GT/EC/PRT), desde el objetivo hacia los prerrequisitos. `--order` explícito siempre manda y `data.order` informa del orden aplicado. Solo se aceptan `topological` y `reverse` (sensible a mayúsculas); cualquier otro valor falla con `INVALID_ORDER` antes de buscar el árbol (`data.order` devuelve el valor recibido y `nodes` vacío).
-- `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**. Con el flag, cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1); sin él no se lee el pool.
+- `--show-knowledge`: añade a cada nodo `"knowledge": { "supports", "contradicts", "contextualizes" }` (conteos). Sin el flag, el campo se **omite**. Con el flag, cada knowledge ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1), precedido de `KNOWLEDGE_POOL_UNREADABLE` si `knowledge/` no se puede listar (desde v0.6.0); sin él no se lee el pool.
 - **No incluye feedback edges** (viven en `feedback_edges`, fuera del DAG): obtenlas con `ltp link feedback-list`.
 
 > Flags reservados **sin efecto actual** (se parsean pero se ignoran en el dispatch): `--show-origin`, `--expand-nbr`.
@@ -353,7 +353,7 @@ Motor de exploración del grafo:
 - `--depth N`: filtra por profundidad.
 - Incluye `feedback_edges` por defecto; excluir con `--no-feedback`.
 - Con `--nbr` incluye también los edges de las NBR branches.
-- `--show-knowledge` (KNOWLEDGE_SPEC §6.4): añade el knowledge de cada nodo; cada item ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1).
+- `--show-knowledge` (KNOWLEDGE_SPEC §6.4): añade el knowledge de cada nodo; cada item ilegible emite `KNOWLEDGE_LOAD_ERROR {id}` (desde v0.5.1), precedido de `KNOWLEDGE_POOL_UNREADABLE` si `knowledge/` no se puede listar (desde v0.6.0).
 
 ---
 
@@ -445,7 +445,8 @@ Ejecuta validaciones en dos niveles:
 - Nodos huérfanos dentro del tree (attached pero sin edges). Excepción (ADR-013): los extremos de un `macro_edge` en estado `reservation` se consideran conectados (el salto lógico ya los relaciona), por lo que no disparan `ORPHAN_NODE_IN_TREE`.
 - Flecha larga en estado `reservation` sin resolver: `LONG_ARROW_RESERVATION_PENDING` (CLR #1, contexto `macro_link`/`from`/`to`) recuerda que el salto está pendiente de `macro expand` o `macro promote`. No bloquea (ADR-010).
 - *(Meta-grafo, entrada sintética `_meta_graph`, desde v0.4.0.)* `DANGLING_NODE_REF {node_id, ref_node, ref_tree, reason}` con `reason` = `node_missing` | `tree_missing` | `not_in_tree` (refs rotas por edición manual o binarios antiguos). `NORM_REF_MISSING {node_id, trees}`: solo si el workspace tiene ≥1 GT; una UDE adjunta a un CRT o presente en una rama NBR sin ref a una norma (NC, CSF u OBJ) adjunta a un GT (respetando el pin). Un warning por nodo, `trees` ordenado. `NODE_UNREADABLE {node_id}`: nodo listado en disco que no se puede cargar (antes se saltaba en silencio). Con `--tree`, solo nodos de ese árbol (tronco o ramas NBR). La entrada solo aparece si hay warnings.
-- *(Knowledge Pool, entrada sintética `_knowledge_pool`.)* Avisos de KNOWLEDGE_SPEC §6.2. Desde v0.5.1 van primero los `KNOWLEDGE_LOAD_ERROR {id}` de los items ilegibles, en orden de ID; los demás avisos se calculan sobre los legibles.
+- *(Knowledge Pool, entrada sintética `_knowledge_pool`.)* Avisos de KNOWLEDGE_SPEC §6.2. Desde v0.5.1 van primero los `KNOWLEDGE_LOAD_ERROR {id}` de los items ilegibles, en orden de ID; los demás avisos se calculan sobre los legibles. Desde v0.6.0, si `knowledge/` no se puede listar, la entrada lleva solo `KNOWLEDGE_POOL_UNREADABLE` y se salta todo el análisis epistémico por nodo (sin falsos `EPISTEMIC_UNGROUNDED`). Un destino de knowledge link que está en un árbol ilegible no da `DANGLING_KNOWLEDGE_REF`: el árbol ya sale como `TREE_LOAD_ERROR` (KNOWLEDGE_SPEC §6.0).
+- *(Workspace, entrada sintética `_workspace`, desde v0.6.0.)* `DUPLICATE_ENTITY_ID {id, occurrences: [{tree_id, location}]}`: un warning por cada ID de entidad que aparece más de una vez, en orden de ID. Son los duplicados que crearon `tree clone` (IDs de `ASM`/`FB` copiados) y `link dissolve` (un `ASM` repartido entre aristas) antes de v0.5.2. Se recorren `edges[]` y sus `assumptions[]`, `feedback_edges[]`, `nbr_branches[]` (su ID y sus aristas con sus supuestos) y `macro_edges[]` con sus `MASM`. `location` es la ruta tipada dentro del árbol (`edges[0]`, `edges[1].assumptions[0]`, `feedback_edges[0]`, `nbr_branches[0]`, `nbr_branches[0].edges[0].assumptions[1]`, `macro_edges[0].assumptions[0]`…); las `occurrences` van ordenadas por `tree_id` y después por orden de recorrido. El `detail` incluye la reparación: dentro de un árbol, `assume rm --asm <ID>` deja una sola copia; entre árboles, `tree rm` del clon y volver a clonarlo (se pierde lo editado en él), o editar el JSON. Es warning, no error: no cambia `success` ni el código de salida. Con `--tree T`, solo los IDs que aparecen en `T`, pero cruzados con todo el workspace. Un árbol ilegible **nunca cuenta como vacío**: sin `--tree` ya sale como `TREE_LOAD_ERROR` en su entrada (y `success: false`); con `--tree T`, cada otro árbol ilegible da un warning `TREE_LOAD_ERROR {tree_id}` en `_workspace` (la comprobación cruzada está incompleta) sin cambiar `success`. La entrada `_workspace` va después de `_meta_graph` y solo aparece si hay warnings.
 - Higiene de resumen de flecha larga (Slice 1): `LONG_ARROW_SUMMARY_STALE` (proyecciones colgantes o supuestos interiores sin mapear) y `MACRO_ASSUMPTION_UNGROUNDED` (macro-assume sobre un `overlay` con interior no vacío pero sin `projection_refs`).
 
 ---
@@ -511,7 +512,7 @@ Todo comando mutante adquiere `.ltp/lock` antes de ejecutar:
 ```
 
 - Si el lock existe y el PID sigue vivo: `WORKSPACE_LOCKED` (espera o falla).
-- Si el lock existe y el PID no está vivo: lock stale → auto-break con warning `STALE_LOCK_REMOVED`.
+- Si el lock existe y el PID no está vivo: lock stale → auto-break con warning `STALE_LOCK_REMOVED`. Desde v0.6.0 es siempre el primer warning de la salida, seguido de `COUNTERS_REBUILT` si lo hay (§4.1).
 - El lock se libera al finalizar la operación (incluyendo escritura de undo entry).
 
 **Configuración (`ltp.config.json`):**
@@ -564,6 +565,13 @@ mi-proyecto-ltp/
 ```
 
 **Contadores e IDs (v0.5.2, ADR-009 adenda).** `.ltp/` no se versiona, así que el motor nunca se fía solo de `counters.json`. Cada ID nuevo es el máximo entre lo guardado y lo observado en disco, más uno. Lo observado depende del prefijo: los prefijos de nodo miran los nombres de `nodes/`, `KN` mira los de `knowledge/`, y `LINK`/`ASM`/`FB`/`NBR`/`MACRO`/`MASM` miran el contenido de `trees/*.json`. Un árbol que no parsea (por ejemplo, con marcas de conflicto de merge) se escanea como texto. Si algo de ese ámbito no se puede leer (un fichero, un directorio sin permiso de listado), el comando falla con `ID_GENERATION_ERROR` sin escribir, y `detail` nombra la ruta. Un directorio ausente cuenta como vacío. Si `counters.json` falta o está corrupto, se reconstruye por esta misma vía. Dentro de un comando, cada ámbito se escanea una sola vez.
+
+**Aviso de contadores (v0.6.0, D-5).** Toda reparación de los contadores durante un minteo se comunica con el warning `COUNTERS_REBUILT`:
+- `reason: "missing"`: `counters.json` no existía (por ejemplo, en un clon recién hecho).
+- `reason: "corrupt"`: no parseaba.
+- `reason: "stale"`, con `prefix`, `from` y `to`: un contador válido estaba por debajo del ID más alto del disco (por ejemplo, tras un `git pull`) y se subió. Si en el mismo escaneo se subieron varios prefijos, se nombra el que se estaba minteando o, si no, el primero.
+
+Sale **como mucho uno por comando**, porque se recuerda durante la sesión de lock (también dentro de un batch: uno por comando). Gana el primer motivo, así que un comando que mintea en dos ámbitos (`macro expand`: `INT` y `LINK`) no da un `stale` falso en el segundo. El siguiente comando no avisa, porque el fichero ya quedó reparado. `--dry-run` muestra el mismo aviso que la ejecución real. `undo`/`redo` no mintean y no lo emiten: nunca restauran `counters.json` por debajo del disco. Solo aparece en salidas de éxito (ver §4.1).
 
 Consecuencias para git:
 - Un **clon recién hecho**, sin `.ltp/`, funciona directamente: el primer comando que muta crea `.ltp/` y reconstruye los contadores.
@@ -763,3 +771,11 @@ Cualquier comando invocado con `--json` retorna este contrato:
   "warnings": []
 }
 ```
+
+### 4.1. Reglas de códigos y warnings (desde v0.6.0)
+
+**`*_NOT_FOUND` frente a `IO_ERROR` (ADR-016 D-K6).** Un código de "no encontrado" (`NODE_NOT_FOUND`, `TREE_NOT_FOUND`, `KNOWLEDGE_NOT_FOUND`, `TARGET_NOT_FOUND`, `REFERENTIAL_INTEGRITY_VIOLATION` en los comandos `link`…) significa **solo** que la entidad no existe. Si existe pero no se puede leer (permisos, `nodes/` sustituido por un fichero, un symlink colgante, un JSON corrupto), el comando devuelve `IO_ERROR` con el contexto del sitio (`tree_id`, `node_id`…) y la causa en `detail`. En los listados, un directorio ausente es una lista vacía y uno ilegible es `IO_ERROR`. Para un consumidor, `*_NOT_FOUND` se puede tratar como "créalo o corrige el ID", e `IO_ERROR` como "revisa el disco"; reintentar no sirve en ninguno de los dos.
+
+**Orden de los warnings.** Los avisos de la sesión van siempre al principio de `warnings`: primero `STALE_LOCK_REMOVED`, después `COUNTERS_REBUILT` (§3.1), y luego los propios del comando en el orden que documenta cada uno. Antes de v0.6.0, `invalidate` ponía `STALE_LOCK_REMOVED` detrás de `ALREADY_INVALIDATED`/`STATE_REPAIRED`.
+
+**Una salida de error no lleva warnings.** Si el comando falla (`success: false`), `warnings` va vacío, también cuando ya se había tomado el lock o reparado los contadores: la reparación queda hecha en disco y el aviso se pierde, sin riesgo de datos (D-5b). Hay una excepción previa a v0.6.0: el error de ciclo de `link connect` (`CIRCULAR_DEPENDENCY_DETECTED`) conserva los `MAG_WEIGHT_MISSING` ya calculados. Llevar los avisos a todas las salidas de error queda registrado como refactor uniforme aparte.

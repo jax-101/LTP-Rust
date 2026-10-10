@@ -8,9 +8,9 @@
 | **Avance Knowledge Pool** | 100% ✅ |
 | **Enriquecimientos (F13)** | 100% ✅ |
 | **Fase actual** | Completado |
-| **Última fase completada** | v0.5.2 — un ID nuevo nunca pisa uno existente (adendas ADR-009/ADR-005) |
-| **Último release** | v0.5.2 (2026-10-09) — PATCH: IDs reconciliados con el disco (sin sobrescrituras tras `git pull`), clon sin `.ltp/` utilizable, `clone`/`dissolve` sin IDs de supuesto duplicados |
-| **Último bugfix** | v0.5.2: contadores por debajo del disco sobrescribían nodos tras `git pull`; reconstrucción que se saltaba lo ilegible; clon sin `.ltp/` inutilizable; `tree clone`/`link dissolve` copiaban IDs de `ASM`/`FB` |
+| **Última fase completada** | v0.6.0 — ilegible ≠ ausente (adenda D-K6 a ADR-016) |
+| **Último release** | v0.6.0 (2026-10-10, commit de release local; tag y push pendientes del usuario) — MINOR: `IO_ERROR` en vez de `*_NOT_FOUND` ante lo ilegible, warnings `KNOWLEDGE_POOL_UNREADABLE`, `COUNTERS_REBUILT` y `DUPLICATE_ENTITY_ID` |
+| **Último bugfix** | v0.6.0: lo ilegible se reportaba como inexistente en storage, comandos y resolución de knowledge links (falsos `DANGLING_KNOWLEDGE_REF`/`TARGET_NOT_FOUND`/`EPISTEMIC_UNGROUNDED`). Antes, v0.5.2: contadores por debajo del disco sobrescribían nodos tras `git pull`; reconstrucción que se saltaba lo ilegible; clon sin `.ltp/` inutilizable; `tree clone`/`link dissolve` copiaban IDs de `ASM`/`FB` |
 | **Último añadido** | Tool nº 72 `ltp/tree_relation_list` (meta-grafo inferido, sin tipo) |
 | **Factor de escala (velocity)** | 1.0x |
 | **UATs motor base** | 199/199 |
@@ -26,7 +26,8 @@
 | **Tests v0.5.0 (integridad)** | 61/61 (38 E2E + 23 unit) |
 | **Tests v0.5.1** | 50/50 (17 E2E dry-run + 10 E2E knowledge ilegible + 3 E2E no-expect + 13 unit `dry_run` + 7 unit determinismo/`to_json`), más 14 UATs KP |
 | **Tests v0.5.2** | 20/20 (13 E2E `v052_counters` + 3 unit contadores + 4 unit memoización R13–R16) |
-| **Tests totales** | 771 |
+| **Tests v0.6.0** | 62/62 (40 E2E `v060_unreadable` + 10 E2E `v060_duplicates` + 7 unit D-3 + 5 unit D-5), más 2 goldens de `contract/` |
+| **Tests totales** | 833 |
 
 ---
 
@@ -73,7 +74,51 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ## Historial de Avance
 
-### [v0.6.0 en curso] — Ilegible ≠ ausente (MINOR) — Sesión 1 (T0–T4) completada
+### [Release v0.6.0] — Ilegible ≠ ausente (MINOR) — Sesión 2 (T5–T10) completada
+**Fecha**: 2026-10-10 (sesión nocturna desatendida; dudas resueltas con Six Hats + recomendación, por decisión del usuario).
+**Commits**: `3f797f3` T5 (D-5) → `80882fe` T6 (D-8) → `91ed842` T7 (test que mata la mutación 7) → T9 (docs) → T10 `chore(release): v0.6.0`. **Sin tag y sin push**: los hace el usuario (`git tag -a v0.6.0` + `git push --follow-tags`).
+**T5 — D-5**: `next_id -> Result<MintedId {id, notice}>`; `LockSession {scopes, notice_emitted}`; helper `prepend_session_warnings`, que sustituye a las 13 copias de `stale_lock_warning` y a las 3 en línea de `path`. La tabla c9 cubre los 20 comandos que mintean, porque el compilador no puede obligar a reenviar el aviso (`&mut notice` ya cuenta como uso). Destapó que `nbr add` calculaba los avisos antes de mintear.
+**T6 — D-8**: `validate/duplicates.rs`, un recorrido tipado. `validate` carga los árboles una vez y los comparte entre `_meta_graph`, el filtro de knowledge y D-8.
+**Decisiones (Six Hats, sesión 2)**:
+- (a) Los avisos de sesión van **siempre al principio** (`STALE_LOCK_REMOVED` y después `COUNTERS_REBUILT`). Cambia el orden en `invalidate`, que ponía el de lock detrás de `ALREADY_INVALIDATED`/`STATE_REPAIRED`. Es un orden documentado en ENGINE_SPEC §4.1, no un campo nuevo.
+- (b) `validate --tree T` con **otro** árbol ilegible: warning `TREE_LOAD_ERROR {tree_id}` en `_workspace`, sin cambiar `success`. Se descarta la propuesta de la sesión 1 (error): fallar `validate` de T por un árbol que no se pidió validar castigaría el filtro, pero el chequeo cruzado incompleto no se calla (test d9).
+- (c) `stale` con varios prefijos subidos en un mismo escaneo: se nombra el que se mintea si se subió y, si no, el primero.
+- (d) Árboles cargados una sola vez en `validate`: es una mejora de rendimiento (T8) y garantiza que las tres pasadas vean el mismo estado.
+**T7 — Mutaciones (13/13 detectadas)**, cada una con la suite completa y el contenido del fichero restaurado desde una copia guardada (nunca `git checkout`):
+
+| # | Mutación | Tests que la detectan |
+|---|---|---|
+| 1 | Quitar el aviso de pool | 6 (`b1_*`) |
+| 2 | No saltar el análisis epistémico con `Unlisted` | `b1_validate_skips_epistemic_analysis` |
+| 3 | Volver a `exists()` en `load_tree` | 4 (`l1_*`, `d3_broken_symlink…`) |
+| 4 | `load_error_code` siempre `not_found` | 8 o más (`g1`, `g7`, `l1_*`) |
+| 5 | Descartar `notice` (`into_id`) | 8 o más (`c1`–`c5`, `c7`, `c8`…) |
+| 6 | No marcar `notice_emitted` | `d5_one_notice_per_session_across_scopes` |
+| 7 | No borrar `notice_emitted` en `acquire_lock` | **Sobrevivía** → test nuevo `d5_acquire_forgets_a_notice_left_by_a_missing_release` (estilo R14). Nota: `acquire_lock` resetea la sesión dos veces (al entrar y tras escribir el lock); la mutación tiene que anular las dos, y si solo anula una no es una mutación real |
+| 8 | `resolve` vuelve a tragarse los `Err` | 4 (`g1`, `l3_*`) |
+| 9 | D-8 ignora `nbr_branches` | `d1`, `d3`, `d5`, `d8` |
+| 10 | D-8 cuenta un árbol ilegible como vacío | `d9` |
+| 11 | Symlink roto como ausente (sin `symlink_metadata`) | 3 (`l1_broken_symlink…`, 2 unit D-3) |
+| 12a | Helper: contadores antes que lock | `g3` |
+| 12b | Helper: pierde el aviso de lock | `g3`, `dr7` |
+| 13 | `undo` deja `counters.json` por debajo del disco (lo borra) | `g5`, `k2_46`, `dr11`, `o1` |
+
+**T7b — Código muerto**: no se elimina nada (va en este commit de docs). `rg stale_lock_warning` = 0. `target_exists` sigue en uso (`validate/knowledge.rs`). Sin `allow(dead_code|unused)` nuevos. No quedan ramas `Err(_) => *_NOT_FOUND`. Los tests que fijaban el comportamiento falso se corrigieron en T0–T4 (`e2e_10_counters_recovery` ahora exige `COUNTERS_REBUILT`).
+**T8 — Rendimiento** (binarios release `0.5.2+0f0f4767` frente a `91ed842`, workspace sintético de 4,27 MB: 500 nodos, 50 árboles, 5.000 aristas, 5.000 `ASM`; mediana de 15 ejecuciones alternas):
+
+| Comando | v0.5.2 | v0.6.0 | Δ |
+|---|---|---|---|
+| `validate` | 66,2 ms | 61,0 ms | **−7,9 %** (árboles cargados una vez) |
+| `validate --tree tree-crt-t00` | 32,8 ms | 33,6 ms | +2,4 % |
+| `status` | 32,2 ms | 36,0 ms | +11,7 % |
+| `validate` con 100 árboles y 10.000 IDs duplicados (peor caso de D-8; mediana de 9) | 90,6 ms | 101,7 ms | +12,2 % |
+
+Todo por debajo del umbral del 20 %.
+**T9 — Docs**: adenda D-K6 a ADR-016 (incluida la desviación `ResolveError`), KNOWLEDGE_SPEC §6.0, ENGINE_SPEC (`_workspace` en §2.12, aviso de contadores en §3.1, lock, orden de warnings en `rm`/`status`/`validate`/`walk`/`trace`, y §4.1 nueva con `*_NOT_FOUND` frente a `IO_ERROR`, el orden de los avisos de sesión y "una salida de error no lleva warnings" con su excepción previa, `MAG_WEIGHT_MISSING` en el ciclo de `link connect`), INTEGRATION (gate `>= 0.6.0`, nota de migración y nota de la UI), RELEASE_POLICY (feature-gating), CHANGELOG `[0.6.0]` y goldens `warning_counters_rebuilt` y `validate_duplicates`. Los goldens anteriores no cambian.
+**Fuera de alcance (registrado)**: avisos en las salidas de error (refactor uniforme); pasar `DUPLICATE_ENTITY_ID` a error cuando exista un comando de reparación; avisos de knowledge links colgantes en las mutaciones; `dry_run` en MCP (v0.7.0); que la UI muestre los warnings de las mutaciones y lea `validate` de `data.details[]` (repo `LTP-Rust-UI`).
+**Factor de escala**: 1.0x.
+
+### [v0.6.0] — Ilegible ≠ ausente (MINOR) — Sesión 1 (T0–T4)
 **Fecha**: 2026-10-10
 **Plan**: `PLAN_v060.md` rev 3.3. Sesión 1 = T0 → T4 (hecha). **Sesión 2 = T5 → T9**, parar antes de T10. Para retomar: "Continúa PLAN_v060.md". Sin push ni tag.
 **Commits**: `2ca1731` T0 (tests en rojo) → `61d1e86` T1 (D-1/D-2) → `74e7a24` T2 (D-3) → `0f2d248` T3 (D-4) → `f93bc72` T4 (D-7).

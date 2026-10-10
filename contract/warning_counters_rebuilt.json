@@ -1,0 +1,26 @@
+{
+  "action": "node_add",
+  "data": {
+    "epistemic": "hypothesis",
+    "id": "RC-003",
+    "label": "Another root cause",
+    "node_type": "RC",
+    "observable": true,
+    "refs": [],
+    "tags": []
+  },
+  "errors": [],
+  "graph_health": {
+    "orphan_nodes_count": 0,
+    "valid_dag": true
+  },
+  "success": true,
+  "warnings": [
+    {
+      "code": "COUNTERS_REBUILT",
+      "detail": ".ltp/counters.json was missing; counters were rebuilt from the workspace",
+      "reason": "missing"
+    }
+  ],
+  "workspace": "<WORKSPACE>"
+}

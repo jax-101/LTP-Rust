@@ -6,6 +6,29 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-10
+
+"Ilegible ≠ ausente" (plan `PLAN_v060.md`, adenda D-K6 a ADR-016). Es MINOR: tres warnings nuevos, y los códigos de "no encontrado" quedan restringidos a su significado documentado. Ningún campo ni forma cambia.
+
+### Added
+
+- **`KNOWLEDGE_POOL_UNREADABLE`**: si `knowledge/` no se puede listar, `status`, `validate`, `node rm` y `tree walk`/`trace --show-knowledge` emiten un único aviso, antes de cualquier `KNOWLEDGE_LOAD_ERROR`. `validate` se salta el análisis epistémico, que antes daba `EPISTEMIC_UNGROUNDED` falsos, y `node rm` avisa sin bloquear.
+- **`COUNTERS_REBUILT {reason: missing|corrupt|stale}`** (con `prefix`/`from`/`to` si es `stale`): la reparación de `.ltp/counters.json` al mintear deja de ser silenciosa. Sale como mucho uno por comando, siempre detrás de `STALE_LOCK_REMOVED`, y solo en salidas de éxito. Lo emiten los 20 comandos que mintean IDs.
+- **`DUPLICATE_ENTITY_ID {id, occurrences: [{tree_id, location}]}`** en la entrada `_workspace` de `validate`: IDs repetidos que dejaron `tree clone`/`link dissolve` antes de v0.5.2, con la reparación en `detail`. Es warning: no cambia `success`. Con `--tree T` se cruza con todo el workspace, y un árbol ilegible da `TREE_LOAD_ERROR {tree_id}` en `_workspace` en vez de contar como vacío.
+
+### Changed
+
+- **Lo ilegible ya no se reporta como inexistente.** `NODE_NOT_FOUND`, `TREE_NOT_FOUND`, `KNOWLEDGE_NOT_FOUND`, `TARGET_NOT_FOUND` y `REFERENTIAL_INTEGRITY_VIOLATION` salen solo si la entidad no existe. Si existe y no se puede leer (permisos, ENOTDIR, symlink colgante, JSON corrupto), sale `IO_ERROR` con la causa en `detail`. Se corrigieron tres capas: el storage (sin `exists()`), 60 sitios de los comandos (una única función de mapeo) y la resolución de destinos de knowledge links. Nota de migración en INTEGRATION §4.
+- `knowledge link` hacia un destino en un árbol ilegible da `IO_ERROR {tree_id}` (antes `TARGET_NOT_FOUND`). `knowledge inspect` avisa con `TREE_LOAD_ERROR {tree_id}`, y `validate` ya no emite un `DANGLING_KNOWLEDGE_REF` falso.
+- Los avisos de sesión van siempre al principio de `warnings` (`STALE_LOCK_REMOVED` y después `COUNTERS_REBUILT`). En `invalidate`, `STALE_LOCK_REMOVED` iba detrás de `ALREADY_INVALIDATED`/`STATE_REPAIRED`.
+- **Rendimiento**: `validate` carga cada árbol una sola vez (antes, dos). En un workspace de 4,3 MB (50 árboles, 5.000 aristas, 5.000 supuestos) baja de 66 a 61 ms.
+- Tests: suites `v060_unreadable` (40 E2E, incluida una tabla con los 20 comandos que mintean) y `v060_duplicates` (10 E2E), unit de D-3 y D-5, y dos goldens nuevos en `contract/`.
+
+### Fixed
+
+- `validate` callaba si fallaba el listado de nodos; ahora da `IO_ERROR`.
+- Un symlink colgante en `nodes/` o `trees/` se reportaba como inexistente aunque `tree list` lo mostrara.
+
 ## [0.5.2] - 2026-10-09
 
 "Un ID nuevo nunca pisa uno existente" (plan `PLAN_v052.md`, adendas a ADR-009 y ADR-005). Es PATCH: sin campos, códigos ni flags nuevos.

@@ -326,6 +326,18 @@ Un `knowledge/KN-xxx.json` que no se puede leer o parsear **nunca se descarta en
 
 Regla: lo ilegible que una mutación escribe, bloquea; lo ilegible que solo lee, se avisa; nunca se calla. `node rm` no escribe knowledge, así que un item ilegible solo le resta precisión al aviso de huérfanos (no se sabe si apuntaba al nodo borrado), y el fichero queda intacto.
 
+**Desde v0.6.0 (ADR-016 D-K6)**, lo mismo vale para el pool entero y para los destinos de los links:
+
+| Caso | Comando | Resultado |
+|------|---------|-----------|
+| `knowledge/` no se puede listar (sin permiso, o es un fichero) | `status`, `validate`, `node rm`, `tree walk`/`trace` con `--show-knowledge` | Un único warning `KNOWLEDGE_POOL_UNREADABLE` (`detail` con el error de E/S), antes de cualquier `KNOWLEDGE_LOAD_ERROR`. El pool tiene `scope: Unlisted` (no hay items). `status` mantiene la forma de `knowledge_health` y cuenta 0. `validate` se salta **todo** el análisis epistémico por nodo, que solo daría falsos `EPISTEMIC_UNGROUNDED`. `node rm` avisa y no bloquea. Un directorio `knowledge/` **ausente** sigue siendo un pool vacío, sin aviso |
+| `knowledge/` ilegible | `knowledge inspect KN-x` | `IO_ERROR`, no `KNOWLEDGE_NOT_FOUND` |
+| El destino de un link está en un árbol ilegible (y no aparece en ningún árbol legible) | `validate` | Sin `DANGLING_KNOWLEDGE_REF`: el árbol ya sale como `TREE_LOAD_ERROR` en sus `details` |
+| Lo mismo | `knowledge inspect KN-x` | El link sale con `target_type: "unknown"`, más un warning `TREE_LOAD_ERROR {tree_id}` (uno por causa). Si el destino es un nodo ilegible: `NODE_UNREADABLE {node_id}` |
+| Lo mismo | `knowledge link KN-x --to <ID>` | `IO_ERROR {tree_id}` (o `{node_id}`), no `TARGET_NOT_FOUND`: no se escribe un link cuyo destino no se puede verificar |
+
+Si el destino se encuentra en un árbol legible, se resuelve normalmente aunque otro árbol sea ilegible. `TARGET_NOT_FOUND` y `DANGLING_KNOWLEDGE_REF` solo salen cuando todo se leyó y el destino no está.
+
 ### 6.1. `ltp status`
 
 Añade sección de knowledge al reporte de salud:
