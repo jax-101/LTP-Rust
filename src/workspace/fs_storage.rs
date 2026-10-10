@@ -545,6 +545,28 @@ mod tests {
         storage.release_lock().unwrap();
     }
 
+    // D-5 — like R14 for the notice: a lock never released does not silence
+    // the repair of the next command; acquire resets `notice_emitted` too.
+    #[test]
+    fn d5_acquire_forgets_a_notice_left_by_a_missing_release() {
+        let (_dir, storage) = workspace();
+        rm_counters(&storage);
+        storage.acquire_lock("first").unwrap();
+        assert!(storage.next_id("UDE").unwrap().notice.is_some());
+        // No release_lock; the lock file goes away and the counters are lost.
+        fs::remove_file(storage.lock_path()).unwrap();
+        rm_counters(&storage);
+
+        storage.acquire_lock("second").unwrap();
+        assert_eq!(
+            storage.next_id("UDE").unwrap().notice,
+            Some(CounterNotice::Rebuilt {
+                reason: RebuildReason::Missing
+            })
+        );
+        storage.release_lock().unwrap();
+    }
+
     // D-5 — a legitimate `stale` in the second scope still warns, and names
     // the minted prefix when several were raised.
     #[test]
