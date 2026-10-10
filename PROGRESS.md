@@ -76,7 +76,7 @@ Plan: `.claude/plans/knowledge-pool-implementation.md` | Spec: `KNOWLEDGE_SPEC.m
 
 ### [Release v0.6.0] — Ilegible ≠ ausente (MINOR) — Sesión 2 (T5–T10) completada
 **Fecha**: 2026-10-10 (sesión nocturna desatendida; dudas resueltas con Six Hats + recomendación, por decisión del usuario).
-**Commits**: `3f797f3` T5 (D-5) → `80882fe` T6 (D-8) → `91ed842` T7 (test que mata la mutación 7) → T9 (docs) → T10 `chore(release): v0.6.0`. **Sin tag y sin push**: los hace el usuario (`git tag -a v0.6.0` + `git push --follow-tags`).
+**Commits**: `3f797f3` T5 (D-5) → `80882fe` T6 (D-8) → `91ed842` T7 (test que mata la mutación 7) → `6d4c23c` T9 (docs) → T10 `chore(release): v0.6.0`. **Sin tag y sin push**: los hace el usuario (`git tag -a v0.6.0` + `git push --follow-tags`).
 **T5 — D-5**: `next_id -> Result<MintedId {id, notice}>`; `LockSession {scopes, notice_emitted}`; helper `prepend_session_warnings`, que sustituye a las 13 copias de `stale_lock_warning` y a las 3 en línea de `path`. La tabla c9 cubre los 20 comandos que mintean, porque el compilador no puede obligar a reenviar el aviso (`&mut notice` ya cuenta como uso). Destapó que `nbr add` calculaba los avisos antes de mintear.
 **T6 — D-8**: `validate/duplicates.rs`, un recorrido tipado. `validate` carga los árboles una vez y los comparte entre `_meta_graph`, el filtro de knowledge y D-8.
 **Decisiones (Six Hats, sesión 2)**:
